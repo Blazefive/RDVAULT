@@ -12,7 +12,9 @@ Built with Electron + React.
 
 ## Quick Start
 
-**Download the installer** from [`dist/RDVAULT Setup 1.4.0.exe`](dist/) and run it. Choose between **Enterprise** (Vault server) or **Local** (offline, encrypted database) mode.
+**Download the installer** from the [Releases page](../../releases/latest) and run it. Choose between **Enterprise** (Vault server) or **Local** (offline, encrypted database) mode.
+
+> **Note:** The installer is not code-signed yet. Windows Defender SmartScreen may show a warning. Click **More info** → **Run anyway** to proceed.
 
 To build the installer yourself, see [Installation from source](#from-source) below.
 
