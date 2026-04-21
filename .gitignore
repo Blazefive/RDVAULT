@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+
+# Build output
+build/
+dist/
+
+# Local config (contains real URLs/IPs)
+config.cfg
+config.json
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Electron
+*.log
+
+# IDE / Editor
+.vs/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Claude Code
+.claude/
+
+# Temp files
+_ul
+_ul-*
+*.temp
+*.temp.*
+*.bak
+*.css.temp
+
+# Chrome extension build artifacts
+chrome-extension/*.crx
+chrome-extension/vault-autofill-extension/*.bak
+chrome-extension/vault-autofill-extension/create_icons*
+chrome-extension/vault-autofill-extension/create-icons*
+chrome-extension/vault-autofill-extension/content_new.js
+
+# Design handoff
+*-handoff.zip
+_design_review/
+
+# Favicon source files (icon.png in assets/ is the source)
+favicon*.ico
+favicon*.png
+
+# Chromium embarqué (trop gros pour GitHub, distribué via l'installeur)
+chrome-rbi/

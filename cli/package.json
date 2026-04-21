@@ -1,0 +1,13 @@
+{
+  "name": "mvault",
+  "version": "1.0.0",
+  "description": "CLI pour accéder aux secrets RDVault via l'application desktop",
+  "bin": {
+    "mvault": "./mvault.js"
+  },
+  "author": "Blazefive",
+  "license": "PRIVATE",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

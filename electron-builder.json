@@ -1,0 +1,79 @@
+{
+  "appId": "com.groupeprofessionsante.rdvault",
+  "productName": "RDVAULT",
+  "icon": "assets/icon.ico",
+  "directories": {
+    "buildResources": "assets",
+    "output": "dist"
+  },
+  "files": [
+    "build/**/*",
+    "electron/**/*",
+    "package.json",
+    {
+      "from": "node_modules",
+      "to": "node_modules",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
+  "extraResources": [
+    {
+      "from": "assets/icon.ico",
+      "to": "icon.ico"
+    },
+    {
+      "from": "assets/shortcut-icon.ico",
+      "to": "shortcut-icon.ico"
+    },
+    {
+      "from": "config.default.json",
+      "to": "config.default.json"
+    },
+    {
+      "from": "chrome-rbi",
+      "to": "chrome-rbi",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "cli",
+      "to": "cli",
+      "filter": ["**/*"]
+    }
+  ],
+  "extraMetadata": {
+    "main": "electron/main.js"
+  },
+  "protocols": [
+    {
+      "name": "RDVAULT Share",
+      "schemes": ["rdvault"]
+    }
+  ],
+  "afterPack": "./scripts/afterPack.js",
+  "win": {
+    "icon": "assets/icon.ico",
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "signAndEditExecutable": false,
+    "legalTrademarks": "Blazefive"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": false,
+    "createStartMenuShortcut": false,
+    "shortcutName": "RDVAULT",
+    "include": "assets/installer.nsh",
+    "perMachine": false,
+    "allowElevation": true,
+    "warningsAsErrors": false
+  }
+}

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vault Autofill</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 320px;
+      padding: 16px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #f9fafb;
+    }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      color: #111827;
+    }
+
+    .form-group {
+      margin-bottom: 12px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: #4b5563;
+      margin-bottom: 4px;
+    }
+
+    input {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: #3b82f6;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-primary {
+      background: #3b82f6;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #2563eb;
+    }
+
+    .btn-primary:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: #ef4444;
+      color: white;
+      margin-top: 8px;
+    }
+
+    .btn-secondary:hover {
+      background: #dc2626;
+    }
+
+    .status {
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+
+    .status-success {
+      background: #d1fae5;
+      color: #065f46;
+      border: 1px solid #6ee7b7;
+    }
+
+    .status-error {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fca5a5;
+    }
+
+    .status-info {
+      background: #dbeafe;
+      color: #1e40af;
+      border: 1px solid #93c5fd;
+    }
+
+    .authenticated {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px;
+      background: white;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+
+    .authenticated-info {
+      font-size: 13px;
+      color: #374151;
+    }
+
+    .authenticated-user {
+      font-weight: 600;
+      color: #111827;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <h1>Vault Autofill</h1>
+
+  <div id="loading" class="loading">
+    Chargement...
+  </div>
+
+  <div id="loginForm" class="hidden">
+    <div id="status" class="hidden"></div>
+
+    <div class="form-group">
+      <label for="vaultUrl">URL Vault</label>
+      <input type="text" id="vaultUrl" value="https://vault.example.com:8200" placeholder="https://vault:8200">
+    </div>
+
+    <div class="form-group">
+      <label for="vaultNamespace">Namespace (optionnel)</label>
+      <input type="text" id="vaultNamespace" placeholder="Laisser vide si non utilisé">
+    </div>
+
+    <div class="form-group">
+      <label for="username">Utilisateur LDAP</label>
+      <input type="text" id="username" placeholder="Nom d'utilisateur">
+    </div>
+
+    <div class="form-group">
+      <label for="password">Mot de passe</label>
+      <input type="password" id="password" placeholder="Mot de passe">
+    </div>
+
+    <button id="loginBtn" class="btn-primary">Se connecter</button>
+  </div>
+
+  <div id="authenticatedView" class="hidden">
+    <div class="authenticated">
+      <div class="authenticated-info">
+        Connecté en tant que<br>
+        <span class="authenticated-user" id="currentUser"></span>
+      </div>
+    </div>
+
+    <div id="statusAuth" class="hidden"></div>
+
+    <button id="refreshBtn" class="btn-primary">Actualiser le cache</button>
+    <button id="logoutBtn" class="btn-secondary">Se déconnecter</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
