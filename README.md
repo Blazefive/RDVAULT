@@ -92,12 +92,6 @@ Configurable via Settings UI or `LANG` in `config.cfg` for mass deployment.
 
 ---
 
-## Screenshots
-
-> TODO
-
----
-
 ## Installation
 
 ### From installer
