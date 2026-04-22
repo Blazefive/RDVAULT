@@ -13,7 +13,7 @@ export function useSecrets(options) {
     selectedEngine,
     search,
     showDeleted,
-    treeViewEnabled, currentPath, currentFolderContent,
+    treeViewRef,
     multiVaultSearch, allVaultSecrets, setAllVaultSecrets,
     mergeDiscoveredAndSharedTagsRef,
     setDiscoveredTags,
@@ -23,6 +23,9 @@ export function useSecrets(options) {
     getTotpKeyName, checkTotpExists, totpEngineName,
     showToast, t,
   } = options;
+
+  // Lire les valeurs treeView depuis la ref (casse la dépendance circulaire)
+  const getTreeView = () => treeViewRef?.current || { treeViewEnabled: false, currentPath: '', currentFolderContent: null };
 
   const [secrets, setSecrets] = useState([]);
   const [editSecret, setEditSecret] = useState(null);
@@ -204,6 +207,7 @@ export function useSecrets(options) {
       // Création de dossier via .placeholder
       if (updated.entryType === 'folder') {
         const folderName = updated.name.trim().replace(/\/+$/, '');
+        const { treeViewEnabled, currentPath } = getTreeView();
         const placeholderPath = (treeViewEnabled && currentPath ? `${currentPath}/` : '') + folderName + '/.placeholder';
         const placeholderEntry = {
           name: placeholderPath,
@@ -259,7 +263,7 @@ export function useSecrets(options) {
 
       showToast(`${t('error.saveSecret')} ${msg}`, 'error');
     }
-  }, [selectedEngine, editSecret, currentPath, treeViewEnabled]); // eslint-disable-line
+  }, [selectedEngine, editSecret]); // eslint-disable-line
 
   const handleEditSecretClose = useCallback(() => {
     setEditSecret(null);
@@ -268,6 +272,7 @@ export function useSecrets(options) {
 
   // Mémoiser le filtrage du tableau (hot path)
   const filteredSecrets = useMemo(() => {
+    const { treeViewEnabled, currentPath, currentFolderContent } = getTreeView();
     const rawSourceSecrets = multiVaultSearch && search.trim()
       ? allVaultSecrets
       : (treeViewEnabled && !multiVaultSearch
@@ -324,7 +329,7 @@ export function useSecrets(options) {
     });
 
     return filtered;
-  }, [multiVaultSearch, search, allVaultSecrets, treeViewEnabled, secrets, currentPath, currentFolderContent, showDeleted]); // eslint-disable-line
+  }, [multiVaultSearch, search, allVaultSecrets, secrets, showDeleted]); // eslint-disable-line
 
   return {
     secrets, setSecrets,

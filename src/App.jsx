@@ -104,9 +104,6 @@ export default function App() {
   // ========================================
   const { selectedSecrets, setSelectedSecrets, lastClickedSecretRef, displayedSecretsRef, toggleSecretSelection, selectAllSecrets, clearSelection, isSecretSelected } = useSelection();
 
-  // Vue arborescence (hook)
-  const { treeViewEnabled, setTreeViewEnabled, currentPath, setCurrentPath, currentFolderContent } = useTreeView(secrets);
-
   const searchRef = useRef(null);
   const appRootRef = useRef(null);
   const syncExtensionRef = useRef(null);
@@ -122,6 +119,7 @@ export default function App() {
   const totpEngineNameRef = useRef('totp');
   const setSecretEnginesRef = useRef((e) => {});
   const setSelectedEngineRef = useRef((e) => {});
+  const treeViewRef = useRef({ treeViewEnabled: false, currentPath: '', currentFolderContent: null });
 
   // ========================================
   // AUTHENTIFICATION (hook)
@@ -152,10 +150,6 @@ export default function App() {
     setSelectedSecrets,
     setSearchState: { setSearch, setSearchInput },
   });
-
-  // Wrappers RBI-Only avec selectedEngine du scope
-  const isCurrentEngineRbiOnly = isCurrentEngineRbiOnlyFn(selectedEngine);
-  const isSecretRbiOnly = (secretName) => isSecretRbiOnlyFn(secretName, selectedEngine);
 
   // Service Vault API (recréé quand les credentials changent)
   const vaultApi = useMemo(() => createVaultApi(vaultUrl, token, vaultNs), [vaultUrl, token, vaultNs]);
@@ -188,6 +182,10 @@ export default function App() {
   });
   fetchEnginesLikeUiRef.current = fetchEnginesLikeUi;
   setSecretEnginesRef.current = setSecretEngines;
+
+  // Wrappers RBI-Only avec selectedEngine du scope (doit être après useEngines)
+  const isCurrentEngineRbiOnly = isCurrentEngineRbiOnlyFn(selectedEngine);
+  const isSecretRbiOnly = (secretName) => isSecretRbiOnlyFn(secretName, selectedEngine);
   setSelectedEngineRef.current = setSelectedEngine;
 
   // Wrapper pour handleColumnAutoFit avec le contexte de données
@@ -226,7 +224,7 @@ export default function App() {
     selectedEngine,
     search,
     showDeleted,
-    treeViewEnabled, currentPath, currentFolderContent,
+    treeViewRef,
     multiVaultSearch, allVaultSecrets, setAllVaultSecrets,
     mergeDiscoveredAndSharedTagsRef,
     setDiscoveredTags: (tags) => setDiscoveredTagsRef.current(tags),
@@ -238,6 +236,12 @@ export default function App() {
     showToast, t,
   });
   setSecretsRef.current = setSecrets;
+
+  // Vue arborescence (hook)
+  const { treeViewEnabled, setTreeViewEnabled, currentPath, setCurrentPath, currentFolderContent } = useTreeView(secrets);
+
+  // Mettre à jour les refs treeView pour useSecrets (casse la dépendance circulaire)
+  treeViewRef.current = { treeViewEnabled, currentPath, currentFolderContent };
 
   // Gérer le redimensionnement de la fenêtre pour le mode responsive
 
