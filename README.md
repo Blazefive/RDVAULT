@@ -95,6 +95,14 @@ Configurable via Settings UI or `LANG` in `config.cfg` for mass deployment.
 
 ---
 
+## Screenshots
+
+| Secrets browser | Edit secret | Settings |
+|---|---|---|
+| ![Main view](docs/screenshot-main.png) | ![Edit entry](docs/screenshot-edit.png) | ![Settings](docs/screenshot-settings.png) |
+
+---
+
 ## Installation
 
 ### From installer
