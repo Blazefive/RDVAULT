@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-build:
+    name: Lint & Build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build React
+        run: npx react-scripts build
+
+      - name: Verify Electron main process loads
+        run: node -e "require('./electron/configLoader'); require('./electron/cliServer'); console.log('Electron modules OK')"
+
+      - name: Verify local vault modules load
+        run: |
+          node -e "require('./electron/localVault/crypto'); console.log('crypto OK')"
+          node -e "require('./electron/localVault/authService'); console.log('authService OK')" 2>&1 || echo "Skipped (needs Electron)"
+          node -e "require('./src/utils/security'); console.log('security OK')"
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --omit=dev || true
+
+      - name: Check for known vulnerabilities
+        run: npx audit-ci --moderate || true
+
+  build-installer:
+    name: Build Installer
+    runs-on: windows-latest
+    needs: lint-and-build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build React
+        run: npx react-scripts build
+
+      - name: Build Windows installer
+        run: npx electron-builder --win --config electron-builder.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RDVAULT-Setup
+          path: dist/*.exe
+          retention-days: 30

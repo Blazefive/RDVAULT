@@ -4,6 +4,7 @@ A modern desktop client for [HashiCorp Vault](https://www.vaultproject.io/) with
 
 Built with Electron + React.
 
+![CI](https://github.com/Blazefive/RDVAULT/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)
 ![Vault](https://img.shields.io/badge/Vault-1.12%2B-black)
