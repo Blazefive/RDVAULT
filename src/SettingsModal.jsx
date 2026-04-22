@@ -2,13 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation, LANGUAGES } from './i18n';
 import axios from 'axios';
-
-const encodeEnginePath = (name) => {
-  return name.replace(/^\/+|\/+$/g, '')
-    .split('/')
-    .map(segment => encodeURIComponent(segment))
-    .join('/');
-};
+import { encodeEnginePath } from './utils/security';
 
 export default function SettingsModal({
   darkMode,
