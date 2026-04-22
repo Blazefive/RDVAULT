@@ -364,7 +364,10 @@ contextBridge.exposeInMainWorld('electronCLI', {
     if (contextBridge._cliSecretCallback) {
       ipcRenderer.removeListener('cli-read-secret', contextBridge._cliSecretCallback);
     }
-    const wrappedCallback = (_event, request) => callback(request);
+    const wrappedCallback = (_event, request) => {
+      const safe = { engine: String(request?.engine || ''), path: String(request?.path || ''), requestId: String(request?.requestId || '') };
+      callback(safe);
+    };
     contextBridge._cliSecretCallback = wrappedCallback;
     ipcRenderer.on('cli-read-secret', wrappedCallback);
     return () => {

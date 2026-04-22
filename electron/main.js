@@ -2106,6 +2106,13 @@ ipcMain.handle('window-is-maximized', (event) => {
 // ========================================
 ipcMain.handle('export-save-file', async (event, { defaultName, filters, content }) => {
   if (!validateIpcSender(event)) return { success: false, error: 'Unauthorized' };
+  // Validation des entrées
+  if (typeof content !== 'string' || content.length > 100 * 1024 * 1024) {
+    return { success: false, error: 'Invalid or oversized content' };
+  }
+  if (typeof defaultName !== 'string' || defaultName.length > 256) {
+    return { success: false, error: 'Invalid filename' };
+  }
   try {
     const result = await dialog.showSaveDialog(mainWindow, {
       defaultPath: defaultName,
@@ -2114,8 +2121,8 @@ ipcMain.handle('export-save-file', async (event, { defaultName, filters, content
     if (result.canceled || !result.filePath) return { success: false, canceled: true };
     fs.writeFileSync(result.filePath, content, { encoding: 'utf8', mode: 0o600 });
     return { success: true, filePath: result.filePath };
-  } catch (err) {
-    return { success: false, error: err.message };
+  } catch {
+    return { success: false, error: 'File save error' };
   }
 });
 
@@ -2127,15 +2134,14 @@ ipcMain.handle('import-open-file', async (event, { filters }) => {
       filters: filters || [{ name: 'All Files', extensions: ['*'] }]
     });
     if (result.canceled || !result.filePaths.length) return { success: false, canceled: true };
-    // Limite de taille pour éviter les crash OOM
     const stats = fs.statSync(result.filePaths[0]);
     if (stats.size > 50 * 1024 * 1024) {
       return { success: false, error: 'File too large (max 50 MB)' };
     }
     const content = fs.readFileSync(result.filePaths[0], 'utf8');
     return { success: true, content, filePath: result.filePaths[0] };
-  } catch (err) {
-    return { success: false, error: err.message };
+  } catch {
+    return { success: false, error: 'File read error' };
   }
 });
 
@@ -2265,14 +2271,18 @@ ipcMain.handle('cli-get-session', (event) => {
 // IPC handler pour définir les engines autorisés pour le listing CLI
 ipcMain.handle('cli-set-list-secrets-engines', (event, engines) => {
   if (!validateIpcSender(event)) return { success: false, error: 'Unauthorized' };
-  cliServer.setListSecretsAllowedEngines(engines);
+  if (!Array.isArray(engines) || engines.length > 500) return { success: false, error: 'Invalid' };
+  const safe = engines.filter(e => typeof e === 'string' && e.length <= 256).slice(0, 500);
+  cliServer.setListSecretsAllowedEngines(safe);
   return { success: true };
 });
 
 // IPC handler pour définir les règles d'auto-approbation CLI
 ipcMain.handle('cli-set-auto-approve-rules', (event, rules) => {
   if (!validateIpcSender(event)) return { success: false, error: 'Unauthorized' };
-  cliServer.setAutoApproveRules(rules);
+  if (!Array.isArray(rules) || rules.length > 500) return { success: false, error: 'Invalid' };
+  const safe = rules.filter(r => typeof r === 'string' && r.length <= 256).slice(0, 500);
+  cliServer.setAutoApproveRules(safe);
   return { success: true };
 });
 

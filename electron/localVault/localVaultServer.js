@@ -475,9 +475,11 @@ function start(port = 0) {
     database.init();
 
     server = http.createServer(async (req, res) => {
-      // CORS restreint au renderer Electron uniquement (file:// ou dev server exact)
+      // CORS restreint au renderer Electron uniquement
       const reqOrigin = req.headers.origin;
-      if (reqOrigin && (reqOrigin === 'file://' || reqOrigin === 'http://localhost:3000')) {
+      const { app } = require('electron');
+      const allowDev = !app.isPackaged;
+      if (reqOrigin && (reqOrigin === 'file://' || (allowDev && reqOrigin === 'http://localhost:3000'))) {
         res.setHeader('Access-Control-Allow-Origin', reqOrigin);
       }
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, LIST, OPTIONS');

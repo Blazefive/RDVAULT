@@ -149,11 +149,33 @@ function loadConfig() {
         // APP_MODE : 'local' ou 'enterprise' (défaut)
         const appMode = (config.APP_MODE === 'local') ? 'local' : 'enterprise';
 
+        // SÉCURITÉ: Valider LDAP_AUTH_PATH (prévention path traversal)
+        let safeLdapPath = (config.LDAP_AUTH_PATH || DEFAULT_CONFIG.LDAP_AUTH_PATH).replace(/^\/+|\/+$/g, '');
+        if (!/^[a-zA-Z0-9\-_\/]+$/.test(safeLdapPath) || safeLdapPath.includes('..')) {
+          console.warn('[CONFIG] LDAP_AUTH_PATH invalide, utilisation du défaut');
+          safeLdapPath = DEFAULT_CONFIG.LDAP_AUTH_PATH;
+        }
+
+        // SÉCURITÉ: Valider RBI_PROXY_URL
+        let safeRbiUrl = config.RBI_PROXY_URL || DEFAULT_CONFIG.RBI_PROXY_URL;
+        if (safeRbiUrl) {
+          try {
+            const parsed = new URL(safeRbiUrl);
+            if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+              console.warn('[CONFIG] RBI_PROXY_URL invalide, ignorée');
+              safeRbiUrl = '';
+            }
+          } catch {
+            console.warn('[CONFIG] RBI_PROXY_URL invalide, ignorée');
+            safeRbiUrl = '';
+          }
+        }
+
         loadedConfig = {
-          VAULT_URL: appMode === 'local' ? 'http://127.0.0.1:0' : validVaultUrl, // sera remplacé dynamiquement
-          LDAP_AUTH_PATH: config.LDAP_AUTH_PATH || DEFAULT_CONFIG.LDAP_AUTH_PATH,
+          VAULT_URL: appMode === 'local' ? 'http://127.0.0.1:0' : validVaultUrl,
+          LDAP_AUTH_PATH: safeLdapPath,
           TRUSTED_DOMAINS: config.TRUSTED_DOMAINS || DEFAULT_CONFIG.TRUSTED_DOMAINS,
-          RBI_PROXY_URL: config.RBI_PROXY_URL || DEFAULT_CONFIG.RBI_PROXY_URL,
+          RBI_PROXY_URL: safeRbiUrl,
           APP_MODE: appMode,
           LANG: config.LANG || DEFAULT_CONFIG.LANG
         };
