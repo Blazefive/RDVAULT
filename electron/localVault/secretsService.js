@@ -47,8 +47,16 @@ function createEngine(name, owner, description = '') {
  */
 function deleteEngine(name) {
   const cleanName = name.replace(/\/+$/, '').replace(/^\/+/, '');
-  const result = getDb().prepare('DELETE FROM engines WHERE name = ?').run(cleanName);
-  if (result.changes === 0) return { success: false, error: 'Coffre introuvable' };
+  const db = getDb();
+  const engine = db.prepare('SELECT id FROM engines WHERE name = ?').get(cleanName);
+  if (!engine) return { success: false, error: 'Coffre introuvable' };
+  // SÉCURITÉ: Nettoyer les clés TOTP orphelines avant suppression
+  const secretKeys = db.prepare('SELECT DISTINCT key FROM secrets WHERE engine_id = ?').all(engine.id);
+  const totpStmt = db.prepare('DELETE FROM totp_keys WHERE name LIKE ?');
+  for (const { key } of secretKeys) {
+    totpStmt.run(`%${key}`);
+  }
+  db.prepare('DELETE FROM engines WHERE id = ?').run(engine.id);
   return { success: true };
 }
 

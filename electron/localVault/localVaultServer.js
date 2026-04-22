@@ -396,7 +396,12 @@ async function handleTotp(req, res, pathParts) {
 
   // /v1/TOTP/keys/:name
   if (pathParts[2] === 'keys' && pathParts[3]) {
-    const name = pathParts[3];
+    const name = decodeURIComponent(pathParts[3]);
+    // SÉCURITÉ: Valider le nom de la clé TOTP
+    if (!name || name.length > 512 || /[\x00-\x1F]/.test(name)) {
+      sendJson(res, 400, { errors: ['Invalid TOTP key name'] });
+      return;
+    }
     if (req.method === 'POST') {
       const body = await parseBody(req);
       const secret = body.url || body.key || '';

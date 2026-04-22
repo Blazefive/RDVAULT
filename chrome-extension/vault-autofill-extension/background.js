@@ -272,8 +272,9 @@ function matchesHostname(secretUrl, targetHostname) {
       return false;
     }
 
-    // Correspondance de sous-domaine (ex: app.example.com match example.com dans le secret)
-    if (targetHostname.endsWith(`.${secretHostname}`)) {
+    // SÉCURITÉ: Correspondance de sous-domaine — le secret doit être plus spécifique ou égal
+    // (ex: secret "app.example.com" peut matcher la page "example.com", mais pas l'inverse)
+    if (secretHostname.endsWith(`.${targetHostname}`)) {
       return true;
     }
 

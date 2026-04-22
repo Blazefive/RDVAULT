@@ -126,8 +126,9 @@ export function useAuth(options) {
       }
 
       // SÉCURITÉ: Capturer et effacer le mot de passe du state AVANT la requête réseau
-      const currentPassword = password;
+      let currentPassword = password;
       setPassword('');
+      try {
       const res = await axios.post(`${vaultUrl}/v1/${ldapAuthPath}/login/${encodeURIComponent(authUser)}`, { password: currentPassword }, axiosConfig({ headers: baseHeaders() }));
       const userToken = res.data?.auth?.client_token;
       setToken(userToken);
@@ -238,6 +239,10 @@ export function useAuth(options) {
 
       // Passer la fenêtre en mode principal (1280x800)
       if (window.electronWindow?.setMainMode) await window.electronWindow.setMainMode();
+      } finally {
+        // SÉCURITÉ: Effacer la copie locale du mot de passe
+        currentPassword = undefined;
+      }
     } catch (err) {
       // SÉCURITÉ: Différencier erreur réseau vs erreur d'authentification
       const isNetworkError = !err.response && (

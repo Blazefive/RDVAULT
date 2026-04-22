@@ -383,6 +383,15 @@ export function createVaultApi(vaultUrl, token, vaultNs) {
       const cleanName = engine.name.replace(/^\/+|\/+$/g, '');
       const cleanKey = secretName.replace(/^\/+|\/+$/g, '');
 
+      // SÉCURITÉ: Sanitiser les caractères de contrôle dangereux avant écriture
+      if (data && typeof data === 'object') {
+        for (const key of Object.keys(data)) {
+          if (typeof data[key] === 'string' && /[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(data[key])) {
+            data[key] = data[key].replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+          }
+        }
+      }
+
       if (engine.version === 2) {
         await axios.post(
           `${vaultUrl}/v1/${encodeEnginePath(cleanName)}/data/${encodeURIComponent(cleanKey)}`,

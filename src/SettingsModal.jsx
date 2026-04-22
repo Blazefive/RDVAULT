@@ -210,7 +210,21 @@ export default function SettingsModal({
   };
 
   const parseCSV = (content) => {
-    const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+    // Split lines respecting quoted fields with newlines
+    const lines = [];
+    let currentLine = '';
+    let inQuotes = false;
+    for (let i = 0; i < content.length; i++) {
+      const char = content[i];
+      if (char === '"') { inQuotes = !inQuotes; currentLine += char; }
+      else if ((char === '\n' || char === '\r') && !inQuotes) {
+        if (currentLine.trim()) lines.push(currentLine);
+        currentLine = '';
+        if (char === '\r' && content[i + 1] === '\n') i++;
+      } else { currentLine += char; }
+    }
+    if (currentLine.trim()) lines.push(currentLine);
+
     if (lines.length < 2) return [];
     // Détecter le séparateur (virgule ou point-virgule)
     const sep = lines[0].includes(';') ? ';' : ',';
@@ -219,10 +233,10 @@ export default function SettingsModal({
     for (let i = 1; i < lines.length; i++) {
       const values = [];
       let current = '';
-      let inQuotes = false;
+      let inFieldQuotes = false;
       for (const char of lines[i]) {
-        if (char === '"') { inQuotes = !inQuotes; continue; }
-        if (char === sep && !inQuotes) { values.push(current.trim()); current = ''; continue; }
+        if (char === '"') { inFieldQuotes = !inFieldQuotes; continue; }
+        if (char === sep && !inFieldQuotes) { values.push(current.trim()); current = ''; continue; }
         current += char;
       }
       values.push(current.trim());
@@ -288,6 +302,14 @@ export default function SettingsModal({
         if (!secret.name) continue;
         // Validation du nom : pas de path traversal, pas de caractères de contrôle
         if (secret.name.includes('..') || /[\x00-\x1F]/.test(secret.name) || secret.name.length > 512) continue;
+
+        // SÉCURITÉ: Sanitiser les champs non-password (retirer caractères de contrôle, limiter longueur)
+        const sanitizeField = (v) => typeof v === 'string' ? v.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 10000) : '';
+        secret.Username = sanitizeField(secret.Username);
+        secret.URL = sanitizeField(secret.URL);
+        secret.Notes = sanitizeField(secret.Notes);
+        secret.Tags = sanitizeField(secret.Tags);
+
         try {
           // Si mode skip, vérifier si le secret existe déjà
           if (importDuplicateMode === 'skip') {

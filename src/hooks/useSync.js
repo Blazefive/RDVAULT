@@ -200,7 +200,7 @@ export function useSync({
         );
       } catch (err) {
         window.electronCLI.sendSecretResponse(
-          { success: false, error: err.response?.status === 404 ? 'Secret introuvable' : (err.message || 'Erreur lecture secret') },
+          { success: false, error: err.response?.status === 404 ? 'Secret introuvable' : (err.response?.status === 403 ? 'Access denied' : 'Error reading secret') },
           requestId
         );
       }

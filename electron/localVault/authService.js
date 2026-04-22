@@ -65,7 +65,11 @@ function login(username, password) {
   const db = getDb();
   const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
 
-  if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+  // SÉCURITÉ: Toujours exécuter bcrypt même si l'utilisateur n'existe pas (timing-safe)
+  const DUMMY_HASH = '$2a$12$000000000000000000000uGWDOlC2oyzVNZ2N0V/KIpDaxHOnXa';
+  const hash = user ? user.password_hash : DUMMY_HASH;
+  const valid = bcrypt.compareSync(password, hash);
+  if (!user || !valid) {
     return { success: false, error: 'Identifiants invalides' };
   }
 
