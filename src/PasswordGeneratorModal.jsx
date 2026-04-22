@@ -71,20 +71,25 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
-  // Calculer l'entropie
+  // Calculer l'entropie (basé sur la taille réelle du pool de caractères)
   const calculateEntropy = (password) => {
     if (!password) return 0;
 
+    const ambiguous = 'lI1O0';
+    const countFiltered = (str) => excludeAmbiguous
+      ? str.split('').filter(c => !ambiguous.includes(c)).length
+      : str.length;
+
     let poolSize = 0;
-    if (includeUpperCase) poolSize += 26;
-    if (includeLowerCase) poolSize += 26;
-    if (includeDigits) poolSize += 10;
-    if (includeSpecial) poolSize += 14; // ! @ # $ % & * + = ? ^ ~ ,
-    if (includeBrackets) poolSize += 8; // [ ] { } ( ) < >
+    if (includeUpperCase) poolSize += countFiltered('ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+    if (includeLowerCase) poolSize += countFiltered('abcdefghijklmnopqrstuvwxyz');
+    if (includeDigits) poolSize += countFiltered('0123456789');
+    if (includeSpecial) poolSize += '!@#$%&*+=?^~,'.length; // 13 chars
+    if (includeBrackets) poolSize += '[]{}()<>'.length; // 8 chars
     if (includeMinus) poolSize += 1;
     if (includeUnderline) poolSize += 1;
-    if (includeLatin1) poolSize += 128;
-    if (customChars) poolSize += customChars.length;
+    if (includeLatin1) poolSize += 'ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĲĳĴĵĶķĸĹĺĻļĽľĿŀŁłŃńŅņŇňŉŊŋŌōŎŏŐőŒœŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽž'.length;
+    if (customChars) poolSize += new Set(customChars).size; // dédupliquer
 
     if (poolSize === 0) return 0;
     return Math.floor(password.length * Math.log2(poolSize));
