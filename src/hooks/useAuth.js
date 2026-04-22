@@ -64,9 +64,16 @@ export function useAuth(options) {
     if (window.electronCLI?.revokeSession) {
       window.electronCLI.revokeSession().catch(() => {});
     }
+    // SÉCURITÉ: Nettoyer toutes les données sensibles du localStorage
     Object.keys(localStorage).forEach(key => {
       if (key.startsWith('vault-audit-ssh-')) localStorage.removeItem(key);
     });
+    localStorage.removeItem('rdvault-cli-session');
+    localStorage.removeItem('rdvault-cli-auto-approve');
+    localStorage.removeItem('rdvault-cli-list-approve');
+    localStorage.removeItem('rdvault-user-tags');
+    // Nettoyer le sessionStorage (brute force state)
+    try { sessionStorage.removeItem('rdvault-bf-state'); } catch { /* ignore */ }
     setVisiblePasswords({});
     setAllVaultSecrets([]);
     setSelectedSecrets(new Set());

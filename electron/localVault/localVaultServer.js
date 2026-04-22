@@ -63,7 +63,12 @@ function parseBody(req) {
 }
 
 function sendJson(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'X-Content-Type-Options': 'nosniff',
+    'Cache-Control': 'no-store',
+    'X-Frame-Options': 'DENY'
+  });
   res.end(JSON.stringify(data));
 }
 
@@ -229,6 +234,15 @@ async function handleSys(req, res, pathParts, query) {
   // DELETE /v1/sys/mounts/:path — supprimer un engine
   if (req.method === 'DELETE' && subPath.startsWith('mounts/')) {
     const engineName = subPath.substring('mounts/'.length).replace(/\/+$/, '');
+    // SÉCURITÉ: Vérifier que l'utilisateur est propriétaire ou admin
+    const engineInfo = secretsService.getEngine(engineName);
+    if (engineInfo) {
+      const isOwner = engineInfo.owner === session.username;
+      if (!isOwner && !session.isAdmin) {
+        sendJson(res, 403, { errors: ['Permission denied: not the owner'] });
+        return;
+      }
+    }
     const result = secretsService.deleteEngine(engineName);
     if (!result.success) { sendJson(res, 400, { errors: [result.error] }); return; }
     sendJson(res, 204, {});

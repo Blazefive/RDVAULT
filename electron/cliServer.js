@@ -222,6 +222,8 @@ function startCLIServer(mainWindow, readSecretFn, listEnginesCallback = null, li
     cliServer = http.createServer(async (req, res) => {
       // Headers de réponse communs
       res.setHeader('Content-Type', 'application/json');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'no-store');
 
       // Rate limiting
       const clientIp = req.socket.remoteAddress;

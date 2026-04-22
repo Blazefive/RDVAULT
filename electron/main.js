@@ -498,6 +498,9 @@ function startSyncServer() {
     // puissent accéder à 127.0.0.1 depuis un service worker
     res.setHeader('Access-Control-Allow-Private-Network', 'true');
     res.setHeader('Content-Type', 'application/json');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Frame-Options', 'DENY');
 
     if (req.method === 'OPTIONS') {
       // Répondre au preflight uniquement si l'origin est une extension Chrome
@@ -809,6 +812,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      webviewTag: false,
       spellcheck: false,
       v8CacheOptions: 'code',
       devTools: !app.isPackaged,

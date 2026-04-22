@@ -69,7 +69,7 @@ function deleteEngine(name) {
  */
 function getEngine(name) {
   const cleanName = name.replace(/\/+$/, '').replace(/^\/+/, '');
-  return getDb().prepare('SELECT id, name, version FROM engines WHERE name = ?').get(cleanName) || null;
+  return getDb().prepare('SELECT id, name, version, owner FROM engines WHERE name = ?').get(cleanName) || null;
 }
 
 // ========================================
