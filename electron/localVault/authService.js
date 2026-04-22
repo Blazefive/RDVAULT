@@ -123,10 +123,18 @@ function validateToken(token) {
  * @param {string} token
  */
 function revokeToken(token) {
-  const session = activeSessions.get(token);
-  if (session) {
-    console.log(`[LocalVault] Déconnexion: ${session.username}`);
-    activeSessions.delete(token);
+  if (!token || typeof token !== 'string') return;
+  // Timing-safe lookup (même pattern que validateToken)
+  for (const [storedToken, session] of activeSessions) {
+    try {
+      const hmacA = crypto.createHmac('sha256', hmacKey).update(token).digest();
+      const hmacB = crypto.createHmac('sha256', hmacKey).update(storedToken).digest();
+      if (crypto.timingSafeEqual(hmacA, hmacB)) {
+        console.log(`[LocalVault] Déconnexion: ${session.username}`);
+        activeSessions.delete(storedToken);
+        return;
+      }
+    } catch { continue; }
   }
 }
 

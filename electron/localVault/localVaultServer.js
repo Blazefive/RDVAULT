@@ -74,7 +74,12 @@ function getToken(req) {
 function authenticate(req) {
   const token = getToken(req);
   if (!token) return null;
-  return authService.validateToken(token);
+  const session = authService.validateToken(token);
+  // Si le token a expiré, nettoyer aussi la clé de session
+  if (!session && token) {
+    sessionKeys.delete(token);
+  }
+  return session;
 }
 
 /** Récupère la clé de chiffrement dérivée depuis la session */

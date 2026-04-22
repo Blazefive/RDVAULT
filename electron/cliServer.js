@@ -104,6 +104,15 @@ function verifyCLIToken(req) {
  */
 function auditLog(action, secretPath, approved, details = '') {
   try {
+    // Rotation : tronquer si > 5 MB
+    try {
+      const stats = fs.statSync(CLI_AUDIT_FILE);
+      if (stats.size > 5 * 1024 * 1024) {
+        const content = fs.readFileSync(CLI_AUDIT_FILE, 'utf8');
+        const lines = content.split('\n');
+        fs.writeFileSync(CLI_AUDIT_FILE, lines.slice(-500).join('\n') + '\n');
+      }
+    } catch { /* fichier n'existe pas encore */ }
     // Hash le chemin du secret pour ne pas exposer les noms en clair
     const hashedPath = crypto.createHash('sha256').update(secretPath).digest('hex').slice(0, 16);
     const entry = `${new Date().toISOString()} | ${action} | hash:${hashedPath} | ${approved ? 'APPROVED' : 'DENIED'} | ${details}\n`;

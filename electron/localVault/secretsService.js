@@ -50,11 +50,13 @@ function deleteEngine(name) {
   const db = getDb();
   const engine = db.prepare('SELECT id FROM engines WHERE name = ?').get(cleanName);
   if (!engine) return { success: false, error: 'Coffre introuvable' };
-  // SÉCURITÉ: Nettoyer les clés TOTP orphelines avant suppression
+  // SÉCURITÉ: Nettoyer les clés TOTP orphelines avant suppression (exact match, pas LIKE)
   const secretKeys = db.prepare('SELECT DISTINCT key FROM secrets WHERE engine_id = ?').all(engine.id);
-  const totpStmt = db.prepare('DELETE FROM totp_keys WHERE name LIKE ?');
+  const totpStmt = db.prepare('DELETE FROM totp_keys WHERE name = ?');
   for (const { key } of secretKeys) {
-    totpStmt.run(`%${key}`);
+    // Les clés TOTP sont nommées avec le format ENGINE-SECRETNAME
+    totpStmt.run(key);
+    totpStmt.run(`${cleanName}-${key}`);
   }
   db.prepare('DELETE FROM engines WHERE id = ?').run(engine.id);
   return { success: true };
@@ -124,20 +126,25 @@ function listKeys(engineId, prefix = '') {
 function writeSecret(engineId, key, data, encKey) {
   const db = getDb();
 
-  // Déterminer le prochain numéro de version
-  const latest = db.prepare(
-    'SELECT MAX(version) as maxVer FROM secrets WHERE engine_id = ? AND key = ?'
-  ).get(engineId, key);
-  const nextVersion = (latest?.maxVer || 0) + 1;
-
   // Chiffrer les données
   const jsonData = JSON.stringify(data);
   const { encrypted, iv } = encrypt(jsonData, encKey);
 
-  db.prepare(
-    'INSERT INTO secrets (engine_id, key, version, data, iv) VALUES (?, ?, ?, ?, ?)'
-  ).run(engineId, key, nextVersion, encrypted, iv);
+  // Transaction atomique pour éviter les race conditions sur le numéro de version
+  const insertTx = db.transaction(() => {
+    const latest = db.prepare(
+      'SELECT MAX(version) as maxVer FROM secrets WHERE engine_id = ? AND key = ?'
+    ).get(engineId, key);
+    const nextVersion = (latest?.maxVer || 0) + 1;
 
+    db.prepare(
+      'INSERT INTO secrets (engine_id, key, version, data, iv) VALUES (?, ?, ?, ?, ?)'
+    ).run(engineId, key, nextVersion, encrypted, iv);
+
+    return nextVersion;
+  });
+
+  const nextVersion = insertTx();
   return { success: true, version: nextVersion };
 }
 
