@@ -1,6 +1,13 @@
 // src/utils/tagManager.js
 // Utilitaire pour gérer les tags personnalisés et partagés
 
+import secureLogger from '../secureLogger';
+import { sanitizeErrorMessage } from './security';
+
+// SÉCURITÉ : ne jamais logger l'objet d'erreur axios complet (il contient la
+// requête, les headers dont X-Vault-Token, et la réponse). On ne logge qu'un
+// message générique via sanitizeErrorMessage(err).
+
 /**
  * Tags personnalisés : stockés localement pour chaque utilisateur
  * Tags partagés : stockés dans Vault sous un engine spécial "tags-shared"
@@ -21,7 +28,7 @@ export function getUserTags() {
     const stored = localStorage.getItem(TAGS_STORAGE_KEY);
     return stored ? JSON.parse(stored) : [];
   } catch (err) {
-    console.error('Erreur lecture tags utilisateur:', err);
+    secureLogger.error('[TAGS] Erreur lecture tags utilisateur:', sanitizeErrorMessage(err));
     return [];
   }
 }
@@ -35,7 +42,7 @@ export function saveUserTags(tags) {
     const uniqueTags = [...new Set(tags)].filter(t => t && t.trim());
     localStorage.setItem(TAGS_STORAGE_KEY, JSON.stringify(uniqueTags));
   } catch (err) {
-    console.error('Erreur sauvegarde tags utilisateur:', err);
+    secureLogger.error('[TAGS] Erreur sauvegarde tags utilisateur:', sanitizeErrorMessage(err));
   }
 }
 
@@ -242,25 +249,25 @@ export async function migrateTagsToShared(vaultUrl, secrets, headers, axiosConfi
   try {
     // 1. Extraire tous les tags depuis les secrets
     const discoveredTags = extractTagsFromSecrets(secrets);
-    console.log('[TAG-MIGRATION] Tags découverts dans les secrets:', discoveredTags);
+    secureLogger.debug('[TAG-MIGRATION] Tags découverts dans les secrets:', discoveredTags.length);
 
     // 2. Récupérer les tags partagés existants
     const existingSharedTags = await getSharedTags(vaultUrl, headers, axiosConfig, axios);
-    console.log('[TAG-MIGRATION] Tags partagés existants:', existingSharedTags);
+    secureLogger.debug('[TAG-MIGRATION] Tags partagés existants:', existingSharedTags.length);
 
     // 3. Fusionner les tags (sans doublons)
     const existingSet = new Set(existingSharedTags);
     const newTags = discoveredTags.filter(tag => !existingSet.has(tag));
 
-    console.log('[TAG-MIGRATION] Nouveaux tags à ajouter:', newTags);
+    secureLogger.debug('[TAG-MIGRATION] Nouveaux tags à ajouter:', newTags.length);
 
     // 4. Sauvegarder la liste complète dans le coffre partagé
     if (newTags.length > 0) {
       const allTags = [...existingSharedTags, ...newTags].sort();
       await saveSharedTags(vaultUrl, allTags, headers, axiosConfig, axios);
-      console.log('[TAG-MIGRATION] Migration terminée avec succès');
+      secureLogger.debug('[TAG-MIGRATION] Migration terminée avec succès');
     } else {
-      console.log('[TAG-MIGRATION] Aucun nouveau tag à migrer');
+      secureLogger.debug('[TAG-MIGRATION] Aucun nouveau tag à migrer');
     }
 
     // 5. Retourner les statistiques
@@ -270,7 +277,7 @@ export async function migrateTagsToShared(vaultUrl, secrets, headers, axiosConfi
       existing: existingSharedTags.length
     };
   } catch (err) {
-    console.error('[TAG-MIGRATION] Erreur lors de la migration:', err);
+    secureLogger.error('[TAG-MIGRATION] Erreur lors de la migration:', sanitizeErrorMessage(err));
     throw err;
   }
 }

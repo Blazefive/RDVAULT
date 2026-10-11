@@ -1,0 +1,63 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Espace membre</title>
+<style>
+  /* Motif « sr-only » de Tailwind (proche du « visually-hidden » de Bootstrap) */
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
+  /* Motif « screen-reader-text » de WordPress : clip rect(1px…) + clip-path inset(50%) */
+  .screen-reader-text { position: absolute !important; width: 1px; height: 1px; margin: -1px; padding: 0;
+    border: 0; overflow: hidden; clip: rect(1px, 1px, 1px, 1px); clip-path: inset(50%); }
+  /* Champs de taille NORMALE, à l'écran, rendus invisibles par un seul mécanisme chacun */
+  .trap-clippath { position: absolute; left: 700px; top: 110px; width: 220px; height: 30px; clip-path: inset(50%); }
+  .trap-clip { position: absolute; left: 700px; top: 160px; width: 220px; height: 30px; clip: rect(0 0 0 0); }
+  .trap-tiny { width: 1px; height: 1px; padding: 0; border: 0; margin: 0; }
+  .box-1px { position: absolute; left: 700px; top: 210px; width: 1px; height: 1px; overflow: hidden; }
+  .box-1px input, .sr-only input { width: 200px; height: 30px; }
+  .wrap-clippath { clip-path: inset(50%); }
+  .wrap-clippath input { width: 200px; height: 30px; }
+  /* Garde-fous : découpages DÉCORATIFS des vrais champs (coins arrondis, polygone couvrant toute
+     la boîte), qui ne doivent pas les faire passer pour des pièges */
+  .deco-polygon { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); padding: 4px 0; }
+  #sp { clip-path: inset(0 round 6px); }
+</style></head>
+<body>
+<h1>Espace membre</h1>
+<!-- Formulaire de CONNEXION (un seul mot de passe visible) truffé de pots de miel anti-robot
+     « sr-only » : champs de 1×1 px et/ou découpés par clip / clip-path, sur le champ lui-même ou
+     sur un conteneur. Aucun indicateur de connexion/inscription dans l'id, le nom ou l'action :
+     seule l'heuristique « plus d'un mot de passe = inscription » décide. Chaque piège, compté à
+     tort, ferait passer le formulaire pour une inscription (aucune icône). Les pièges ont des
+     attributs plus « forts » que les vrais champs (name="password", autocomplete) : s'ils étaient
+     détectés, ils seraient remplis à la place des vrais. Tous portent data-trap. -->
+<form id="f" onsubmit="return false">
+  <div class="deco-polygon"><label>Identifiant <input type="text" id="su" name="ident" autocomplete="username"></label></div>
+  <!-- Identifiant piège ENTRE l'identifiant et le mot de passe : l'ancrage sur le mot de passe et
+       ses attributs (name="username") le classeraient devant le vrai champ, qui serait ignoré -->
+  <input type="text" class="sr-only" id="trap_user_sr" name="username" autocomplete="username" tabindex="-1" data-trap>
+  <label>Mot de passe <input type="password" id="sp" name="pw" autocomplete="current-password"></label><br>
+  <!-- 1×1 px + clip (Tailwind sr-only) sur le champ -->
+  <input type="password" class="sr-only" id="trap_pw_sr" name="password" autocomplete="current-password" tabindex="-1" data-trap>
+  <!-- 1×1 px + clip rect(1px…) + clip-path inset(50%) (WordPress) sur le champ -->
+  <input type="password" class="screen-reader-text" id="trap_pw_wp" name="password_confirm" autocomplete="current-password" tabindex="-1" data-trap>
+  <!-- Taille normale, clip-path inset(50%) seul -->
+  <input type="password" class="trap-clippath" id="trap_pw_clippath" name="password2" autocomplete="current-password" tabindex="-1" data-trap>
+  <!-- Taille normale, clip rect(0 0 0 0) seul -->
+  <input type="password" class="trap-clip" id="trap_pw_clip" name="password3" autocomplete="current-password" tabindex="-1" data-trap>
+  <!-- 1×1 px seul, sans découpage -->
+  <input type="password" class="trap-tiny" id="trap_pw_tiny" name="password4" autocomplete="current-password" tabindex="-1" data-trap>
+  <!-- Champ de taille normale dans un conteneur sr-only (1×1 px, overflow:hidden, clip) -->
+  <div class="sr-only"><input type="password" id="trap_pw_wrapsr" name="password5" autocomplete="current-password" tabindex="-1" data-trap></div>
+  <!-- Champ de taille normale dans un conteneur de 1×1 px à overflow:hidden, SANS clip -->
+  <div class="box-1px"><input type="password" id="trap_pw_box" name="password6" autocomplete="current-password" tabindex="-1" data-trap></div>
+  <!-- Champ de taille normale dans un conteneur pleine largeur découpé par clip-path inset(50%) -->
+  <div class="wrap-clippath"><input type="password" id="trap_pw_wrapcp" name="password7" autocomplete="current-password" tabindex="-1" data-trap></div>
+  <button type="button" id="go">Valider</button>
+</form>
+<script>
+go.addEventListener('click', () => {
+  const traps = {};
+  document.querySelectorAll('[data-trap]').forEach(el => { traps[el.id] = el.value; });
+  fetch('/submit', { method: 'POST', body: JSON.stringify({ page: 'honeypot-sronly', user: su.value, password: sp.value, traps }) });
+});
+</script>
+</body></html>

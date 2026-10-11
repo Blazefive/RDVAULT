@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "HashiCorp Vault ile form otomatik doldurma"
+  },
+  "popupLoading": {
+    "message": "Yükleniyor..."
+  },
+  "popupVaultUrlLabel": {
+    "message": "Vault URL'si"
+  },
+  "popupNamespaceLabel": {
+    "message": "Namespace (isteğe bağlı)"
+  },
+  "popupNamespacePlaceholder": {
+    "message": "Kullanılmıyorsa boş bırakın"
+  },
+  "popupUsernameLabel": {
+    "message": "LDAP kullanıcısı"
+  },
+  "popupUsernamePlaceholder": {
+    "message": "Kullanıcı adı"
+  },
+  "popupPassword": {
+    "message": "Şifre"
+  },
+  "popupLoginButton": {
+    "message": "Oturum aç"
+  },
+  "popupConnectedAs": {
+    "message": "Oturum açan:"
+  },
+  "popupRefreshButton": {
+    "message": "Önbelleği yenile"
+  },
+  "popupLogoutButton": {
+    "message": "Oturumu kapat"
+  },
+  "popupDefaultUser": {
+    "message": "Kullanıcı"
+  },
+  "popupFillRequired": {
+    "message": "Lütfen tüm zorunlu alanları doldurun"
+  },
+  "popupLoggingIn": {
+    "message": "Oturum açılıyor..."
+  },
+  "popupLoginSuccess": {
+    "message": "Oturum açıldı"
+  },
+  "popupLogoutSuccess": {
+    "message": "Oturum kapatıldı"
+  },
+  "popupRefreshing": {
+    "message": "Yenileniyor..."
+  },
+  "popupCacheRefreshed": {
+    "message": "Önbellek yenilendi ($COUNT$ gizli bilgi)",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "42"
+      }
+    }
+  },
+  "popupError": {
+    "message": "Hata: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Authentication failed"
+      }
+    }
+  },
+  "autofillIconTitle": {
+    "message": "Vault ile otomatik doldur"
+  },
+  "autofillHeader": {
+    "message": "Vault kimlik bilgileri"
+  },
+  "autofillNoResults": {
+    "message": "Bu site için kimlik bilgisi bulunamadı"
+  },
+  "autofillUnnamed": {
+    "message": "Adsız"
+  },
+  "autofillNoUsername": {
+    "message": "(kullanıcı adı yok)"
+  },
+  "autofillLoading": {
+    "message": "Kimlik bilgisi alınıyor..."
+  },
+  "autofillFetchFailed": {
+    "message": "Kimlik bilgisi alınamadı"
+  },
+  "bgErrUnauthorizedSource": {
+    "message": "Yetkisiz kaynak"
+  },
+  "bgErrInsecurePage": {
+    "message": "Güvenli olmayan sayfa"
+  },
+  "bgErrNameRequired": {
+    "message": "Gizli bilgi adı gerekli"
+  },
+  "bgErrNotFound": {
+    "message": "Bu site için kimlik bilgisi bulunamadı"
+  },
+  "bgErrInvalidVaultUrl": {
+    "message": "Geçersiz Vault URL'si (https zorunlu)"
+  },
+  "bgErrAuthFailed": {
+    "message": "Kimlik doğrulama başarısız oldu"
+  },
+  "bgErrInternal": {
+    "message": "Dahili hata"
+  }
+}

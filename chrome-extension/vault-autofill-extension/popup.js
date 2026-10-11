@@ -1,16 +1,61 @@
 /**
  * popup.js - Interface popup pour Vault Autofill
  *
- * Affiche le statut de connexion avec l'application Desktop Vault.
- * Actualise automatiquement toutes les 2 secondes.
+ * Affiche le statut de connexion avec l'application Desktop RDVAULT.
+ * Actualise automatiquement toutes les 10 secondes (2 s pendant l'appairage).
  *
  * @author Vault Autofill Team
- * @version 2.0.0
+ * @version 2.1.0
  */
 
 'use strict';
 
+/** Intervalle de vérification du statut (ms) */
+const STATUS_POLL_INTERVAL_MS = 10000;
+
+/** Intervalle pendant l'attente d'appairage (aucun appel réseau : le background répond en mémoire) */
+const PAIRING_POLL_INTERVAL_MS = 2000;
+
+/**
+ * Texte traduit dans la langue du navigateur (chrome.i18n, _locales/<langue>/messages.json,
+ * repli « en »). `fallback` est le texte français d'origine, identique à _locales/fr : il ne
+ * sert que hors extension (tests) ; $1… y sont remplacés comme par Chrome.
+ *
+ * @param {string} key - Nom du message
+ * @param {string} fallback - Texte français (repli)
+ * @param {string|string[]} [subs] - Substitutions $1…$9
+ * @returns {string}
+ */
+function msg(key, fallback, subs) {
+  const list = subs === undefined ? [] : [].concat(subs).map(String);
+  try {
+    if (typeof chrome !== 'undefined' && chrome.i18n && typeof chrome.i18n.getMessage === 'function') {
+      const text = chrome.i18n.getMessage(key, list);
+      if (text) return text;
+    }
+  } catch (e) { /* API indisponible : repli */ }
+  return fallback.replace(/\$([1-9])/g, (m, n) => (list[n - 1] !== undefined ? list[n - 1] : ''));
+}
+
+/**
+ * Traduit les textes statiques de popup.html (attribut data-i18n : le texte français du HTML
+ * sert de repli) et applique la langue / le sens d'écriture (arabe : de droite à gauche).
+ */
+function localizePage() {
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    el.textContent = msg(el.getAttribute('data-i18n'), el.textContent.replace(/\s+/g, ' ').trim());
+  });
+  try {
+    if (typeof chrome !== 'undefined' && chrome.i18n && chrome.i18n.getUILanguage) {
+      document.documentElement.lang = chrome.i18n.getUILanguage();
+    }
+  } catch (e) { /* lang="fr" conservé */ }
+  document.documentElement.dir = msg('@@bidi_dir', 'ltr');
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+  localizePage();
+
   // ============================================================================
   // ÉLÉMENTS DOM
   // ============================================================================
@@ -19,22 +64,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statusText = document.getElementById('statusText');
   const statusDetails = document.getElementById('statusDetails');
 
-  // ============================================================================
-  // UTILITAIRES DE SÉCURITÉ
-  // ============================================================================
+  let pollTimer = null;
 
-  /**
-   * Échappe les caractères HTML pour prévenir les attaques XSS
-   *
-   * @param {string} text - Texte à échapper
-   * @returns {string} Texte échappé sécurisé
-   */
-  function escapeHtml(text) {
-    if (!text || typeof text !== 'string') return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
+  // ============================================================================
+  // UTILITAIRES
+  // ============================================================================
 
   /**
    * Crée un élément DOM de manière sécurisée
@@ -83,6 +117,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  /**
+   * Programme la prochaine vérification
+   *
+   * @param {number} delayMs - Délai en ms
+   */
+  function scheduleNextCheck(delayMs) {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = setTimeout(checkDesktopStatus, delayMs);
+  }
+
   // ============================================================================
   // GESTION DU STATUT
   // ============================================================================
@@ -91,17 +135,28 @@ document.addEventListener('DOMContentLoaded', async () => {
    * Vérifie le statut de connexion avec l'application Desktop
    */
   async function checkDesktopStatus() {
+    let nextDelay = STATUS_POLL_INTERVAL_MS;
+
     try {
       const response = await chrome.runtime.sendMessage({ type: 'CHECK_AUTH' });
 
       if (response && response.authenticated) {
         showConnected(response);
+      } else if (response && response.pairing === 'pending') {
+        showPairingPending();
+        nextDelay = PAIRING_POLL_INTERVAL_MS;
+      } else if (response && response.pairing === 'denied') {
+        showPairingDenied();
+      } else if (response && response.reachable === false) {
+        showDisconnected(msg('popupDesktopUnavailable', 'Desktop non disponible'));
       } else {
-        showDisconnected('Desktop démarré mais non connecté');
+        showDisconnected(msg('popupDesktopNotConnected', 'Desktop démarré mais non connecté'));
       }
     } catch (err) {
-      showDisconnected('Desktop non disponible');
+      showDisconnected(msg('popupDesktopUnavailable', 'Desktop non disponible'));
     }
+
+    scheduleNextCheck(nextDelay);
   }
 
   /**
@@ -111,30 +166,54 @@ document.addEventListener('DOMContentLoaded', async () => {
    */
   function showConnected(data) {
     statusIcon.className = 'status-icon connected';
-    statusText.textContent = 'Desktop connecté';
+    statusText.textContent = msg('popupDesktopConnected', 'Desktop connecté');
 
-    // Vider et reconstruire le contenu de manière sécurisée
     clearElement(statusDetails);
 
-    // Ligne utilisateur
+    // Ligne utilisateur (libellé traduit suivi d'une espace, comme auparavant)
     const userLine = createElement('p');
-    const userLabel = createElement('strong', {}, 'Utilisateur: ');
-    userLine.appendChild(userLabel);
-    userLine.appendChild(document.createTextNode(data.username || 'Inconnu'));
+    userLine.appendChild(createElement('strong', {}, msg('popupUserLabel', 'Utilisateur:') + ' '));
+    userLine.appendChild(document.createTextNode(data.username || msg('popupUnknown', 'Inconnu')));
     statusDetails.appendChild(userLine);
 
     // Ligne serveur
     const serverLine = createElement('p');
-    const serverLabel = createElement('strong', {}, 'Serveur: ');
-    serverLine.appendChild(serverLabel);
-    serverLine.appendChild(document.createTextNode(data.vaultUrl || 'Inconnu'));
+    serverLine.appendChild(createElement('strong', {}, msg('popupServerLabel', 'Serveur:') + ' '));
+    serverLine.appendChild(document.createTextNode(data.vaultUrl || msg('popupUnknown', 'Inconnu')));
     statusDetails.appendChild(serverLine);
 
     // Ligne statut actif
-    const activeLine = createElement('p', {
+    statusDetails.appendChild(createElement('p', {
       style: { color: '#10b981', marginTop: '8px' }
-    }, '✓ Auto-remplissage actif');
-    statusDetails.appendChild(activeLine);
+    }, msg('popupAutofillActive', '✓ Auto-remplissage actif')));
+  }
+
+  /**
+   * Affiche l'état "appairage en attente de confirmation dans RDVAULT"
+   */
+  function showPairingPending() {
+    statusIcon.className = 'status-icon pending';
+    statusText.textContent = msg('popupPairingPendingTitle', 'Confirmez l\'accès dans l\'application RDVAULT');
+
+    clearElement(statusDetails);
+
+    statusDetails.appendChild(createElement('p', {
+      style: { color: '#b45309' }
+    }, msg('popupPairingPendingDetail', 'Une demande d\'appairage a été envoyée à RDVAULT. Acceptez-la dans l\'application (délai : 60 secondes) pour activer l\'auto-remplissage.')));
+  }
+
+  /**
+   * Affiche l'état "accès refusé dans RDVAULT"
+   */
+  function showPairingDenied() {
+    statusIcon.className = 'status-icon disconnected';
+    statusText.textContent = msg('popupPairingDeniedTitle', 'Accès refusé dans RDVAULT');
+
+    clearElement(statusDetails);
+
+    statusDetails.appendChild(createElement('p', {
+      style: { color: '#ef4444' }
+    }, msg('popupPairingDeniedDetail', 'L\'appairage de cette extension a été refusé dans l\'application. Une nouvelle demande sera possible dans une minute.')));
   }
 
   /**
@@ -146,22 +225,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     statusIcon.className = 'status-icon disconnected';
     statusText.textContent = message;
 
-    // Vider et reconstruire le contenu de manière sécurisée
     clearElement(statusDetails);
 
-    const helpLine = createElement('p', {
+    statusDetails.appendChild(createElement('p', {
       style: { color: '#ef4444' }
-    }, 'Lancez l\'application Desktop et connectez-vous pour utiliser l\'auto-remplissage.');
-    statusDetails.appendChild(helpLine);
+    }, msg('popupDisconnectedDetail', 'Lancez l\'application Desktop et connectez-vous pour utiliser l\'auto-remplissage.')));
   }
 
   // ============================================================================
   // INITIALISATION
   // ============================================================================
 
-  // Vérifier au démarrage
+  // Vérifier au démarrage (programme ensuite les vérifications suivantes)
   await checkDesktopStatus();
-
-  // Vérifier périodiquement (toutes les 2 secondes)
-  setInterval(checkDesktopStatus, 2000);
 });

@@ -19,11 +19,38 @@
 // - Protection contre les caractères dangereux
 // - Limite de taille sur les fichiers joints (2 MB)
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import PasswordGeneratorModal from './PasswordGeneratorModal';
-import { analyzePassword } from './utils/passwordStrength';
-import { validateSecretName, validateUsername, validatePassword, isValidUrl } from './validation';
+import { useDialogA11y } from './components/common/Modal';
+import { analyzePassword, STRENGTH_LABEL_KEYS } from './utils/passwordStrength';
+import { validateSecretName, validateUsername, validatePassword, isValidUrl, translateValidationError } from './validation';
+import { copySecureWithAutoClear } from './utils/clipboard';
 import { useTranslation } from './i18n';
+
+// Longueur maximale des notes : même borne que validateSecret (validation.js), appliquée à
+// l'écriture. Contrôlée dès la fiche pour afficher une erreur traduite sous le champ plutôt
+// qu'un refus générique au moment de l'enregistrement.
+const NOTES_MAX_LENGTH = 10000;
+
+/**
+ * I18N-34 : nombre formaté selon la langue de l'interface (séparateur décimal : « 1,5 » en
+ * français / russe / allemand, « 1.5 » en anglais). Chiffres latins imposés (arabe compris) :
+ * toute l'interface et ses traductions affichent des chiffres latins.
+ */
+function formatDecimal(value, lang, maximumFractionDigits) {
+  try {
+    return new Intl.NumberFormat(lang, { maximumFractionDigits, numberingSystem: 'latn' }).format(value);
+  } catch {
+    return String(Number(value.toFixed(maximumFractionDigits)));
+  }
+}
+
+/** Taille de pièce jointe lisible : « 1,5 Mo », « 1.5 MB », « 512 KB »… (unité traduite) */
+function formatFileSize(bytes, lang, t) {
+  return bytes > 1024 * 1024
+    ? t('editSecret.sizeMB', { size: formatDecimal(bytes / 1024 / 1024, lang, 2) })
+    : t('editSecret.sizeKB', { size: formatDecimal(bytes / 1024, lang, 1) });
+}
 
 /**
  * Modal de création/édition de secrets Vault
@@ -33,11 +60,12 @@ import { useTranslation } from './i18n';
  * @param {Function} props.onClose - Callback de fermeture
  * @param {Function} props.onSave - Callback de sauvegarde avec les données validées
  * @param {boolean} props.totpExists - Si true, le nom ne peut pas être modifié (TOTP configuré)
+ * @param {Function} [props.showToast] - Affichage des messages (remplace alert(), non supporté par Electron)
  */
-export default function EditSecretModal({ initial, onClose, onSave, totpExists = false, existingTags = [] }) {
-  const { t } = useTranslation();
+export default function EditSecretModal({ initial, onClose, onSave, totpExists = false, existingTags = [], showToast }) {
+  const { t, lang } = useTranslation();
   const [showPasswordGenerator, setShowPasswordGenerator] = useState(false);
-  const [passwordStrength, setPasswordStrength] = useState({ entropy: 0, strength: '', color: '', percentage: 0 });
+  const [passwordStrength, setPasswordStrength] = useState({ entropy: 0, level: '', color: '', percentage: 0 });
   const [customFields, setCustomFields] = useState(initial?.customFields || []);
   const [attachments, setAttachments] = useState(initial?.attachments || []);
   const [entryType, setEntryType] = useState(initial?.entryType || 'secret'); // 'secret', 'ssh' ou 'folder'
@@ -55,8 +83,28 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
   const privateKeyRef = useRef(null);
   const publicKeyRef = useRef(null);
   const passphraseRef = useRef(null);
+  const panelRef = useRef(null);
+  const generatorHostRef = useRef(null);
+  // Libellés associés aux champs (htmlFor/id) : nom accessible + clic sur le libellé = focus du champ
+  const ids = {
+    title: useId(),
+    entryType: useId(),
+    name: useId(),
+    username: useId(),
+    password: useId(),
+    url: useId(),
+    privateKey: useId(),
+    publicKey: useId(),
+    passphrase: useId(),
+    notes: useId(),
+    tags: useId(),
+    customFields: useId(),
+    attachments: useId(),
+  };
 
   const isCreate = !initial || !initial.name || initial.name.endsWith('/');
+  // Dossier parent (préfixe « a/b/ ») lors d'une création dans un sous-dossier, vide à la racine
+  const parentPath = initial?.name?.endsWith('/') ? initial.name : '';
 
   // Calculer la force du mot de passe initial
   useEffect(() => {
@@ -78,14 +126,19 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
     nameRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    // Fermer sur ESC, sans bloquer la saisie normale
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+  // Fermer sur ESC, sans bloquer la saisie normale ; focus initial, piège de focus et retour
+  // du focus au déclencheur (hook du squelette commun Modal).
+  // BUG CORRIGÉ : Échap pressé dans le générateur de mot de passe (sous-modale) fermait AUSSI
+  // la fiche (saisie non enregistrée perdue) : la fiche ignore Échap tant que le générateur est
+  // ouvert (le hook ne réagit de toute façon que pour le dialogue du dessus).
+  useDialogA11y(panelRef, { onEscape: onClose, escapeDisabled: showPasswordGenerator });
+
+  // Sous-modale du générateur (composant sans gestion du focus) : focus dedans à l'ouverture,
+  // piège de focus, puis retour au bouton « Générer... » à la fermeture.
+  const generatorPanelRef = useMemo(() => ({
+    get current() { return generatorHostRef.current?.querySelector('.modal-panel') || null; }
+  }), []);
+  useDialogA11y(generatorPanelRef, { active: showPasswordGenerator });
 
   // ========================================
   // GESTION DES CHAMPS PERSONNALISÉS
@@ -116,7 +169,8 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
 
     files.forEach(file => {
       if (file.size > MAX_FILE_SIZE) {
-        alert(`Le fichier "${file.name}" est trop volumineux (${(file.size / 1024 / 1024).toFixed(2)} MB).\nTaille maximale: 2 MB`);
+        const message = t('editSecret.fileTooLarge', { name: file.name, size: formatDecimal(file.size / 1024 / 1024, lang, 2) });
+        if (typeof showToast === 'function') showToast(message, 'error', 4000);
         return;
       }
 
@@ -156,14 +210,10 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
    * Copie un texte dans le presse-papier
    * SÉCURITÉ: Ne pas logger le contenu copié
    */
-  const copyToClipboard = async (text, label) => {
+  const copyToClipboard = async (text) => {
     try {
-      // SÉCURITÉ: Utiliser le clipboard sécurisé avec auto-clear (12s) si disponible
-      if (window.electronClipboard?.copySecure) {
-        await window.electronClipboard.copySecure(text);
-      } else {
-        await navigator.clipboard.writeText(text);
-      }
+      // SÉCURITÉ: presse-papiers sécurisé avec auto-effacement (12 s) + fallback navigateur
+      await copySecureWithAutoClear(text);
     } catch (err) {
       // Erreur copie presse-papier
     }
@@ -180,23 +230,41 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
     // ========================================
     // VALIDATION DU NOM (obligatoire pour tous les types)
     // ========================================
+    // Messages de validation.js affichés dans la langue de l'interface (I18N-28)
     const nameValidation = validateSecretName(name);
     if (!nameValidation.valid) {
-      errors.name = nameValidation.error;
+      errors.name = translateValidationError(nameValidation, t);
+    }
+
+    // Notes (secrets et clés SSH ; champ absent pour un dossier)
+    const notes = notesRef.current?.value ?? '';
+    if (entryType !== 'folder' && notes.length > NOTES_MAX_LENGTH) {
+      errors.notes = t('error.notesTooLong');
     }
 
     // ========================================
     // VALIDATION SPÉCIFIQUE PAR TYPE
     // ========================================
     if (entryType === 'folder') {
-      // Pour les dossiers, seul le nom est validé
+      // Pour les dossiers, seul le nom est validé.
+      // En vue arborescence, le champ est pré-rempli avec le dossier courant (« a/b/ ») et
+      // useSecrets (handleEditSecretSave) préfixe ENCORE ce dossier courant : on retire donc
+      // le préfixe pré-rempli, sinon le dossier serait créé dans « a/b/a/b/x » au lieu de
+      // « a/b/x » annoncé en pied de modale.
+      const trimmedName = name.trim();
+      const folderName = parentPath && trimmedName.startsWith(parentPath)
+        ? trimmedName.slice(parentPath.length)
+        : name;
+      if (!errors.name && !folderName.replace(/\/+$/, '').trim()) {
+        errors.name = t('error.nameRequired');
+      }
       if (Object.keys(errors).length > 0) {
         setValidationErrors(errors);
         return;
       }
       setValidationErrors({});
       onSave({
-        name,
+        name: folderName,
         entryType: 'folder'
       });
       return;
@@ -219,7 +287,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
       if (passphrase) {
         const passphraseValidation = validatePassword(passphrase);
         if (!passphraseValidation.valid) {
-          errors.passphrase = passphraseValidation.error;
+          errors.passphrase = translateValidationError(passphraseValidation, t);
         }
       }
 
@@ -237,7 +305,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
         password: privateKey, // Clé privée → password
         url: publicKey, // Clé publique → url
         website: '', // Non utilisé pour SSH
-        notes: notesRef.current?.value ?? '',
+        notes,
         tags: tagsRef.current?.value ?? '',
         customFields,
         attachments,
@@ -255,7 +323,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
       if (username) {
         const usernameValidation = validateUsername(username);
         if (!usernameValidation.valid) {
-          errors.username = usernameValidation.error;
+          errors.username = translateValidationError(usernameValidation, t);
         }
       }
 
@@ -263,22 +331,22 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
       if (password) {
         const passwordValidation = validatePassword(password);
         if (!passwordValidation.valid) {
-          errors.password = passwordValidation.error;
+          errors.password = translateValidationError(passwordValidation, t);
         }
       }
 
       // Validation de l'URL (optionnelle mais si présente, doit être valide)
       if (url && !isValidUrl(url)) {
-        errors.url = 'URL invalide (protocoles autorisés: http, https, ftp, ftps, ssh, rdp, sftp)';
+        errors.url = t('error.invalidUrl');
       }
 
-      // Validation des champs personnalisés
+      // Validation des champs personnalisés (erreurs affichées sous chaque ligne de champ)
       customFields.forEach((field, index) => {
         if (field.key && field.key.length > 256) {
-          errors[`customField_${index}_key`] = `Nom du champ ${index + 1} trop long`;
+          errors[`customField_${index}_key`] = t('error.customFieldKeyTooLong', { index: index + 1 });
         }
         if (field.value && field.value.length > 10000) {
-          errors[`customField_${index}_value`] = `Valeur du champ ${index + 1} trop longue`;
+          errors[`customField_${index}_value`] = t('error.customFieldValueTooLong', { index: index + 1 });
         }
       });
 
@@ -294,7 +362,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
         username,
         password,
         url,
-        notes: notesRef.current?.value ?? '',
+        notes,
         tags: tagsRef.current?.value ?? '',
         customFields,
         attachments,
@@ -313,8 +381,10 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
    * Enregistre la position du mouseDown sur l'overlay
    * Utilisé pour différencier un clic d'un drag
    */
+  // BUG CORRIGÉ : le test sur la classe « modal-overlay » visait aussi le fond du générateur
+  // (même classe, rendu à l'intérieur de cet overlay) : un clic sur ce fond fermait la fiche.
   const handleOverlayMouseDown = (e) => {
-    if (e.target.className === 'modal-overlay') {
+    if (e.target === e.currentTarget) {
       setMouseDownPos({ x: e.clientX, y: e.clientY });
     }
   };
@@ -324,7 +394,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
    * Cela permet de distinguer un clic intentionnel d'un drag
    */
   const handleOverlayMouseUp = (e) => {
-    if (e.target.className === 'modal-overlay' && mouseDownPos) {
+    if (e.target === e.currentTarget && mouseDownPos) {
       const deltaX = Math.abs(e.clientX - mouseDownPos.x);
       const deltaY = Math.abs(e.clientY - mouseDownPos.y);
 
@@ -343,13 +413,16 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
       onMouseUp={handleOverlayMouseUp}
     >
       <div
+        ref={panelRef}
         className="modal-panel"
         role="dialog"
         aria-modal="true"
+        aria-labelledby={ids.title}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
-          <h2>
+          <h2 id={ids.title}>
             {isCreate
               ? (initial?.name?.endsWith('/')
                 ? <>{t('editSecret.newEntry')} <code style={{ fontWeight: 'normal', fontSize: '0.85em' }}>/{initial.name}</code></>
@@ -362,8 +435,8 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
           {/* Sélecteur de type d'entrée */}
           {isCreate && (
             <div className="form-group-vertical">
-              <label className="modal-label">{t('editSecret.entryType')}</label>
-              <div style={{ display: 'flex', gap: 'var(--sp-5)', marginBottom: 'var(--sp-3)' }}>
+              <div className="modal-label" id={ids.entryType}>{t('editSecret.entryType')}</div>
+              <div role="radiogroup" aria-labelledby={ids.entryType} style={{ display: 'flex', gap: 'var(--sp-5)', marginBottom: 'var(--sp-3)' }}>
                 <label className="checkbox-label">
                   <input
                     type="radio"
@@ -396,8 +469,9 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
           )}
 
           <div className="form-group-vertical">
-            <label className="modal-label">{t('editSecret.name')}</label>
+            <label className="modal-label" htmlFor={ids.name}>{t('editSecret.name')}</label>
             <input
+              id={ids.name}
               ref={nameRef}
               className="modal-input"
               style={{
@@ -423,7 +497,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
               </div>
             ) : !validationErrors.name && isCreate && entryType !== 'folder' && (
               <div className="form-hint">
-                💡 Utilisez "/" pour organiser vos secrets en dossiers (ex: "production/base-donnees/mysql")
+                💡 {t('editSecret.folderHint')}
               </div>
             )}
           </div>
@@ -432,8 +506,9 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
           {entryType === 'secret' && (
             <>
               <div className="form-group-vertical">
-                <label className="modal-label">{t('editSecret.username')}</label>
+                <label className="modal-label" htmlFor={ids.username}>{t('editSecret.username')}</label>
                 <input
+                  id={ids.username}
                   ref={usernameRef}
                   className="modal-input"
                   style={{ borderColor: validationErrors.username ? 'var(--error)' : undefined }}
@@ -448,9 +523,10 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
               </div>
 
               <div className="form-group-vertical">
-                <label className="modal-label">{t('editSecret.password')}</label>
+                <label className="modal-label" htmlFor={ids.password}>{t('editSecret.password')}</label>
                 <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>
                   <input
+                    id={ids.password}
                     ref={passwordRef}
                     className="modal-input"
                     style={{
@@ -491,18 +567,22 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                       />
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', marginTop: 'var(--sp-1)' }}>
-                      <span>{t('editSecret.strength')} <strong style={{ color: passwordStrength.color }}>{passwordStrength.strength}</strong></span>
-                      <span>{t('editSecret.entropy')} <strong>{passwordStrength.entropy} bits</strong></span>
+                      <span>{t('editSecret.strength')} <strong style={{ color: passwordStrength.color }}>{t(STRENGTH_LABEL_KEYS[passwordStrength.level])}</strong></span>
+                      <span>{t('editSecret.entropy')} <strong>{passwordStrength.entropy} {t('passwordGenerator.bits')}</strong></span>
                     </div>
                   </div>
                 )}
               </div>
 
+              {/* I18N-31 : URL et clés SSH sont des données techniques latines, saisies de gauche
+                  à droite même dans l'interface arabe (dir="ltr" : sans effet dans les autres langues) */}
               <div className="form-group-vertical">
-                <label className="modal-label">{t('editSecret.url')}</label>
+                <label className="modal-label" htmlFor={ids.url}>{t('editSecret.url')}</label>
                 <input
+                  id={ids.url}
                   ref={urlRef}
                   className="modal-input"
+                  dir="ltr"
                   style={{ borderColor: validationErrors.url ? 'var(--error)' : undefined }}
                   defaultValue={initial?.url || ''}
                   autoComplete="off"
@@ -520,11 +600,13 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
           {entryType === 'ssh' && (
             <>
               <div className="form-group-vertical">
-                <label className="modal-label">{t('editSecret.privateKey')}</label>
+                <label className="modal-label" htmlFor={ids.privateKey}>{t('editSecret.privateKey')}</label>
                 <div style={{ position: 'relative' }}>
                   <textarea
+                    id={ids.privateKey}
                     ref={privateKeyRef}
                     className="modal-textarea"
+                    dir="ltr"
                     defaultValue={initial?.password || ''}
                     placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
                     style={{
@@ -535,11 +617,12 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                     }}
                   />
                   <button
-                    onClick={() => copyToClipboard(privateKeyRef.current?.value, 'Clé privée')}
+                    onClick={() => copyToClipboard(privateKeyRef.current?.value)}
                     className="btn btn-sm btn-secondary"
                     type="button"
                     style={{ position: 'absolute', top: 'var(--sp-2)', right: 'var(--sp-2)' }}
-                    title="Copier la clé privée"
+                    title={t('editSecret.copyPrivateKey')}
+                    aria-label={t('editSecret.copyPrivateKey')}
                   >
                     📋
                   </button>
@@ -552,21 +635,24 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
               </div>
 
               <div className="form-group-vertical">
-                <label className="modal-label">{t('editSecret.publicKey')}</label>
+                <label className="modal-label" htmlFor={ids.publicKey}>{t('editSecret.publicKey')}</label>
                 <div style={{ position: 'relative' }}>
                   <textarea
+                    id={ids.publicKey}
                     ref={publicKeyRef}
                     className="modal-textarea"
+                    dir="ltr"
                     defaultValue={initial?.url || ''}
                     placeholder="ssh-rsa AAAAB3NzaC1yc2EA..."
                     style={{ fontFamily: 'monospace', fontSize: 'var(--text-sm)', minHeight: '80px' }}
                   />
                   <button
-                    onClick={() => copyToClipboard(publicKeyRef.current?.value, 'Clé publique')}
+                    onClick={() => copyToClipboard(publicKeyRef.current?.value)}
                     className="btn btn-sm btn-secondary"
                     type="button"
                     style={{ position: 'absolute', top: 'var(--sp-2)', right: 'var(--sp-2)' }}
-                    title="Copier la clé publique"
+                    title={t('editSecret.copyPublicKey')}
+                    aria-label={t('editSecret.copyPublicKey')}
                   >
                     📋
                   </button>
@@ -574,14 +660,15 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
               </div>
 
               <div className="form-group-vertical">
-                <label className="modal-label">{t('editSecret.passphrase')}</label>
+                <label className="modal-label" htmlFor={ids.passphrase}>{t('editSecret.passphrase')}</label>
                 <input
+                  id={ids.passphrase}
                   ref={passphraseRef}
                   className="modal-input"
                   type="password"
                   defaultValue={initial?.username || ''}
                   autoComplete="off"
-                  placeholder="Passphrase de protection"
+                  placeholder={t('sshKey.passphrasePlaceholder')}
                   style={{ borderColor: validationErrors.passphrase ? 'var(--error)' : undefined }}
                 />
                 {validationErrors.passphrase && (
@@ -597,18 +684,30 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
           {entryType !== 'folder' && (
             <>
               <div className="form-group-vertical">
-                <label className="modal-label">{t('editSecret.notes')}</label>
-                <textarea ref={notesRef} className="modal-textarea" defaultValue={initial?.notes || ''} />
+                <label className="modal-label" htmlFor={ids.notes}>{t('editSecret.notes')}</label>
+                <textarea
+                  id={ids.notes}
+                  ref={notesRef}
+                  className="modal-textarea"
+                  defaultValue={initial?.notes || ''}
+                  style={{ borderColor: validationErrors.notes ? 'var(--error)' : undefined }}
+                />
+                {validationErrors.notes && (
+                  <div className="form-hint" style={{ color: 'var(--error)' }}>
+                    ⚠️ {validationErrors.notes}
+                  </div>
+                )}
               </div>
 
               <div className="form-group-vertical" style={{ position: 'relative' }}>
-                <label className="modal-label">{t('editSecret.tags')}</label>
+                <label className="modal-label" htmlFor={ids.tags}>{t('editSecret.tags')}</label>
                 <input
+                  id={ids.tags}
                   ref={tagsRef}
                   className="modal-input"
                   defaultValue={initial?.tags || ''}
                   autoComplete="off"
-                  placeholder="ex: #dev #prod #important"
+                  placeholder={t('editSecret.tagsPlaceholder')}
                   onChange={(e) => {
                     const value = e.target.value;
                     // Extraire le dernier mot en cours de saisie
@@ -671,44 +770,67 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                     ))}
                   </div>
                 )}
-                <div className="form-hint">Séparez les tags par des espaces. Ex: #dev #prod</div>
+                <div className="form-hint">{t('editSecret.tagsHint')}</div>
               </div>
 
               {/* Champs personnalisés */}
               <div className="form-group-vertical">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--sp-2)' }}>
-                  <label className="modal-label" style={{ marginBottom: 0 }}>{t('editSecret.customFields')}</label>
+                  <div className="modal-label" id={ids.customFields} style={{ marginBottom: 0 }}>{t('editSecret.customFields')}</div>
                   <button onClick={addCustomField} className="btn btn-sm btn-secondary" type="button">+ {t('editSecret.addField')}</button>
                 </div>
                 {customFields.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+                  <div role="group" aria-labelledby={ids.customFields} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
                     {customFields.map((field, index) => (
-                      <div key={index} style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', background: 'var(--bg-surface)', padding: 'var(--sp-2)', borderRadius: 'var(--radius)' }}>
-                        <input
-                          className="modal-input"
-                          style={{ flex: '1', marginBottom: 0 }}
-                          placeholder={t('editSecret.fieldKey')}
-                          value={field.key}
-                          onChange={(e) => updateCustomField(index, 'key', e.target.value)}
-                        />
-                        <input
-                          className="modal-input"
-                          style={{ flex: '2', marginBottom: 0 }}
-                          type={field.protected ? 'password' : 'text'}
-                          placeholder={t('editSecret.fieldValue')}
-                          value={field.value}
-                          onChange={(e) => updateCustomField(index, 'value', e.target.value)}
-                        />
-                        <label className="checkbox-label" style={{ marginBottom: 0, whiteSpace: 'nowrap' }}>
+                      <React.Fragment key={index}>
+                        <div style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', background: 'var(--bg-surface)', padding: 'var(--sp-2)', borderRadius: 'var(--radius)' }}>
                           <input
-                            type="checkbox"
-                            checked={field.protected}
-                            onChange={(e) => updateCustomField(index, 'protected', e.target.checked)}
+                            className="modal-input"
+                            style={{ flex: '1', marginBottom: 0, borderColor: validationErrors[`customField_${index}_key`] ? 'var(--error)' : undefined }}
+                            placeholder={t('editSecret.fieldKey')}
+                            aria-label={t('editSecret.fieldKey')}
+                            value={field.key}
+                            onChange={(e) => updateCustomField(index, 'key', e.target.value)}
                           />
-                          <span>Protégé</span>
-                        </label>
-                        <button onClick={() => removeCustomField(index)} className="btn btn-sm btn-danger" type="button">×</button>
-                      </div>
+                          <input
+                            className="modal-input"
+                            style={{ flex: '2', marginBottom: 0, borderColor: validationErrors[`customField_${index}_value`] ? 'var(--error)' : undefined }}
+                            type={field.protected ? 'password' : 'text'}
+                            placeholder={t('editSecret.fieldValue')}
+                            aria-label={t('editSecret.fieldValue')}
+                            value={field.value}
+                            onChange={(e) => updateCustomField(index, 'value', e.target.value)}
+                          />
+                          <label className="checkbox-label" style={{ marginBottom: 0, whiteSpace: 'nowrap' }}>
+                            <input
+                              type="checkbox"
+                              checked={field.protected}
+                              onChange={(e) => updateCustomField(index, 'protected', e.target.checked)}
+                            />
+                            <span>{t('editSecret.protectedField')}</span>
+                          </label>
+                          <button
+                            onClick={() => removeCustomField(index)}
+                            className="btn btn-sm btn-danger"
+                            type="button"
+                            aria-label={t('editSecret.removeField')}
+                            title={t('editSecret.removeField')}
+                          >
+                            <span aria-hidden="true">×</span>
+                          </button>
+                        </div>
+                        {/* Erreurs de validation de la ligne (sans affichage, Enregistrer échouait en silence) */}
+                        {validationErrors[`customField_${index}_key`] && (
+                          <div className="form-hint" style={{ color: 'var(--error)' }}>
+                            ⚠️ {validationErrors[`customField_${index}_key`]}
+                          </div>
+                        )}
+                        {validationErrors[`customField_${index}_value`] && (
+                          <div className="form-hint" style={{ color: 'var(--error)' }}>
+                            ⚠️ {validationErrors[`customField_${index}_value`]}
+                          </div>
+                        )}
+                      </React.Fragment>
                     ))}
                   </div>
                 )}
@@ -718,32 +840,54 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
               <div className="form-group-vertical">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--sp-2)' }}>
                   <div>
-                    <label className="modal-label" style={{ marginBottom: 0 }}>{t('editSecret.attachments')}</label>
-                    <div className="form-hint" style={{ marginTop: 'var(--sp-1)' }}>Taille max: 2 MB par fichier</div>
+                    <div className="modal-label" id={ids.attachments} style={{ marginBottom: 0 }}>{t('editSecret.attachments')}</div>
+                    <div className="form-hint" style={{ marginTop: 'var(--sp-1)' }}>{t('editSecret.maxFileSize')}</div>
                   </div>
-                  <label className="btn btn-sm btn-secondary" style={{ cursor: 'pointer' }}>
+                  {/* Vrai bouton (focalisable, Entrée / Espace) qui ouvre le sélecteur de fichier
+                      masqué : l'ancien <label> stylé en bouton n'était pas atteignable au clavier. */}
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
                     + {t('editSecret.addAttachment')}
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      style={{ display: 'none' }}
-                      onChange={handleFileUpload}
-                    />
-                  </label>
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    style={{ display: 'none' }}
+                    onChange={handleFileUpload}
+                  />
                 </div>
                 {attachments.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
+                  <div role="group" aria-labelledby={ids.attachments} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)' }}>
                     {attachments.map((att, index) => (
                       <div key={index} style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'center', background: 'var(--bg-surface)', padding: 'var(--sp-2)', borderRadius: 'var(--radius)' }}>
                         <span style={{ flex: 1, fontSize: 'var(--text-sm)' }}>📎 {att.name}</span>
                         <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                          {att.size > 1024 * 1024
-                            ? `${(att.size / 1024 / 1024).toFixed(2)} MB`
-                            : `${(att.size / 1024).toFixed(1)} KB`}
+                          {formatFileSize(att.size, lang, t)}
                         </span>
-                        <button onClick={() => downloadAttachment(att)} className="btn btn-sm btn-secondary" type="button">⬇</button>
-                        <button onClick={() => removeAttachment(index)} className="btn btn-sm btn-danger" type="button">×</button>
+                        <button
+                          onClick={() => downloadAttachment(att)}
+                          className="btn btn-sm btn-secondary"
+                          type="button"
+                          aria-label={t('editSecret.downloadAttachment', { name: att.name })}
+                          title={t('editSecret.downloadAttachment', { name: att.name })}
+                        >
+                          <span aria-hidden="true">⬇</span>
+                        </button>
+                        <button
+                          onClick={() => removeAttachment(index)}
+                          className="btn btn-sm btn-danger"
+                          type="button"
+                          aria-label={t('editSecret.removeAttachment', { name: att.name })}
+                          title={t('editSecret.removeAttachment', { name: att.name })}
+                        >
+                          <span aria-hidden="true">×</span>
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -756,8 +900,8 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
         <div className="modal-footer">
           <span className="form-hint" style={{ flex: 1, marginTop: 0, marginBottom: 0 }}>
             {entryType === 'folder'
-              ? 'Un dossier vide sera créé dans le coffre sélectionné.'
-              : 'Les clés seront écrites sur le moteur sélectionné (kv1/kv2 détecté automatiquement).'}
+              ? <>{t('editSecret.folderWillBeCreatedIn')} <code>/{parentPath}</code></>
+              : t('editSecret.keysWrittenToEngine')}
           </span>
           <button onClick={onClose} className="btn btn-secondary" type="button">
             {t('editSecret.cancel')}
@@ -768,7 +912,8 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
         </div>
       </div>
 
-      {/* Modal de génération de mot de passe */}
+      {/* Modal de génération de mot de passe (hôte sans boîte : sert à localiser son panneau) */}
+      <div ref={generatorHostRef} style={{ display: 'contents' }}>
       {showPasswordGenerator && (
         <PasswordGeneratorModal
           onClose={() => setShowPasswordGenerator(false)}
@@ -783,6 +928,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
           }}
         />
       )}
+      </div>
     </div>
   );
 }

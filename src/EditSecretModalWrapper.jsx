@@ -11,7 +11,8 @@ export default function EditSecretModalWrapper({
   onSave,
   checkTotpExists,
   getTotpKeyName,
-  existingTags = []
+  existingTags = [],
+  showToast
 }) {
   const [totpExists, setTotpExistsState] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -37,6 +38,7 @@ export default function EditSecretModalWrapper({
       onClose={onClose}
       onSave={onSave}
       existingTags={existingTags}
+      showToast={showToast}
     />
   );
 }

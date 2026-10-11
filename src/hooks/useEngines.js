@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import axios from 'axios';
 import { encodeEnginePath, sanitizeErrorMessage } from '../utils/security';
+import secureLogger from '../secureLogger';
 
 export function useEngines(options) {
   const {
@@ -21,26 +22,27 @@ export function useEngines(options) {
   const [engineToDelete, setEngineToDelete] = useState(null);
   const [deletingEngine, setDeletingEngine] = useState(false);
   const [showEngineModal, setShowEngineModal] = useState(false);
-  const [loadingMounts, setLoadingMounts] = useState(false);
-  const [lastError, setLastError] = useState('');
-  const [lastUiError, setLastUiError] = useState('');
 
-  const fetchEnginesLikeUi = async (userToken = token) => {
+  /**
+   * Liste des coffres relue. Sélection : premier coffre (connexion), ou, avec `keepSelection`, le coffre
+   * affiché s'il existe encore (APP-8 : supprimer ou créer un AUTRE coffre renvoyait sur le premier coffre
+   * sans la remise à zéro d'un changement de coffre).
+   * @param {string} [userToken]
+   * @param {{ keepSelection?: boolean }} [options]
+   */
+  const fetchEnginesLikeUi = async (userToken = token, { keepSelection = false } = {}) => {
     const vaultApi = vaultApiRef.current;
     if (!vaultApi) return;
 
-    setLoadingMounts(true);
-    setLastError(''); setLastUiError('');
-    try {
-      const { engines, errors } = await vaultApi.fetchEnginesRaw(userToken);
-      if (errors.uiError) setLastUiError(errors.uiError);
-      if (errors.sysError) setLastError(errors.sysError);
-      setSecretEngines(engines);
-      setSelectedEngine(engines[0] || null);
-      if (!engines.length) setSecrets([]);
-    } finally {
-      setLoadingMounts(false);
-    }
+    const { engines, errors } = await vaultApi.fetchEnginesRaw(userToken);
+    // Les erreurs partielles (UI mounts / sys/mounts) ne sont plus stockées dans
+    // un état inutilisé (lastError/lastUiError) : simple trace de debug.
+    if (errors?.uiError) secureLogger.debug('[Engines] Erreur listing UI mounts');
+    if (errors?.sysError) secureLogger.debug('[Engines] Erreur listing sys/mounts');
+    setSecretEngines(engines);
+    // Coffre affiché conservé tel quel (même objet : sa liste n'est pas relue inutilement)
+    setSelectedEngine(prev => ((keepSelection && prev && engines.some(e => e.name === prev.name)) ? prev : (engines[0] || null)));
+    if (!engines.length) setSecrets([]);
   };
 
   const createEngine = async ({ name, version, description }) => {
@@ -52,7 +54,7 @@ export function useEngines(options) {
     const body = { type: 'kv', description: description || undefined, options: { version: String(version) } };
     try {
       await axios.post(`${vaultUrl}/v1/sys/mounts/${encodeEnginePath(mountPath)}`, body, axiosConfig({ headers: baseHeaders() }));
-      await fetchEnginesLikeUi(token);
+      await fetchEnginesLikeUi(token, { keepSelection: true });
       const created = { name: mountPath, version: Number(version) === 2 ? 2 : 1 };
       setSelectedEngine(created);
       await fetchSecretsRef.current(created);
@@ -79,7 +81,9 @@ export function useEngines(options) {
       setDeletingEngine(true);
       await axios.delete(`${vaultUrl}/v1/sys/mounts/${encodeEnginePath(mountPath)}`, axiosConfig({ headers: baseHeaders() }));
       setEngineToDelete(null);
-      await fetchEnginesLikeUi(token);
+      // APP-8 : un AUTRE coffre supprimé → le coffre affiché reste affiché (avant : premier coffre de la
+      // liste, sans remise à zéro, mot de passe homonyme révélé en clair)
+      await fetchEnginesLikeUi(token, { keepSelection: true });
       if (selectedEngine?.name === mountPath) {
         setSelectedEngine(null);
         setSecrets([]);
@@ -100,8 +104,6 @@ export function useEngines(options) {
     engineToDelete, setEngineToDelete,
     deletingEngine,
     showEngineModal, setShowEngineModal,
-    loadingMounts,
-    lastError, lastUiError,
     fetchEnginesLikeUi,
     createEngine,
     confirmDeleteEngine,

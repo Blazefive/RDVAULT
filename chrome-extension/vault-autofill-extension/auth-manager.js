@@ -6,12 +6,16 @@
  *
  * Architecture :
  * - Pattern Singleton pour l'instance AuthManager
- * - Stockage sécurisé du token dans chrome.storage.session (non persisté)
- * - Rafraîchissement automatique toutes les 60 secondes
- * - Retry automatique en cas d'échec de requête authentifiée
+ * - Stockage du token dans chrome.storage.session (non persisté)
+ * - Vérification périodique via chrome.alarms (compatible service worker MV3)
+ * - Appairage : à la première demande de token, l'application Desktop demande
+ *   une confirmation à l'utilisateur (jusqu'à 60 s). Le fetch attend donc 65 s.
+ * - Retry automatique en cas d'échec de requête authentifiée :
+ *     401                          → token invalide, nouvelle demande de token
+ *     403 {error:'pairing_required'} → appairage perdu (Desktop redémarré), nouvel appairage
  *
  * @author Vault Autofill Team
- * @version 2.0.0
+ * @version 2.1.0
  */
 
 'use strict';
@@ -26,14 +30,42 @@ const SYNC_API_BASE = 'http://127.0.0.1:45678';
 /** Clé de stockage pour le token d'authentification */
 const TOKEN_STORAGE_KEY = 'vault_sync_auth_token';
 
-/** Intervalle de rafraîchissement du token (ms) */
-const TOKEN_REFRESH_INTERVAL_MS = 60000; // 60 secondes
+/** Nom de l'alarme de vérification périodique du token */
+const TOKEN_REFRESH_ALARM = 'vault-token-refresh';
 
-/** Timeout pour les requêtes HTTP (ms) */
+/** Période de vérification du token (minutes) — minimum autorisé par chrome.alarms */
+const TOKEN_REFRESH_PERIOD_MINUTES = 1;
+
+/** Timeout pour les requêtes HTTP courantes (ms) */
 const REQUEST_TIMEOUT_MS = 10000; // 10 secondes
 
-/** Nombre maximum de tentatives de récupération de token */
+/**
+ * Timeout pour la demande de token (ms)
+ * L'application Desktop affiche une boîte de dialogue d'approbation (jusqu'à 60 s)
+ * lors de la première demande d'un ID d'extension : on attend au moins 65 s.
+ */
+const TOKEN_REQUEST_TIMEOUT_MS = 65000;
+
+/** Nombre maximum de tentatives de récupération de token (503 / erreur réseau) */
 const MAX_TOKEN_FETCH_RETRIES = 3;
+
+/** Délai avant une nouvelle demande de token après un refus ou un délai dépassé (ms) */
+const PAIRING_COOLDOWN_MS = 60000;
+
+/** Délai avant une nouvelle demande de token quand le Desktop est injoignable (ms) */
+const UNAVAILABLE_COOLDOWN_MS = 10000;
+
+/** Intervalle du keep-alive du service worker pendant l'attente d'appairage (ms) */
+const KEEPALIVE_INTERVAL_MS = 20000;
+
+/** États possibles de l'appairage avec l'application Desktop */
+const PAIRING_STATE = Object.freeze({
+  IDLE: 'idle',
+  PENDING: 'pending',
+  OK: 'ok',
+  DENIED: 'denied',
+  UNAVAILABLE: 'unavailable'
+});
 
 // ============================================================================
 // CLASSE AUTHMANAGER
@@ -44,8 +76,9 @@ const MAX_TOKEN_FETCH_RETRIES = 3;
  *
  * Responsabilités :
  * - Stockage et récupération du token d'authentification
- * - Rafraîchissement automatique du token
+ * - Vérification périodique du token (chrome.alarms)
  * - Encapsulation des requêtes authentifiées
+ * - Suivi de l'état d'appairage (en attente / refusé)
  *
  * @class
  */
@@ -63,13 +96,6 @@ class AuthManager {
     this._authToken = null;
 
     /**
-     * Timer pour le rafraîchissement périodique
-     * @type {number|null}
-     * @private
-     */
-    this._refreshTimer = null;
-
-    /**
      * Flag indiquant si le manager est démarré
      * @type {boolean}
      * @private
@@ -82,6 +108,20 @@ class AuthManager {
      * @private
      */
     this._refreshPromise = null;
+
+    /**
+     * État courant de l'appairage
+     * @type {string}
+     * @private
+     */
+    this._pairingState = PAIRING_STATE.IDLE;
+
+    /**
+     * Horodatage avant lequel aucune nouvelle demande de token n'est tentée
+     * @type {number}
+     * @private
+     */
+    this._nextTokenAttemptAt = 0;
   }
 
   // --------------------------------------------------------------------------
@@ -93,15 +133,14 @@ class AuthManager {
    *
    * Actions effectuées :
    * 1. Charge le token depuis le storage s'il existe
-   * 2. Récupère un nouveau token si nécessaire
-   * 3. Démarre le rafraîchissement périodique
+   * 2. Récupère un nouveau token si nécessaire (peut déclencher l'appairage)
+   * 3. Programme la vérification périodique
    *
    * @returns {Promise<void>}
    * @throws {Error} Si impossible d'obtenir un token
    */
   async start() {
     if (this._isStarted) {
-      console.log('[AuthManager] Déjà démarré');
       return;
     }
 
@@ -118,7 +157,7 @@ class AuthManager {
       }
     }
 
-    // Démarrer le rafraîchissement périodique
+    // Programmer la vérification périodique
     this._startTokenRefresh();
 
     this._isStarted = true;
@@ -128,12 +167,13 @@ class AuthManager {
   /**
    * Arrête le gestionnaire d'authentification
    *
-   * Nettoie les timers et ressources
+   * Supprime l'alarme de vérification périodique
    */
   stop() {
-    if (this._refreshTimer) {
-      clearInterval(this._refreshTimer);
-      this._refreshTimer = null;
+    try {
+      Promise.resolve(chrome.alarms.clear(TOKEN_REFRESH_ALARM)).catch(() => {});
+    } catch (err) {
+      // Ignorer : API alarms indisponible
     }
 
     this._isStarted = false;
@@ -150,10 +190,41 @@ class AuthManager {
   }
 
   /**
+   * Retourne l'état courant de l'appairage
+   *
+   * @returns {string} Une des valeurs de PAIRING_STATE
+   */
+  getPairingState() {
+    return this._pairingState;
+  }
+
+  /**
+   * Indique si une demande d'appairage est en attente de confirmation
+   * dans l'application Desktop
+   *
+   * @returns {boolean}
+   */
+  isPairingPending() {
+    return this._pairingState === PAIRING_STATE.PENDING;
+  }
+
+  /**
+   * Indique si l'appairage a été refusé récemment dans l'application Desktop
+   *
+   * @returns {boolean}
+   */
+  isPairingDenied() {
+    return this._pairingState === PAIRING_STATE.DENIED && Date.now() < this._nextTokenAttemptAt;
+  }
+
+  /**
    * Effectue une requête HTTP authentifiée
    *
    * Ajoute automatiquement l'en-tête Authorization avec le Bearer token.
-   * En cas de réponse 401, tente de rafraîchir le token et réessaie.
+   * - 401 : token expiré/invalide → nouvelle demande de token puis nouvel essai
+   * - 403 {error:'pairing_required'} : l'extension n'est plus appairée (Desktop
+   *   redémarré) → le token est oublié, un nouvel appairage est demandé
+   *   (boîte de dialogue dans RDVAULT) puis la requête est rejouée une fois
    *
    * @param {string} url - URL de la requête
    * @param {Object} options - Options fetch (méthode, body, headers, etc.)
@@ -195,7 +266,42 @@ class AuthManager {
       return await this._fetchWithTimeout(url, retryOptions);
     }
 
+    // Si 403 pairing_required, l'appairage a été perdu : redemander un token (nouvel appairage)
+    if (response.status === 403 && await this._isPairingRequired(response)) {
+      console.warn('[AuthManager] Appairage requis (403 pairing_required), nouvelle demande...');
+
+      this._authToken = null;
+      this._pairingState = PAIRING_STATE.IDLE;
+      this._nextTokenAttemptAt = 0;
+      await this._clearTokenFromStorage();
+
+      const pairingSuccess = await this._fetchNewToken();
+      if (!pairingSuccess) {
+        throw new Error('Appairage avec RDVAULT requis');
+      }
+
+      const retryOptions = this._prepareAuthenticatedOptions(options);
+      return await this._fetchWithTimeout(url, retryOptions);
+    }
+
     return response;
+  }
+
+  /**
+   * Indique si une réponse 403 correspond à {error:'pairing_required'}
+   * (lecture sur un clone : le corps original reste lisible par l'appelant)
+   *
+   * @param {Response} response - Réponse HTTP
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _isPairingRequired(response) {
+    try {
+      const data = await response.clone().json();
+      return !!data && data.error === 'pairing_required';
+    } catch (err) {
+      return false;
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -203,7 +309,7 @@ class AuthManager {
   // --------------------------------------------------------------------------
 
   /**
-   * Charge le token depuis chrome.storage.local
+   * Charge le token depuis chrome.storage.session
    *
    * @returns {Promise<boolean>} True si un token valide a été chargé
    * @private
@@ -215,6 +321,7 @@ class AuthManager {
 
       if (result[TOKEN_STORAGE_KEY]) {
         this._authToken = result[TOKEN_STORAGE_KEY];
+        this._pairingState = PAIRING_STATE.OK;
         return true;
       }
     } catch (err) {
@@ -225,7 +332,7 @@ class AuthManager {
   }
 
   /**
-   * Sauvegarde le token dans chrome.storage.local
+   * Sauvegarde le token dans chrome.storage.session
    *
    * @returns {Promise<boolean>} True si la sauvegarde a réussi
    * @private
@@ -248,9 +355,23 @@ class AuthManager {
   }
 
   /**
+   * Supprime le token du storage
+   *
+   * @private
+   */
+  async _clearTokenFromStorage() {
+    try {
+      await chrome.storage.session.remove(TOKEN_STORAGE_KEY);
+    } catch (err) {
+      // Ignorer
+    }
+  }
+
+  /**
    * Récupère un nouveau token depuis le serveur
    *
-   * Effectue plusieurs tentatives en cas d'échec (MAX_TOKEN_FETCH_RETRIES)
+   * Partage la promesse en cours pour éviter les demandes concurrentes
+   * (et donc plusieurs boîtes de dialogue d'appairage).
    *
    * @returns {Promise<boolean>} True si un nouveau token a été obtenu
    * @private
@@ -269,16 +390,54 @@ class AuthManager {
     }
   }
 
+  /**
+   * Implémentation de la demande de token
+   *
+   * Réponses du serveur :
+   * - 200 {token}                  : token obtenu
+   * - 403 {error:'pairing_denied'} : l'utilisateur a refusé l'accès dans RDVAULT
+   * - 503 {error:'Token not ready'}: serveur pas prêt, nouvelle tentative
+   *
+   * @returns {Promise<boolean>}
+   * @private
+   */
   async _doFetchNewToken() {
+    // Respecter le délai de carence après un refus / délai dépassé / Desktop injoignable
+    if (Date.now() < this._nextTokenAttemptAt) {
+      return false;
+    }
+
+    // Maintenir le service worker en vie pendant l'attente d'approbation (jusqu'à 65 s)
+    const keepAlive = setInterval(() => {
+      try {
+        chrome.runtime.getPlatformInfo(() => {});
+      } catch (err) {
+        // Ignorer
+      }
+    }, KEEPALIVE_INTERVAL_MS);
+
     try {
-      console.log('[AuthManager] Récupération d\'un nouveau token...');
+      console.log('[AuthManager] Demande de token (confirmez l\'accès dans RDVAULT si demandé)...');
 
       for (let attempt = 1; attempt <= MAX_TOKEN_FETCH_RETRIES; attempt++) {
         try {
+          this._pairingState = PAIRING_STATE.PENDING;
+
           const response = await this._fetchWithTimeout(
             `${SYNC_API_BASE}/auth/token`,
-            { method: 'GET', headers: { 'X-Vault-Extension': 'rdvault' } }
+            { method: 'GET', headers: { 'X-Vault-Extension': 'rdvault' } },
+            TOKEN_REQUEST_TIMEOUT_MS
           );
+
+          if (response.status === 403) {
+            // L'utilisateur a refusé l'appairage dans l'application Desktop
+            console.warn('[AuthManager] Accès refusé dans RDVAULT (pairing_denied)');
+            this._pairingState = PAIRING_STATE.DENIED;
+            this._nextTokenAttemptAt = Date.now() + PAIRING_COOLDOWN_MS;
+            this._authToken = null;
+            await this._clearTokenFromStorage();
+            return false;
+          }
 
           if (response.status === 503) {
             console.warn(`[AuthManager] Tentative ${attempt}: serveur pas prêt (503)`);
@@ -287,8 +446,10 @@ class AuthManager {
           } else {
             const data = await response.json();
 
-            if (data && data.token && typeof data.token === 'string' && data.token.length > 0 && data.token.length <= 512) {
+            if (data && typeof data.token === 'string' && data.token.length > 0 && data.token.length <= 512) {
               this._authToken = data.token;
+              this._pairingState = PAIRING_STATE.OK;
+              this._nextTokenAttemptAt = 0;
               await this._saveTokenToStorage();
               console.log('[AuthManager] Nouveau token obtenu');
               return true;
@@ -297,6 +458,15 @@ class AuthManager {
             console.warn(`[AuthManager] Tentative ${attempt}: Token absent de la réponse`);
           }
         } catch (err) {
+          if (err && err.name === 'TimeoutError') {
+            // L'utilisateur n'a pas répondu à la demande d'appairage dans le délai :
+            // ne pas relancer immédiatement une nouvelle boîte de dialogue
+            console.warn('[AuthManager] Délai d\'appairage dépassé (aucune réponse dans RDVAULT)');
+            this._pairingState = PAIRING_STATE.UNAVAILABLE;
+            this._nextTokenAttemptAt = Date.now() + PAIRING_COOLDOWN_MS;
+            this._authToken = null;
+            return false;
+          }
           console.warn(`[AuthManager] Tentative ${attempt}: erreur réseau (l'application Desktop est-elle lancée ?)`);
         }
 
@@ -306,42 +476,69 @@ class AuthManager {
       }
 
       console.error('[AuthManager] Échec récupération token après', MAX_TOKEN_FETCH_RETRIES, 'tentatives. Vérifiez que RDVAULT Desktop est lancé.');
+      this._pairingState = PAIRING_STATE.UNAVAILABLE;
+      this._nextTokenAttemptAt = Date.now() + UNAVAILABLE_COOLDOWN_MS;
       this._authToken = null;
       return false;
     } catch (err) {
+      this._pairingState = PAIRING_STATE.UNAVAILABLE;
+      this._nextTokenAttemptAt = Date.now() + UNAVAILABLE_COOLDOWN_MS;
       this._authToken = null;
       return false;
+    } finally {
+      clearInterval(keepAlive);
     }
   }
 
   // --------------------------------------------------------------------------
-  // MÉTHODES PRIVÉES - RAFRAÎCHISSEMENT PÉRIODIQUE
+  // MÉTHODES PRIVÉES - VÉRIFICATION PÉRIODIQUE (chrome.alarms)
   // --------------------------------------------------------------------------
 
   /**
-   * Démarre le rafraîchissement périodique du token
+   * Programme la vérification périodique du token via chrome.alarms
    *
-   * Vérifie la validité du token à intervalles réguliers
-   * et le renouvelle si nécessaire
+   * Contrairement à setInterval, une alarme survit à la mise en veille
+   * du service worker MV3.
    *
    * @private
    */
   _startTokenRefresh() {
-    // Nettoyer un éventuel timer existant
-    if (this._refreshTimer) {
-      clearInterval(this._refreshTimer);
+    try {
+      Promise.resolve(chrome.alarms.create(TOKEN_REFRESH_ALARM, {
+        delayInMinutes: TOKEN_REFRESH_PERIOD_MINUTES,
+        periodInMinutes: TOKEN_REFRESH_PERIOD_MINUTES
+      })).catch(() => {});
+    } catch (err) {
+      console.warn('[AuthManager] Impossible de créer l\'alarme de vérification');
+    }
+  }
+
+  /**
+   * Handler de l'alarme périodique : vérifie le token et le renouvelle si invalide
+   *
+   * Ne déclenche jamais une demande d'appairage non sollicitée : si aucun token
+   * n'est connu, la demande sera faite lors de la prochaine requête utilisateur.
+   *
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _onRefreshAlarm() {
+    if (!this._authToken) {
+      await this._loadTokenFromStorage();
     }
 
-    this._refreshTimer = setInterval(async () => {
-      console.log('[AuthManager] Vérification périodique du token...');
+    if (!this._authToken) {
+      return;
+    }
 
-      const isValid = await this._testToken();
+    const isValid = await this._testToken();
 
-      if (!isValid) {
-        console.warn('[AuthManager] Token invalide, rafraîchissement...');
-        await this._fetchNewToken();
-      }
-    }, TOKEN_REFRESH_INTERVAL_MS);
+    if (!isValid) {
+      console.warn('[AuthManager] Token invalide ou appairage perdu, rafraîchissement...');
+      this._authToken = null;
+      await this._clearTokenFromStorage();
+      await this._fetchNewToken();
+    }
   }
 
   /**
@@ -370,13 +567,17 @@ class AuthManager {
         return false;
       }
 
+      // 403 pairing_required = appairage perdu (Desktop redémarré) : token à renouveler
+      if (response.status === 403 && await this._isPairingRequired(response)) {
+        return false;
+      }
+
       // Toute autre réponse (y compris erreurs) = considérer le token comme valide
       // (le serveur peut être temporairement indisponible)
       return true;
     } catch (err) {
       // Erreur réseau - considérer le token comme valide
       // pour éviter de le régénérer inutilement
-      console.warn('[AuthManager] Erreur test token (réseau)');
       return true;
     }
   }
@@ -403,27 +604,34 @@ class AuthManager {
   }
 
   /**
-   * Effectue une requête fetch avec timeout
+   * Effectue une requête fetch avec timeout (AbortController)
    *
    * @param {string} url - URL de la requête
    * @param {Object} options - Options fetch
+   * @param {number} timeoutMs - Timeout en ms (défaut : REQUEST_TIMEOUT_MS)
    * @returns {Promise<Response>} Réponse de la requête
-   * @throws {Error} Si timeout ou erreur réseau
+   * @throws {Error} Erreur nommée 'TimeoutError' si timeout, sinon erreur réseau
    * @private
    */
-  async _fetchWithTimeout(url, options = {}) {
+  async _fetchWithTimeout(url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
+      // Identification explicite de l'extension auprès du serveur desktop : Chrome n'envoie pas
+      // d'en-tête Origin sur les hôtes couverts par host_permissions (CORS court-circuité).
+      const headers = { ...(options.headers || {}), 'X-Vault-Extension-Id': chrome.runtime.id };
       const response = await fetch(url, {
         ...options,
+        headers,
         signal: controller.signal
       });
       return response;
     } catch (err) {
-      if (err.name === 'AbortError') {
-        throw new Error(`Timeout après ${REQUEST_TIMEOUT_MS}ms`);
+      if (err && err.name === 'AbortError') {
+        const timeoutError = new Error(`Timeout après ${timeoutMs}ms`);
+        timeoutError.name = 'TimeoutError';
+        throw timeoutError;
       }
       throw err;
     } finally {
@@ -448,7 +656,17 @@ class AuthManager {
  */
 const authManager = new AuthManager();
 
+// Enregistrement du handler d'alarme au niveau racine du script
+// (obligatoire pour qu'il soit rappelé après réveil du service worker)
+if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm && alarm.name === TOKEN_REFRESH_ALARM) {
+      authManager._onRefreshAlarm().catch(() => {});
+    }
+  });
+}
+
 // Export pour utilisation dans background.js
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { authManager, AuthManager };
+  module.exports = { authManager, AuthManager, PAIRING_STATE };
 }

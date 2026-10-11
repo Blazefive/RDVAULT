@@ -1,37 +1,69 @@
 {
   "name": "rdvault",
-  "version": "1.4.0",
+  "version": "1.7.0",
   "description": "RDVAULT - Client Desktop pour HashiCorp Vault",
   "author": "Blazefive",
   "main": "electron/main.js",
   "homepage": "./",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "postinstall": "electron-builder install-app-deps",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "electron": "electron .",
+    "test": "npm run test:react && npm run test:electron && npm run test:passkey && npm run test:extension && npm run test:installer",
+    "test:react": "react-scripts test --watchAll=false",
+    "test:electron": "node --test \"electron/**/*.test.js\"",
+    "test:passkey": "node --test test/passkey/core.test.js test/passkey/rpid-policy.test.js test/passkey/webauthn-flow.test.js",
+    "test:extension": "node --test test/extension/totp-digits.test.js test/extension/i18n-locales.test.js test/extension/entry-name.test.js",
+    "test:installer": "node --test test/installer/exe-identity.test.js test/installer/installer-nsis.test.js",
+    "test:extension:browser": "node --test test/extension/i18n-browser.test.js test/extension/honeypot-visibility.test.js",
+    "test:smoke": "electron test/smoke/smoke-localvault.js && electron test/smoke/smoke-sync.js && electron test/smoke/smoke-adversarial.js && electron test/smoke/smoke-ssh-agent.js",
+    "test:e2e": "node test/e2e/run.js",
+    "test:e2e:ui": "node test/e2e/app-ui.js",
+    "test:e2e:features": "node test/e2e/features.js",
+    "test:e2e:passkey": "node test/e2e/passkey.js",
+    "test:e2e:sites": "node test/e2e/real-sites.js",
+    "sbom": "node scripts/generate-sbom.js",
+    "lint": "eslint \"src/**/*.{js,jsx}\" \"electron/**/*.js\" \"cli/**/*.js\"",
     "dist": "npm run build && electron-builder --config electron-builder.json",
     "dist:win": "npm run build && electron-builder --win --config electron-builder.json"
   },
   "dependencies": {
-    "axios": "^1.6.8",
+    "axios": "^1.20.0",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.9.0",
     "puppeteer-core": "^24.42.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-modal": "^3.16.3",
-    "ssh2": "^1.17.0"
+    "ssh2": "^1.17.0",
+    "tldts": "^7.4.13"
   },
   "devDependencies": {
     "electron": "^38.2.2",
     "electron-builder": "^26.0.12",
-    "electron-installer-windows": "^3.0.0",
-    "electron-packager": "^17.1.2",
-    "electron-winstaller": "^5.4.0",
     "rcedit": "^5.0.2",
-    "react-scripts": "^5.0.1",
-    "sharp": "^0.34.5"
+    "react-scripts": "^5.0.1"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ],
+    "overrides": [
+      {
+        "files": [
+          "electron/**/*.js",
+          "cli/**/*.js"
+        ],
+        "rules": {
+          "strict": "off"
+        }
+      }
+    ]
   },
   "browserslist": {
     "production": [

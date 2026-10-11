@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>TOTP sans clé</title></head>
+<body><h1>Connexion avec champ TOTP, identifiant SANS clé TOTP</h1>
+<!-- Le DOM change en continu (horloge) : chaque changement relance la surveillance TOTP de
+     l'extension. Le remplissage échoue toujours (aucune clé) : l'extension doit abandonner après
+     quelques échecs au lieu de redemander un code à chaque changement (limite de 10 codes/min
+     partagée avec l'application). -->
+<form id="f" onsubmit="return false;">
+  <label>Identifiant <input type="text" name="username" id="u" autocomplete="username"></label><br>
+  <label>Mot de passe <input type="password" name="password" id="p" autocomplete="current-password"></label><br>
+  <label>Code à usage unique <input type="text" name="otp" id="otp" autocomplete="one-time-code" inputmode="numeric" maxlength="6"></label><br>
+  <button type="button" id="go">Valider</button>
+</form>
+<p>Heure : <span id="clock"></span></p>
+<script>
+setInterval(() => { document.getElementById('clock').textContent = new Date().toISOString(); }, 400);
+</script>
+</body></html>

@@ -1,12 +1,19 @@
 import { useState, useMemo } from 'react';
 
+// TREE-10 : dossiers rangés dans des dictionnaires SANS prototype. Avec un objet littéral `{}`,
+// un dossier nommé « constructor », « toString », « valueOf », « hasOwnProperty » ou « __proto__ »
+// était lu comme la propriété héritée d'Object.prototype : le dossier n'était pas créé et le rendu
+// plantait (TypeError sur `.secrets.push`), fenêtre vide à chaque connexion en vue arborescence.
+// Object.create(null) : ces noms sont des clés ordinaires (Object.keys les liste normalement).
+const newFolderNode = () => ({ folders: Object.create(null), secrets: [] });
+
 /**
  * Construit l'arborescence à partir de la liste plate de secrets
  * @param {Array} secretsList - Liste plate des secrets
- * @returns {Object} - Arbre { folders: {}, secrets: [] }
+ * @returns {Object} - Arbre { folders: {}, secrets: [] } (folders : dictionnaire sans prototype)
  */
 export function buildTree(secretsList) {
-  const tree = { folders: {}, secrets: [] };
+  const tree = newFolderNode();
 
   secretsList.forEach(secret => {
     const parts = secret.name.split('/');
@@ -22,7 +29,7 @@ export function buildTree(secretsList) {
       for (let i = 0; i < parts.length - 1; i++) {
         const folderName = parts[i];
         if (!current.folders[folderName]) {
-          current.folders[folderName] = { folders: {}, secrets: [] };
+          current.folders[folderName] = newFolderNode();
         }
         current = current.folders[folderName];
       }

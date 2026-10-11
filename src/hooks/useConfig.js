@@ -13,7 +13,7 @@ export function useConfig(setLang) {
   const [rbiProxyUrl, setRbiProxyUrl] = useState('');
   const [configLoaded, setConfigLoaded] = useState(false);
   const [appMode, setAppMode] = useState('enterprise'); // 'enterprise' ou 'local'
-  const [vaultNs, setVaultNs] = useState('');
+  const [vaultNs] = useState('');
 
   useEffect(() => {
     const loadConfig = async () => {

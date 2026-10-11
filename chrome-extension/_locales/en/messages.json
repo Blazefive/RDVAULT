@@ -1,0 +1,154 @@
+{
+  "extName": {
+    "message": "Vault Autofill",
+    "description": "Extension name (brand, not translated)"
+  },
+  "extDescription": {
+    "message": "Form autofill with HashiCorp Vault",
+    "description": "Extension description (Chrome Web Store, at most 132 characters)"
+  },
+  "popupLoading": {
+    "message": "Loading...",
+    "description": "Popup: loading"
+  },
+  "popupVaultUrlLabel": {
+    "message": "Vault URL",
+    "description": "Popup: label of the Vault server address field"
+  },
+  "popupNamespaceLabel": {
+    "message": "Namespace (optional)",
+    "description": "Popup: label of the Vault namespace field (HashiCorp Vault term, usually not translated)"
+  },
+  "popupNamespacePlaceholder": {
+    "message": "Leave empty if not used",
+    "description": "Popup: hint inside the namespace field"
+  },
+  "popupUsernameLabel": {
+    "message": "LDAP user",
+    "description": "Popup: label of the LDAP user name field"
+  },
+  "popupUsernamePlaceholder": {
+    "message": "Username",
+    "description": "Popup: hint inside the user name field"
+  },
+  "popupPassword": {
+    "message": "Password",
+    "description": "Popup: label and hint of the password field"
+  },
+  "popupLoginButton": {
+    "message": "Sign in",
+    "description": "Popup: sign-in button"
+  },
+  "popupConnectedAs": {
+    "message": "Signed in as",
+    "description": "Popup: shown above the signed-in user name"
+  },
+  "popupRefreshButton": {
+    "message": "Refresh cache",
+    "description": "Popup: button that reloads the secrets from Vault"
+  },
+  "popupLogoutButton": {
+    "message": "Sign out",
+    "description": "Popup: sign-out button"
+  },
+  "popupDefaultUser": {
+    "message": "User",
+    "description": "Popup: shown when the user name is unknown"
+  },
+  "popupFillRequired": {
+    "message": "Please fill in all required fields",
+    "description": "Popup: required fields are empty"
+  },
+  "popupLoggingIn": {
+    "message": "Signing in...",
+    "description": "Popup: sign-in in progress (button label)"
+  },
+  "popupLoginSuccess": {
+    "message": "Signed in successfully",
+    "description": "Popup: sign-in succeeded"
+  },
+  "popupLogoutSuccess": {
+    "message": "Signed out successfully",
+    "description": "Popup: sign-out succeeded"
+  },
+  "popupRefreshing": {
+    "message": "Refreshing...",
+    "description": "Popup: cache refresh in progress (button label)"
+  },
+  "popupCacheRefreshed": {
+    "message": "Cache refreshed ($COUNT$ secrets)",
+    "description": "Popup: cache refreshed; $COUNT$ is the number of secrets loaded",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "42"
+      }
+    }
+  },
+  "popupError": {
+    "message": "Error: $ERROR$",
+    "description": "Popup: error message; $ERROR$ is the error detail",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Authentication failed"
+      }
+    }
+  },
+  "autofillIconTitle": {
+    "message": "Autofill with Vault",
+    "description": "Tooltip of the icon shown in login fields"
+  },
+  "autofillHeader": {
+    "message": "Vault logins",
+    "description": "Autofill menu header (displayed in upper case)"
+  },
+  "autofillNoResults": {
+    "message": "No logins found for this site",
+    "description": "Autofill menu: no saved login matches this site"
+  },
+  "autofillUnnamed": {
+    "message": "Untitled",
+    "description": "Autofill menu: entry without a name"
+  },
+  "autofillNoUsername": {
+    "message": "(no username)",
+    "description": "Autofill menu: entry without a username"
+  },
+  "autofillLoading": {
+    "message": "Retrieving login...",
+    "description": "Autofill menu: the selected login is being retrieved"
+  },
+  "autofillFetchFailed": {
+    "message": "Could not retrieve the login",
+    "description": "Autofill menu: the selected login could not be retrieved"
+  },
+  "bgErrUnauthorizedSource": {
+    "message": "Unauthorized source",
+    "description": "Error: message from another extension (internal)"
+  },
+  "bgErrInsecurePage": {
+    "message": "Insecure page",
+    "description": "Error: the page is not served over HTTPS"
+  },
+  "bgErrNameRequired": {
+    "message": "Secret name required",
+    "description": "Error: the request does not name the secret to read"
+  },
+  "bgErrNotFound": {
+    "message": "Login not found for this site",
+    "description": "Error: the selected login does not exist for this site"
+  },
+  "bgErrInvalidVaultUrl": {
+    "message": "Invalid Vault URL (https required)",
+    "description": "Error: the Vault address is invalid or not HTTPS"
+  },
+  "bgErrAuthFailed": {
+    "message": "Authentication failed",
+    "description": "Error: Vault sign-in failed"
+  },
+  "bgErrInternal": {
+    "message": "Internal error",
+    "description": "Error: unexpected internal error"
+  }
+}

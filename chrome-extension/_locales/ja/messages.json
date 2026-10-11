@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "HashiCorp Vault によるフォームの自動入力"
+  },
+  "popupLoading": {
+    "message": "読み込み中..."
+  },
+  "popupVaultUrlLabel": {
+    "message": "Vault の URL"
+  },
+  "popupNamespaceLabel": {
+    "message": "Namespace（任意）"
+  },
+  "popupNamespacePlaceholder": {
+    "message": "使用しない場合は空欄のまま"
+  },
+  "popupUsernameLabel": {
+    "message": "LDAP ユーザー"
+  },
+  "popupUsernamePlaceholder": {
+    "message": "ユーザー名"
+  },
+  "popupPassword": {
+    "message": "パスワード"
+  },
+  "popupLoginButton": {
+    "message": "ログイン"
+  },
+  "popupConnectedAs": {
+    "message": "ログイン中のユーザー："
+  },
+  "popupRefreshButton": {
+    "message": "キャッシュを更新"
+  },
+  "popupLogoutButton": {
+    "message": "ログアウト"
+  },
+  "popupDefaultUser": {
+    "message": "ユーザー"
+  },
+  "popupFillRequired": {
+    "message": "必須項目をすべて入力してください"
+  },
+  "popupLoggingIn": {
+    "message": "ログイン中..."
+  },
+  "popupLoginSuccess": {
+    "message": "ログインしました"
+  },
+  "popupLogoutSuccess": {
+    "message": "ログアウトしました"
+  },
+  "popupRefreshing": {
+    "message": "更新中..."
+  },
+  "popupCacheRefreshed": {
+    "message": "キャッシュを更新しました（シークレット $COUNT$ 件）",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "42"
+      }
+    }
+  },
+  "popupError": {
+    "message": "エラー：$ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Authentication failed"
+      }
+    }
+  },
+  "autofillIconTitle": {
+    "message": "Vault で自動入力"
+  },
+  "autofillHeader": {
+    "message": "Vault のログイン情報"
+  },
+  "autofillNoResults": {
+    "message": "このサイトのログイン情報が見つかりません"
+  },
+  "autofillUnnamed": {
+    "message": "名前なし"
+  },
+  "autofillNoUsername": {
+    "message": "（ユーザー名なし）"
+  },
+  "autofillLoading": {
+    "message": "ログイン情報を取得しています..."
+  },
+  "autofillFetchFailed": {
+    "message": "ログイン情報を取得できませんでした"
+  },
+  "bgErrUnauthorizedSource": {
+    "message": "許可されていない送信元です"
+  },
+  "bgErrInsecurePage": {
+    "message": "安全でないページです"
+  },
+  "bgErrNameRequired": {
+    "message": "シークレット名が必要です"
+  },
+  "bgErrNotFound": {
+    "message": "このサイトのログイン情報が見つかりません"
+  },
+  "bgErrInvalidVaultUrl": {
+    "message": "無効な Vault の URL です（https が必要）"
+  },
+  "bgErrAuthFailed": {
+    "message": "認証に失敗しました"
+  },
+  "bgErrInternal": {
+    "message": "内部エラー"
+  }
+}

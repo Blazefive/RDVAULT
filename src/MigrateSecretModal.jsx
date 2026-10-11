@@ -1,6 +1,21 @@
 // src/MigrateSecretModal.jsx
-import React, { useEffect, useState } from 'react';
+// Migration / copie d'entrées vers un autre coffre (squelette commun Modal : role="dialog",
+// aria-modal, nom accessible, focus initial et piège de focus, Échap réservé à la modale du
+// dessus, fermeture sur le fond seulement si mousedown ET mouseup y tombent).
+import React, { useState } from 'react';
 import { useTranslation } from './i18n';
+import Modal from './components/common/Modal';
+
+/**
+ * Rend une phrase traduite dont les variables {{x}} sont affichées en gras.
+ * t(key) est appelé sans variables : les marqueurs {{x}} restent dans le texte et servent de
+ * points de découpe (l'ordre des mots reste celui de la traduction).
+ */
+function renderWithStrong(template, vars) {
+  return template.split(/\{\{(\w+)\}\}/).map((part, i) => (
+    i % 2 === 1 ? <strong key={i}>{vars[part] ?? ''}</strong> : <React.Fragment key={i}>{part}</React.Fragment>
+  ));
+}
 
 export default function MigrateSecretModal({
   secrets, // Tableau de secrets à migrer/copier
@@ -23,14 +38,6 @@ export default function MigrateSecretModal({
     e => e.canWrite && e.name !== currentEngine?.name
   );
 
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-
   const handleConfirm = async () => {
     if (!selectedEngine || processing) return;
     setProcessing(true);
@@ -46,88 +53,12 @@ export default function MigrateSecretModal({
   const actionLabel = mode === 'move' ? t('migrate.migrate') : t('migrate.copy');
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal-panel"
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: '500px' }}
-      >
-        <div className="modal-header">
-          <h2>{title}</h2>
-        </div>
-
-        <div className="modal-body">
-          <div style={{ marginBottom: 'var(--sp-4)', color: 'var(--text-secondary)' }}>
-            {count === 1 ? (
-              mode === 'move' ? (
-                <>
-                  Déplacer l'entrée <strong>{secretsList[0].name}</strong> depuis <strong>{currentEngine?.name}</strong> vers :
-                </>
-              ) : (
-                <>
-                  Copier l'entrée <strong>{secretsList[0].name}</strong> depuis <strong>{currentEngine?.name}</strong> vers :
-                </>
-              )
-            ) : (
-              mode === 'move' ? (
-                <>
-                  Déplacer <strong>{count} entrées</strong> depuis <strong>{currentEngine?.name}</strong> vers :
-                </>
-              ) : (
-                <>
-                  Copier <strong>{count} entrées</strong> depuis <strong>{currentEngine?.name}</strong> vers :
-                </>
-              )
-            )}
-          </div>
-
-          {writableEngines.length === 0 ? (
-            <div style={{ padding: 'var(--sp-4)', background: 'var(--bg-app)', borderRadius: 'var(--radius-lg)', color: 'var(--text-tertiary)' }}>
-              {t('migrate.noWritableEngines')}
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', maxHeight: '400px', overflowY: 'auto' }}>
-              {writableEngines.map((engine) => (
-                <button
-                  key={engine.name}
-                  onClick={() => setSelectedEngine(engine)}
-                  className={`engine-select-btn ${selectedEngine?.name === engine.name ? 'selected' : ''}`}
-                  type="button"
-                  style={{
-                    padding: 'var(--sp-3) var(--sp-4)',
-                    border: selectedEngine?.name === engine.name ? '2px solid var(--accent)' : '2px solid var(--border)',
-                    background: selectedEngine?.name === engine.name ? 'var(--bg-surface-active)' : 'var(--bg-surface)',
-                    borderRadius: 'var(--radius-md)',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between'
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 'var(--weight-bold)', color: 'var(--text-primary)' }}>
-                      {engine.name}
-                    </div>
-                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                      KV{engine.version}
-                    </div>
-                  </div>
-                  {selectedEngine?.name === engine.name && (
-                    <svg viewBox="0 0 24 24" fill="none" width="20" height="20" style={{ color: 'var(--accent)' }}>
-                      <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="modal-footer">
+    <Modal
+      title={title}
+      onClose={onClose}
+      maxWidth="500px"
+      footer={(
+        <>
           <button onClick={onClose} className="btn btn-secondary" type="button" disabled={processing}>
             {t('migrate.cancel')}
           </button>
@@ -139,8 +70,64 @@ export default function MigrateSecretModal({
           >
             {processing ? t('common.loading') : actionLabel}
           </button>
-        </div>
+        </>
+      )}
+    >
+      {/* Phrase traduite (était codée en dur en français) ; nom, nombre et coffre en gras */}
+      <div style={{ marginBottom: 'var(--sp-4)', color: 'var(--text-secondary)' }}>
+        {count === 1
+          ? renderWithStrong(t(mode === 'move' ? 'migrate.moveOneFrom' : 'migrate.copyOneFrom'), {
+            name: secretsList[0].name,
+            engine: currentEngine?.name,
+          })
+          : renderWithStrong(t(mode === 'move' ? 'migrate.moveManyFrom' : 'migrate.copyManyFrom'), {
+            entries: t('migrate.entriesCount', { count }),
+            engine: currentEngine?.name,
+          })}
       </div>
-    </div>
+
+      {writableEngines.length === 0 ? (
+        <div style={{ padding: 'var(--sp-4)', background: 'var(--bg-app)', borderRadius: 'var(--radius-lg)', color: 'var(--text-tertiary)' }}>
+          {t('migrate.noWritableEngines')}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-2)', maxHeight: '400px', overflowY: 'auto' }}>
+          {writableEngines.map((engine) => (
+            <button
+              key={engine.name}
+              onClick={() => setSelectedEngine(engine)}
+              className={`engine-select-btn ${selectedEngine?.name === engine.name ? 'selected' : ''}`}
+              type="button"
+              style={{
+                padding: 'var(--sp-3) var(--sp-4)',
+                border: selectedEngine?.name === engine.name ? '2px solid var(--accent)' : '2px solid var(--border)',
+                background: selectedEngine?.name === engine.name ? 'var(--bg-surface-active)' : 'var(--bg-surface)',
+                borderRadius: 'var(--radius-md)',
+                textAlign: 'left',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 'var(--weight-bold)', color: 'var(--text-primary)' }}>
+                  {engine.name}
+                </div>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
+                  KV{engine.version}
+                </div>
+              </div>
+              {selectedEngine?.name === engine.name && (
+                <svg viewBox="0 0 24 24" fill="none" width="20" height="20" style={{ color: 'var(--accent)' }}>
+                  <path d="M20 6L9 17L4 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
   );
 }

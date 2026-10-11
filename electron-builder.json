@@ -9,14 +9,8 @@
   "files": [
     "build/**/*",
     "electron/**/*",
-    "package.json",
-    {
-      "from": "node_modules",
-      "to": "node_modules",
-      "filter": [
-        "**/*"
-      ]
-    }
+    "!electron/**/*.test.js",
+    "package.json"
   ],
   "extraResources": [
     {
@@ -51,6 +45,13 @@
       "schemes": ["rdvault"]
     }
   ],
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "Blazefive",
+      "repo": "RDVAULT"
+    }
+  ],
   "afterPack": "./scripts/afterPack.js",
   "win": {
     "icon": "assets/icon.ico",
@@ -62,7 +63,7 @@
         ]
       }
     ],
-    "signAndEditExecutable": false,
+    "signAndEditExecutable": true,
     "legalTrademarks": "Blazefive"
   },
   "nsis": {
@@ -72,7 +73,7 @@
     "createStartMenuShortcut": false,
     "shortcutName": "RDVAULT",
     "include": "assets/installer.nsh",
-    "perMachine": false,
+    "perMachine": true,
     "allowElevation": true,
     "warningsAsErrors": false
   }

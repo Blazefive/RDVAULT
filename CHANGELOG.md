@@ -1,0 +1,404 @@
+# Changelog
+
+## 1.7.0 — 2026-10 (préparation produit public)
+
+Lot d'améliorations orientées « application pro publique » : durcissement cryptographique, audit de santé des mots de passe, mise à jour automatique et documents de confiance. **Aucune modification destructive : les coffres existants restent lisibles tels quels.**
+
+### Nouvelle fonctionnalité : accès distant « utiliser un secret sans le voir » (SSH clé/mot de passe, WinRM)
+Un outil ou agent (Claude Code, un script) peut se connecter à distance avec un secret du coffre **sans jamais le recevoir**. Trois modes, décidés côté serveur selon le secret, tous sous **confirmation/règle d'auto-approbation + audit** :
+- **SSH par clé — agent** (`electron/sshAgent.js`) : implémente le protocole ssh-agent (OpenSSH) sur socket locale (named pipe Windows / socket Unix). RDVAULT charge la clé privée du coffre et **signe** les défis ; la clé ne quitte jamais le processus. RSA (ssh-rsa, rsa-sha2-256/512), ECDSA, Ed25519. Signatures **vérifiées cryptographiquement** et **validées contre OpenSSH réel** (`ssh-add -l` liste la clé). `mvault ssh <user@hôte> --secret <e>/<p>` lance `ssh` avec `SSH_AUTH_SOCK` ; agent éphémère (clé retirée après 2 min / fin de session).
+- **SSH par mot de passe — broker** (`electron/sshBroker.js`) : le mot de passe ne pouvant être caché au client SSH, RDVAULT **ouvre lui-même** la connexion (via `ssh2`) avec le mot de passe du coffre. Deux usages : `mvault ssh … -- <commande>` exécute et renvoie la **sortie** ; `mvault ssh …` (sans commande) ouvre un **shell interactif** (PTY) relayé sur une socket locale — le terminal de l'appelant est branché dessus, le mot de passe ne le touche jamais. Le **redimensionnement du terminal** est propagé au PTY distant (SIGWINCH → `window-change`, endpoint `/ssh/resize`). **Clé d'hôte vérifiée avant tout envoi du mot de passe** : épinglage explicite (`--hostkey SHA256:…`), sinon TOFU persistant dans `%APPDATA%\RDVAULT\known_hosts.json` avec popup de confirmation à la première connexion ; si la clé d'un hôte connu change, la connexion est refusée sans que le mot de passe soit envoyé. Testé de bout en bout avec un serveur ssh2 en mémoire (exec + shell bidirectionnel).
+- **Windows — WinRM / PowerShell Remoting** (`electron/winrmBroker.js`) : RDVAULT exécute `Invoke-Command` avec l'identifiant du coffre et ne renvoie que la sortie. Le mot de passe est transmis à PowerShell par **STDIN** (jamais en argument ni en variable d'environnement) ; le script PowerShell est **statique** (hôte/user/commande via l'environnement → pas d'injection). `mvault winrm <user@hôte> --secret <e>/<p> -- <commande>`.
+- Endpoints serveur CLI : `POST /ssh` (mode `agent` → `SSH_AUTH_SOCK` jamais la clé, ou mode `exec` pour le mot de passe), `POST /ssh/close`, `POST /winrm`. Les agents sont détruits à l'arrêt du serveur.
+- Limite honnête : si l'appelant tourne sous le **même compte** que RDVAULT, « ne pas voir » est une garantie d'interface (le secret n'atterrit pas dans ses E/S/args/env/logs), pas une barrière contre un processus local aussi privilégié. Pour une clé SSH, la garantie est la plus forte (clé *utilisable* mais non *extractible* via l'interface). Pour un mot de passe / WinRM, le secret vit dans le processus RDVAULT (et le process `ssh`/`powershell` enfant), jamais chez l'appelant.
+
+### Durcissement : dérivation de clé mémoire-dur (scrypt)
+- Les **nouveaux** coffres locaux dérivent la clé maître avec **scrypt** (N=65536, r=8, p=1), bien plus résistant au cassage par GPU/ASIC que PBKDF2.
+- **Rétrocompatibilité totale** : les comptes créés avant la v1.7 (sans descripteur de KDF) continuent d'utiliser PBKDF2-HMAC-SHA512 (210 000 itérations). **Aucune migration forcée**, donc aucun risque de verrouiller un coffre existant. Le descripteur de KDF est stocké par utilisateur (schéma v3, colonne `kdf`).
+- Fichiers : `electron/localVault/crypto.js` (`deriveKeyWithKdf`, `DEFAULT_KDF`), `database.js` (migration v3), `authService.js`, `localVaultServer.js`. Tests : KDF scrypt + égalité PBKDF2 hérité (`npm run test:electron`) et connexion d'un compte hérité dans la suite de fumée.
+
+### Nouvelle fonctionnalité : audit de santé des mots de passe
+- Détecte, **hors ligne**, les mots de passe **faibles** (entropie) et **réutilisés** sur plusieurs entrées, avec un **score global /100**.
+- Vérification de **fuite** optionnelle via **Have I Been Pwned** en **k-anonymity** : seuls les 5 premiers caractères du SHA-1 sont transmis ; le mot de passe ne quitte jamais l'appareil, et l'appel n'a lieu que si l'utilisateur le déclenche. *(Correctif : le domaine `api.pwnedpasswords.com` a été ajouté au `connect-src` de la CSP — sans quoi la requête était bloquée ; vérifié en conditions réelles.)*
+- Accessible depuis le menu utilisateur. Fichiers : `src/utils/passwordHealth.js`, `src/components/PasswordHealthModal.jsx`. Tests Jest dédiés (`src/utils/passwordHealth.test.js`), dont la preuve que seul le préfixe part sur le réseau.
+
+### Mise à jour automatique (electron-updater)
+- Mécanisme câblé et **entièrement protégé** : inerte en développement ou tant que `electron-updater` n'est pas installé (ne casse ni le build ni l'exécution). `electron/autoUpdater.js`, liaison preload `electronUpdater`, toast d'information côté app.
+- Bloc `publish` (GitHub) ajouté à `electron-builder.json`. Activation et signature décrites dans `docs/PRODUCTION-READINESS.md`.
+
+### Confiance, chaîne d'approvisionnement, CI
+- `SECURITY.md` (divulgation responsable + modèle de sécurité), `PRIVACY.md`, `docs/THREAT-MODEL.md`, `.well-known/security.txt`.
+- Génération de **SBOM CycloneDX** : `npm run sbom`.
+- Workflow **CI** (`.github/workflows/ci.yml`) : lint, audit des dépendances (non bloquant), tests React/Electron/passkeys, SBOM, build + tests de fumée sur Windows.
+- `docs/PRODUCTION-READINESS.md` : état « fait » vs. « actions externes requises » (signature de code, stores, audit externe).
+
+### Chasse aux bugs (tests adversariaux) — corrections
+Campagne de tests poussée (injection SQL, concurrence, gros volumes, unicode, isolation multi-utilisateurs, round-trips export/import). Bugs trouvés et corrigés :
+- **Coffre local : limite de taille du corps portée de 1 Mo à 10 Mo** (`electron/localVault/localVaultServer.js`). Avant, un secret avec pièce jointe de 1 à 2 Mo échouait en mode local (`500 Body too large`) alors que l'UI autorise plusieurs Mo.
+- **Codes d'erreur HTTP corrigés** : un corps JSON malformé renvoyait `500` (→ `400`), un corps surdimensionné renvoyait `500`/coupure brutale (→ `413` propre). `parseBody` cesse d'accumuler au-delà de la limite (mémoire bornée) sans détruire la connexion.
+- **`validateUsername` : apostrophes et guillemets de nouveau autorisés** (`src/validation.js`). Avant, impossible d'enregistrer/importer un identifiant légitime comme `O'Brien` (le mot de passe, lui, acceptait déjà tous les symboles). Les caractères de contrôle restent interdits.
+- **`isValidUrl` : chemins fichier Windows (`C:\…`) et UNC (`\\serveur\partage`) acceptés** — l'UI les affiche comme liens mais l'enregistrement les refusait. `javascript:`, `data:`, `vbscript:` restent bloqués.
+
+Propriété de sécurité confirmée et documentée (pas un bug) : en mode local, chaque utilisateur chiffre avec sa propre clé ; un administrateur a l'accès ACL mais **ne peut pas déchiffrer** les secrets d'un autre utilisateur (la lecture inter-utilisateurs n'a de sens qu'en mode Vault).
+
+Nouveaux tests : `test/smoke/smoke-adversarial.js` (intégré à `npm run test:smoke`), `src/utils/csv.roundtrip.test.js`, `src/utils/xml.roundtrip.test.js`, `src/validation.adversarial.test.js`.
+
+Couverture sécurité étendue (extension + pinning + RBI) :
+- **Extension** : suite e2e sur fixtures relancée (`npm run test:e2e`) — détection (classique, 2 pages, SPA, shadow DOM, pièges invisibles, attributs illisibles, rejet inscription) **et sécurité** (focus synthétique n'ouvre pas le menu, secrets filtrés par hôte, pas de mot de passe dans la liste, refus cross-hôte).
+- **Pinning TLS** : logique extraite dans `electron/certPinning.js` (module pur) et unit-testée (`certPinning.test.js`) — calcul d'empreinte SHA-256 (PEM et `sha256/<base64>`), membership exact, pas de correspondance par préfixe/sous-chaîne.
+- **Proxy RBI** : enforcement https (`sanitizeHttpsUrl`) couvert par la suite de fumée adversariale (`test/smoke/smoke-adversarial.js`) — http refusé, identifiants dans l'URL refusés, schéma non-https refusé. Plus normalisation d'empreintes et validation des domaines de confiance.
+- **CLI** : `matchesRule`/`isValidVaultPath` en adversarial. **passkey-core** : +4 cas (compteur chaîné, défi vide, attestation enterprise, clé malformée rejetée).
+- **Dépendances** : `npm audit --omit=dev` signale des vulnérabilités de production (le 2026-10-09 : 9, dont 8 hautes) — `axios` (dépendance directe, correctif disponible sans changement de version majeure) et ses dépendances `follow-redirects`/`form-data`, plus des transitives de `puppeteer-core` (`ws`, `ip-address`, `basic-ftp`, `extract-zip`). Détail et plan dans `docs/PRODUCTION-READINESS.md` ; relancer la commande pour l'état courant.
+
+Suites exécutées, toutes vertes : Jest (`npm run test:react`), unitaires Electron (`npm run test:electron` : crypto/KDF, configLoader, hostMatch, pinning TLS, filtrage réseau RBI, known_hosts, **agent SSH**, **broker SSH** exec+shell, **broker WinRM**), passkeys (`npm run test:passkey`), 4 suites de fumée (`npm run test:smoke` : coffre, sync, adversarial, **ssh+winrm**) et e2e (extension, 2 pages/TOTP, passkey, UI). Le nombre de tests évolue à chaque correctif : lancer ces commandes pour le compte courant. Tests e2e fiabilisés (ré-essai de lecture coffre pour les passkeys, captures d'écran non bloquantes).
+
+### Gestion des passkeys (nouvel écran)
+- Écran **« Mes passkeys »** (menu utilisateur) : liste les passkeys enregistrées **par site** (compte, date de création, nombre d'utilisations) avec **suppression** (confirmation en place). La clé privée n'est jamais affichée — seules les métadonnées publiques le sont. Les passkeys restent stockées dans le secret interne chiffré `.rdvault-passkeys`.
+
+### Ergonomie / rendu (revue visuelle)
+- **Fenêtre transparente conservée** : la fenêtre Electron reste `transparent: true` et la connexion s'affiche dans une **carte flottante de 540×820** (`LOGIN_WIDTH`/`LOGIN_HEIGHT` dans `electron/main.js`). L'expérimentation « fenêtre opaque avec `backgroundColor` / connexion plein fenêtre / 680 px » a été **annulée** ; il n'existe pas d'IPC `window-set-bg`.
+- **En-tête de la barre latérale corrigé** : le titre « Vue coffre-fort » ne se coupe plus sur 3 lignes ; il tient sur une ligne et le bouton « + Nouveau coffre » occupe toute la largeur en dessous.
+- **Cases à cocher thématisées** en mode sombre (`color-scheme` + `accent-color`) : fini le carré blanc natif (« Afficher les supprimés », « Se souvenir de l'identifiant », etc.).
+
+### Fluidité / performance
+- **Rendu du tableau de secrets** : `content-visibility: auto` + `contain-intrinsic-size` posés sur les lignes. *Correction ultérieure : la containment CSS ne s'applique pas aux lignes d'un `<table>` ; mesuré sous Chromium sur 5 000 lignes, la mise en page n'est pas plus rapide (environ 65 ms dans les deux cas, contre 17 → 3 ms pour les mêmes lignes en `<div>`). Le gain vient de la mémoïsation des lignes (voir « Améliorations continues », « Performance ») ; une liste virtualisée reste à faire.*
+- **Démarrage plus rapide** : `AdminPanel` (volumineux, réservé aux admins) chargé à la demande par code-splitting (`React.lazy` + `Suspense`). Bundle principal **193 → 177 ko** (gzip), le panneau d'administration devient un chunk séparé de ~18 ko chargé seulement à l'ouverture de la vue admin.
+- Confirmé : la recherche possède déjà un anti-rebond de 300 ms (saisie découplée du filtrage) et le compte à rebours du presse-papiers est isolé (ne re-rend pas le tableau). Vérifié de bout en bout par le test d'UI réel (`npm run test:e2e:ui`), rendu plus fiable (captures d'écran non bloquantes).
+
+### Audit de re-vérification (octobre 2026)
+Relecture complète du code et des documents après le lot 1.7.0. Corrections apportées :
+
+**Sécurité**
+- **Clé d'hôte SSH réellement vérifiée** (SSH par mot de passe : CLI `mvault ssh` et audit SSH) : épinglage explicite `--hostkey SHA256:…`, sinon TOFU persistant dans `%APPDATA%\RDVAULT\known_hosts.json` avec popup de confirmation à la première connexion ; si la clé change, la connexion est refusée **sans envoi du mot de passe**. Nouveaux tests unitaires knownHosts/sshBroker.
+- **Journal d'audit sans arguments en clair** : les commandes SSH/WinRM sont journalisées sous forme exécutable + empreinte HMAC-SHA256 tronquée, avec une clé aléatoire propre à l'installation (`cli/audit-key`) : deux commandes identiques se corrèlent, mais une commande ne peut pas être retrouvée hors ligne par force brute.
+- **Clé d'hôte changée en cours de session** (re-KEX) : connexion interrompue avec un code distinct (`HOST_KEY_CHANGED_REKEY`), `known_hosts.json` laissé intact.
+- **Abandon du client** : si `mvault` se déconnecte pendant la connexion, l'authentification ou l'exécution, la connexion SSH est détruite et la commande n'est jamais lancée si l'abandon précède l'ouverture de session.
+- **Noms refusés** : nom d'utilisateur ou de coffre contenant un caractère de contrôle (C0, DEL, C1) refusé à la création.
+- **Extension, service worker** : même règle `rp.id` que le pont de page (IP, TLD nu et suffixes publics refusés), en défense en profondeur.
+- **Serveur du coffre local** : `403` pour un `Origin` cross-site, `415` sans `Content-Type` JSON, `400` pour un encodage de chemin invalide.
+- **Coffre local, anti-force brute** : une requête de connexion sans mot de passe valide (POST vide, JSON invalide) ne consomme plus le quota de l'utilisateur ; un tiers ne peut plus bloquer sa connexion. Corps JSON `null`, chaîne ou tableau → `400` (au lieu d'un `500` ou d'un stockage tel quel).
+- **Passkeys, anti-clickjacking** : les boutons qui signent ou créent n'acceptent qu'un clic réel sur une fenêtre entièrement visible et non recouverte (IntersectionObserver v2), affichée depuis au moins 500 ms.
+- **Passkeys, contexte d'appel** : médiation `conditional` laissée au navigateur (ni fenêtre ni accès au coffre) ; contexte non sécurisé ou iframe sans délégation Permissions-Policy → navigateur ; `rp.id` parent refusé pour une adresse IP, un TLD nu ou un suffixe public connu.
+- **Passkeys, création** : si l'enregistrement dans le coffre échoue, la création est rejetée (`NotAllowedError`) au lieu de renvoyer une passkey non sauvegardée.
+- **Filtrage réseau RBI** : domaine enregistrable calculé avec la Public Suffix List (domaines privés inclus) ; une cible `team.github.io` n'autorise plus `evil.github.io` (idem herokuapp.com, azurewebsites.net, cloudfront.net…).
+- **Journal d'audit CLI** : affectation en tête de commande masquée (`PGPASSWORD=…` → `PGPASSWORD=***`) ; caractères de contrôle neutralisés dans le chemin, les détails et la commande ; décisions d'épinglage de clé d'hôte journalisées.
+- **Serveur CLI** : si `mvault` abandonne pendant une confirmation, ni agent ni connexion SSH ne sont ouverts (journalisé `client-parti`) ; `/ssh/resize` et `/ssh/close` authentifiés ne sont plus limités en débit, la fermeture de l'agent ne peut plus être refusée en `429`.
+- **Dépendances de production vulnérables** : `axios` 1.12.2 → 1.20.0 (même version majeure ; avec `follow-redirects` 1.16.1 et `form-data` 4.0.6) ; transitives de `puppeteer-core` montées dans leurs plages semver (`ws` 8.22.0, `ip-address` 10.7.3, `basic-ftp` 5.3.1). `npm audit --omit=dev` : 9 vulnérabilités (8 hautes, 1 modérée) → 7 hautes, toutes dans la chaîne `puppeteer-core` 24 (`extract-zip` via `@puppeteer/browsers`, `basic-ftp` via `get-uri`), sans correctif dans la branche 24 et non atteintes par RDVAULT (téléchargement/installation de navigateur uniquement) : correction complète reportée à `puppeteer-core` 25 (version majeure). Module natif `better-sqlite3` non recompilé, `cpu-features` toujours absent ; détail dans `docs/PRODUCTION-READINESS.md`.
+
+**Corrections**
+- Délai d'exécution des commandes distantes distinct du délai de connexion (`--exec-timeout`, défaut 10 min).
+- La clé chargée dans l'agent SSH est bien retirée à la fin de session (`/ssh/close` attendu avant la sortie de `mvault`).
+- Corps JSON lus en `Buffer` puis décodés d'un bloc : plus de corruption UTF-8 d'un caractère multi-octets coupé entre deux chunks.
+- Fuite de listener `window-maximize-changed` corrigée.
+- Passkeys : sélecteur de compte quand plusieurs passkeys existent pour un même site.
+- Passkeys : défi et identifiants fournis en sous-vue typée (`subarray`, `DataView`) encodés correctement.
+- Création d'un sous-dossier en vue arborescence : le chemin n'est plus doublé (`prod/db/prod/db/x` au lieu de `prod/db/x`).
+- Éditeur d'entrée : les erreurs de validation des champs personnalisés s'affichent (l'enregistrement échouait sans message).
+- `mvault ssh` : code de sortie `128 + n` pour une commande tuée par un signal, `1` sans statut ; Ctrl+C, SIGTERM et SIGHUP relayés à `ssh`, agent fermé avant la sortie ; avertissement quand `--hostkey` / `--exec-timeout` ne s'appliquent pas (mode clé) ; réponses décodées d'un bloc (plus de caractère UTF-8 corrompu sur les grosses sorties) ; messages du serveur affichés sans caractères de contrôle.
+- Broker SSH : codes d'erreur explicites (`KNOWN_HOSTS_READ` / `KNOWN_HOSTS_WRITE` → `500`, `CONNECT_TIMEOUT` / `EXEC_TIMEOUT` → `504`).
+- Lecture des journaux Vault par SSH (panneau d'administration) : limite de taille en octets et décodage UTF-8 d'un bloc, délai d'exécution (2 min par défaut), invite de clé d'hôte fermée si la connexion tombe pendant l'attente.
+- Serveur de synchronisation : un corps trop volumineux ne laisse plus la requête en attente.
+- Coffre local : noms d'utilisateur et de coffre contenant `@`, des espaces ou des accents correctement décodés (connexion, listing) ; les comptes déjà enregistrés sous la forme encodée restent accessibles.
+
+**Internationalisation**
+- Libellés de force des mots de passe traduits ; 10 locales traduites.
+- Éditeur d'entrée : textes restés en français traduits dans les 12 langues (astuce de dossier, exemple de tags, case « Protégé », taille maximale des pièces jointes, unité « bits », phrase de passe SSH, URL invalide).
+- Libellé TOTP du minuteur de presse-papiers, filtre « Tous les fichiers » du dialogue d'export et message d'échec de création de dossier (qui affichait celui de la suppression) traduits.
+- Paramètres › CLI : la colonne « Auto-get » indique qu'elle couvre `get`, `ssh` et `winrm` (12 langues), colonne élargie.
+- Parité complète des 12 locales (les 10 langues hors fr/en reprenaient ~150 libellés en anglais : export, partage, clés SSH, générateur, TOTP…).
+
+**Hygiène / documentation / CI**
+- IPC `window-set-bg` mort supprimé (la fenêtre reste transparente, voir « Ergonomie / rendu »).
+- CHANGELOG, `SECURITY.md`, `docs/THREAT-MODEL.md`, `PRIVACY.md`, `README.md`, `test/README.md` réalignés sur le code : liaison extension ↔ application décrite telle qu'implémentée (appairage par identifiant approuvé + jeton de session, pas d'« épinglage d'empreinte » à ce niveau), mise à jour automatique au conditionnel tant qu'`electron-updater` n'est pas installé, scripts npm réels, plus de nombre de tests figé (les commandes à lancer sont indiquées).
+- `SECURITY.md` et `docs/THREAT-MODEL.md` : limite explicitée de la liaison extension ↔ application face à un processus local du même compte (un identifiant d'extension déjà approuvé, qui n'est pas secret, obtient le jeton sans invite).
+- `cli/README.md` : les règles Auto-get valent aussi pour `mvault ssh` et `mvault winrm` ; la popup de clé d'hôte inconnue n'est jamais auto-approuvée et la détection de rafale reste active.
+- `README.md` : nombre d'audits cohérent, nom d'installeur générique dans les commandes d'installation silencieuse, scrypt dans la pile technique, commandes `mvault ssh` / `mvault winrm` listées, décomptes périmés de l'architecture retirés, commande `test:e2e:ui` corrigée. `test/README.md` : sept pages de formulaires e2e et scripts e2e complémentaires. `PRIVACY.md` : connexions sortantes lancées par l'utilisateur (SSH, WinRM, RBI) mentionnées. `docs/PRODUCTION-READINESS.md` : état de `npm audit` corrigé (`axios`, dépendance directe, en fait partie).
+- CI : Node 22 (`.nvmrc`, champ `engines` de `package.json`), lint bloquant, libellé des tests de fumée conforme aux 4 suites enchaînées. L'audit des dépendances reste **non bloquant** (`npm audit --omit=dev || true`) tant que des vulnérabilités de production sont ouvertes (voir « Dépendances » ci-dessus).
+
+### Améliorations continues (octobre 2026)
+Nouvelle campagne de tests (unitaires, interface réelle, extension sur sites réels, installeur) et corrections. **Aucun changement de format de stockage, de chiffrement, de schéma ni de nommage des clés TOTP : les coffres existants restent lisibles à l'identique et les comptes existants se connectent comme avant.**
+
+**Compatibilité avec les versions précédentes**
+- Un coffre créé par la 1.5.0 s'ouvre à l'identique (entrées, versions, TOTP, passkeys) — vérifié par un banc qui recrée un coffre avec le code 1.5.0. Le serveur du coffre local est extrait de l'installeur 1.5.0 et piloté avec les encodages du client 1.5.0, puis une copie de chaque base est ouverte par le code actuel. Comptes couverts : nom simple, avec `.`, `@`, une espace ou un accent, mot de passe de plus de 72 octets, base à plusieurs utilisateurs. Contenu : caractères spéciaux, notes de 200 Ko, pièces jointes, versions supprimées, clé SSH, clés TOTP SHA1/256/512 à 6 ou 8 chiffres, blob des passkeys.
+- Compte du coffre local créé en 1.5.0 dont le nom contient `@`, une espace ou un accent : passkeys de nouveau disponibles. La 1.5.0 avait enregistré ce nom sous sa forme encodée (`jean.dupont%40exemple.fr`, coffre `users/jean.dupont%40exemple.fr/Mes-Secrets`) : la création était refusée (le navigateur prenait le relais) et « Mes passkeys » affichait « Aucune passkey enregistrée pour le moment », même avec des passkeys dans le coffre. Ce coffre n'est retenu que si le serveur confirme que c'est le nom enregistré du compte connecté, jamais pour un autre compte.
+- Entrées nommées `.rdvault…` à la racine d'un coffre, permises par la 1.5.0 (`.rdvault`, `.rdvault-notes`…) : de nouveau affichées dans le tableau du coffre. Seuls les noms internes exacts `.rdvault-passkeys` et `.rdvault-keycheck` sont masqués ; créer ou renommer une entrée sous l'un d'eux est refusé avec un message traduit. L'export, l'import, la recherche multi-coffres, l'audit et l'extension appliquent encore l'ancienne règle (voir « Reste à faire »).
+
+**Dépendances**
+- `axios` 1.20.0 (avec `follow-redirects` 1.16.1 et `form-data` 4.0.6) ; transitives de `puppeteer-core` 24 montées dans leurs plages semver.
+- Reste à faire : `puppeteer-core` 25 (version majeure) pour les vulnérabilités restantes de sa chaîne de téléchargement de navigateur, non utilisée par RDVAULT.
+
+**Thème sombre et accessibilité**
+- Contraste du thème sombre : les boutons primaires perdaient leur fond. Cause : la variable `--brand-violet-400` n'était pas définie, ce qui invalidait toute la déclaration. Variable définie, violet de remplissage `--accent-fill` (texte blanc ≥ 4,5:1) et alias pour les variables CSS utilisées sans être définies ; contrastes WCAG AA vérifiés par des tests.
+- Les fonds accent posés en style inline sous un texte blanc utilisent tous `--accent-fill` (barre d'outils, barre latérale, interrupteurs CLI, vignette de glisser-déposer) ; la règle CSS de transition est retirée.
+- Clavier : changement de coffre (Entrée/Espace, Maj+F10 ou touche Menu pour le menu contextuel), lignes et dossiers du tableau, menus contextuels et menu utilisateur (rôles ARIA, flèches, Début/Fin, Échap), choix du thème ; indicateur de focus des boutons visible (≥ 3:1).
+- Modales : focus initial, piège à focus, Échap réservé à la modale du dessus, retour du focus au déclencheur. Échap ou un clic sur le fond du générateur ne ferme plus la fiche d'édition ; une sélection de texte qui déborde ne ferme plus les Paramètres.
+- Noms accessibles : bouton « afficher le mot de passe » (état annoncé), boutons ×/⬇ des champs et pièces jointes, libellés associés aux champs de la fiche d'édition, type d'entrée en groupe radio. Attribut `lang` du document aligné sur la langue choisie.
+- Divers : cliquer sur l'œil ne modifie plus la sélection ; libellés de copie explicites dans le menu contextuel, grisés si la valeur est vide.
+- Onglets des Paramètres compacts : sur une ligne dans les 12 langues à la taille par défaut (la barre débordait dans 9 langues et coupait le dernier onglet dans 5) ; sur une fenêtre étroite, ils passent sur deux lignes au lieu d'une barre de défilement, sans jamais couper un libellé. Chaque onglet s'ouvre en haut de son contenu : il héritait de la position de défilement du précédent (l'onglet Export s'affichait sans son titre).
+- Rôles ARIA des modales : `role="dialog"`, `aria-modal` et nom accessible tiré du titre sur toutes les modales, y compris création de policy, builder de policy et activation de l'audit du panneau d'administration, désormais bâties sur le squelette commun des modales. La modale de création de dossier se ferme aussi par Échap. Un clic sur le fond ne ferme une modale que si l'appui et le relâchement y ont lieu : une sélection qui déborde (code TOTP, mot de passe généré…) ne la ferme plus.
+- Menus contextuels des dossiers, des coffres, des colonnes et des tags : rôle `menu` nommé (chemin du dossier, nom du coffre, titre de la liste des colonnes, « Tags »), éléments `menuitem` (cases `menuitemcheckbox` pour les colonnes), séparateurs annoncés.
+- Fiche d'entrée : « + Ajouter une pièce jointe » est un vrai bouton, atteignable au clavier (c'était un libellé stylé) ; le sélecteur de fichier masqué reste hors de l'ordre de tabulation.
+- Lignes sélectionnées et cibles de glisser-déposer : fond violet du thème dans les deux thèmes. La variable de fond de sélection n'était pas définie et retombait sur un bleu codé en dur. Contraste du texte vérifié par des tests.
+- Panneau d'administration, onglet Tags : fonds, bordures et textes codés en dur remplacés par les variables du thème (encadrés restés blancs en thème sombre, sous un texte clair).
+- Panneau d'administration : boutons de fenêtre (réduire, agrandir, fermer) lisibles sur le bandeau en dégradé, en icônes blanches (contraste de 1,8 à 2,8:1 auparavant) avec un survol clair ; le survol rouge de « fermer » est conservé.
+
+**Internationalisation**
+- Panneau d'administration traduit dans les 12 langues. En français, le titre « Panneau d'administration » et l'onglet « Méthodes d'authentification » remplacent « Panel Administration » et « Auth Methods », restés en anglais.
+- Vignette de glisser-déposer : « N entrée(s) », codé en dur en français, traduit dans les 12 langues (singulier / pluriel).
+- Boîtes de dialogue natives (appairage de l'extension, clé d'hôte SSH, accès CLI, échec de chargement, port de synchronisation occupé) traduites dans les 12 langues : langue de l'interface, à défaut `LANG` de `config.cfg`, puis anglais. Messages d'erreur des clés d'hôte SSH et des sessions RBI traduits de même.
+- Arabe affiché de droite à gauche (`dir="rtl"`) : mise en page en miroir, marges logiques dans le tableau, exemples de commandes CLI gardés de gauche à droite, redimensionnement des colonnes dans le sens de l'écriture. La poignée de redimensionnement est sur le bord de fin de chaque en-tête (le bord gauche en arabe), du côté où la colonne s'agrandit ; le geste reste juste quel que soit le côté où elle s'affiche.
+- Arabe, Paramètres : le commentaire des exemples de commandes CLI n'est plus collé à la commande ; coche de la langue choisie en bout de bouton et code de langue aligné à droite ; interrupteurs de l'onglet CLI en miroir ; chemins de coffres et parenthèse « (get, ssh, winrm) » de l'en-tête isolés et lus de gauche à droite (l'en-tête affichait « (WINRM ») ; liste « À propos » en retrait du bon côté ; nom du fichier à importer affiché dans son propre sens d'écriture (ellipse du bon côté).
+- Arabe, panneau d'administration : identifiants techniques (chemins de coffres, noms de policies, DN LDAP, chemins de fichiers, hôtes, y compris dans les listes déroulantes) isolés et lus de gauche à droite, barre oblique du bon côté (« Comptabilite/ » s'affichait « /Comptabilite »). En-têtes du tableau d'export alignés sur leurs cellules ; cases à cocher, aides et retraits du builder de policies et de la modale d'activation de l'audit espacés du bon côté. Le texte indicatif « hachi أو 192.168.1.x » du champ d'hôte SSH s'affiche dans le bon ordre.
+- Traduits : erreurs de connexion, de validation de l'éditeur (clés SSH comprises) et de TOTP (sans le corps de la réponse du serveur), refus d'une entrée trop volumineuse (`413`), libellés « Mot de passe (SSH) » / « (RDP) » du minuteur de presse-papiers, taille des pièces jointes (unité et séparateur décimal). Titre de la barre latérale complet en russe.
+
+**Robustesse des mots de passe et générateur**
+- Estimateur de robustesse par reconnaissance de motifs, hors ligne : répétitions, suites, parcours de clavier (AZERTY, QWERTY, QWERTZ, ЙЦУКЕН, pavé numérique), dates, mots courants avec substitutions. « Motdepasse2024! » n'est plus jugé fort, un mot de passe aléatoire non latin n'est plus jugé faible. Utilisé par l'indicateur de force et l'audit de santé.
+- Générateur : tirage uniforme sur un jeu de caractères dédoublonné (caractères personnalisés en double, hors BMP ou de contrôle traités), minimums bornés à la longueur, contraintes impossibles signalées au lieu d'être ignorées, plus de gel sur les grandes longueurs. L'entropie affichée est calculée sur le même jeu.
+
+**CLI `mvault`**
+- Fin d'un shell interactif : `mvault` demande la raison à RDVAULT (`POST /ssh/status`). Fin normale : code 0. Clé d'hôte changée, durée maximale atteinte, fermeture par un autre client ou RDVAULT injoignable : message et code 1.
+- Codes d'erreur renvoyés à `mvault` (fin de shell, échec de `/ssh`) toujours sous forme de chaîne, d'au plus 64 caractères : une raison de déconnexion SSH numérique arrive comme « 2 ».
+- Serveur CLI : les requêtes non authentifiées (`/health`, jeton absent ou faux) ont leur propre quota et ne peuvent plus bloquer en `429` les commandes authentifiées.
+- Arrêt de RDVAULT : `cli/session.json` n'est supprimé que s'il a été écrit par ce processus. Une autre instance qui l'a réécrit garde sa session `mvault` ; un fichier illisible est laissé en place (il est réécrit au prochain démarrage du serveur).
+
+**Extension navigateur**
+- Sites réels : 50 des 53 pages de connexion testées fonctionnent au dernier passage ; les 3 autres (GitLab, Etsy, leboncoin) sont bloquées par une protection anti-robot avant d'afficher leur formulaire. Ce nombre varie avec ces protections : eBay, bloqué au passage précédent (49 sur 53), a cette fois servi sa page.
+- Formulaire dont l'adresse d'envoi porte un mot d'inscription dans sa chaîne de requête ou son fragment (connexion Auth0 d'IKEA : `…/login?state=…&registration=…`) : reconnu comme une connexion, il était pris pour une inscription (les deux extensions). Le chemin de l'adresse compte toujours (`/account/register` reste une inscription).
+- Champs à étiquette flottante détectés. RDVAULT verrouillé ou limite de débit (`429`) : échec signalé et nouvelles tentatives espacées, sans boucle de requêtes.
+- TOTP : codes à 7 et 8 chiffres acceptés (seuls 6 chiffres l'étaient) ; un champ TOTP sans clé associée ne déclenche plus de rafale de requêtes.
+- Correspondance de domaine : les hébergements mutualisés (`sharepoint.com`, `onmicrosoft.com`, `force.com`, `atlassian.net`, `cloudapp.azure.com`, `vps.ovh.net`…) ne sont plus assimilés à la marque. L'identifiant de la marque n'est plus proposé sur le sous-domaine d'un tiers, et deux locataires ne se correspondent plus.
+- Hébergements mutualisés ajoutés : organisations Okta (`okta.com`, `oktapreview.com`, `okta-emea.com`), Auth0, OneLogin, Zendesk et ServiceNow, dont la connexion se fait sur le locataire lui-même (aucun domaine de marque n'en reçoit les identifiants) ; sites Salesforce à domaine amélioré (`my.site.com`, `my.salesforce-sites.com`), rattachés à `salesforce.com`. Liste complète et sens de correspondance dans `SECURITY.md`.
+- Domaines équivalents : l'entrée inopérante `dgfip.finances.gouv.fr` et le groupe `impots.gouv.fr` sont retirés. La connexion de `impots.gouv.fr` reste couverte par ses propres sous-domaines ; `finances.gouv.fr` (applications ministérielles, intranet des agents) n'est volontairement pas rendu équivalent.
+- Pièges anti-robot : un champ réduit à 2 px ou moins, ou découpé par `clip` / `clip-path` (motifs « sr-only »), y compris par un ancêtre proche, n'est plus proposé ni rempli, ni compté comme second mot de passe dans la détection d'inscription (les deux extensions).
+- Les deux extensions sont traduites (`chrome.i18n`, 12 langues, langue du navigateur), fenêtre de choix des passkeys comprise.
+- TOTP saisi pour une entrée rangée dans un dossier : le serveur de synchronisation refusait tout nom de clé contenant `/`.
+- Entrée dont le nom commence ou finit par une espace, ou long (jusqu'à 512 caractères) : remplie correctement, les identifiants étant transmis tels quels.
+- Port de synchronisation déjà pris (autre session Windows, autre programme) : avertissement « Extension Chrome non reliée » au démarrage, puis rappel traduit après la connexion, au lieu d'un échec seulement journalisé.
+- Interface de l'application plantée, rechargée ou figée (fenêtre qui ne répond plus) : l'état servi à l'extension (mots de passe compris) est purgé aussitôt. Une interface figée ne sert plus rien tant qu'elle ne répond pas ; redevenue réactive, elle republie son état seulement si la session est encore ouverte.
+- Plus de 100 000 entrées : les entrées au-delà, non transmises à l'extension, sont signalées par un avertissement traduit (une fois par valeur), et non plus seulement dans le journal.
+- Dernier coffre supprimé : l'extension ne sert plus ses mots de passe (état vide publié aussitôt) ; elle les servait jusqu'à la déconnexion.
+- Glisser-déposer vers un autre coffre ou vers un dossier : l'extension est resynchronisée comme après « Migrer vers… » ou « Déplacer vers… » ; l'entrée déplacée n'y était plus proposée jusqu'à la synchronisation suivante.
+- Import des Paramètres : les coffres importés sont relus en entier pour l'extension, qui gardait l'ancien mot de passe d'une entrée écrasée par l'import.
+
+**Passkeys**
+- Stockées dans le coffre personnel exact `users/<nom>/`, sans repli vers un autre coffre : un nom contenant `.`, `@`, une espace ou un accent pouvait viser le coffre d'un autre utilisateur. Un ancien emplacement est encore lu s'il appartient à l'utilisateur, jamais modifié. Compte du coffre local créé en 1.5.0 avec un nom encodé : voir « Compatibilité avec les versions précédentes ».
+- Écritures sérialisées (conditionnelles en KV v2, coffre local compris) : deux opérations simultanées ne perdent plus de passkey. Compteur de signatures monotone, réservé avant la signature.
+- Conformité WebAuthn : `crossOrigin` / `topOrigin` dans une iframe déléguée, `excludeCredentials` (`InvalidStateError`), algorithme ES256 requis (sinon le navigateur prend le relais), réponse de `create()` complète (`getAuthenticatorData`, `getPublicKey`, `toJSON`).
+- Vérification de l'utilisateur (drapeau UV) : posée, car une cérémonie n'aboutit que coffre déverrouillé par le mot de passe maître (clé lue dans le coffre et compteur réservé avant de signer, attestation rendue après l'enregistrement). Les sites qui exigent `userVerification: "required"` sont servis par RDVAULT. Comportement des versions publiées, documenté dans `PASSKEYS.md` : un retrait temporaire d'UV, essayé pendant le développement, n'a jamais été publié.
+- Coffre local : la clé privée d'une passkey supprimée n'est plus lisible dans l'historique (voir « Coffre local »).
+
+**Sessions sécurisées (RBI)**
+- Filtrage réseau après connexion : sous un hébergement mutualisé (`contoso.sharepoint.com`, VM Azure…), seuls l'hôte cible et ses sous-domaines sont autorisés ; les autres locataires et le domaine parent ne le sont plus (la Public Suffix List donnait `sharepoint.com`, voire `azure.com`), et le suffixe nu n'est autorisé qu'à l'identique. Exception : `force.com` garde la Public Suffix List, Salesforce servant des ressources partagées sous ce domaine.
+- Identifiants et code TOTP saisis seulement dans une page, une frame ou une popup du domaine de l'entrée (son adresse ou son champ « site web »), avec la règle de l'extension. Sinon la saisie s'arrête avec un message (redirection, lien ou iframe tierce). Le champ « site web » est transmis par tous les points de lancement : menu contextuel, clic sur l'adresse, partage créé (il voyage dans le contenu emballé par Vault, illisible par le proxy) et partage reçu. Le processus principal le valide et ne l'ouvre jamais.
+- Profil éphémère (cookies du site) réellement supprimé à la fermeture sous Windows. À la sortie, l'application attend la fermeture des sessions (20 s au plus) ; les profils orphelins sont supprimés au démarrage suivant, par l'instance principale seulement.
+- Partage RBI conforme aux exigences du proxy (`DEPLOYMENT.md`, étape 8) : appels authentifiés (`X-Vault-Token`), le proxy ne rend qu'un wrapping token (un proxy qui renvoie des identifiants en clair est refusé), 5 utilisations et 24 h au plus, confirmation avant d'ouvrir un partage reçu. En mode entreprise, l'origine de `RBI_PROXY_URL` est autorisée par la CSP : le proxy n'était jamais joint.
+- Messages d'échec traduits partout où une session est lancée (menu contextuel, lien de partage).
+- Formulaires de connexion connus : reconnus sur des frontières de libellés, du plus spécifique au plus général (la connexion AWS n'emprunte plus les sélecteurs de la boutique Amazon). Une adresse sans schéma dont l'hôte commence par « http » (`httpd.corp.local`) s'ouvre en `https://`.
+
+**Import / export**
+- L'export ignore les entrées internes (tout nom commençant par `.rdvault` à la racine du coffre, dont les passkeys) et l'import refuse ces noms (comptés en échec) : un réimport « écraser les doublons » ne peut plus effacer les passkeys.
+- Import dans le coffre affiché : le tableau est relu après l'import (une seconde après la dernière écriture), alors qu'il gardait l'ancien contenu. En mode « écraser les doublons », « Modifier » puis « Enregistrer » sur une entrée importée remettait l'ancien mot de passe.
+- CSV : les 7 colonnes historiques restent dans le même ordre, suivies de `Website`, `EntryType`, `CustomFields` et `Attachments` (JSON). XML : éléments `website`, `entryType`, `customFields` et `attachments`. L'aller-retour conserve champs personnalisés, pièces jointes, site et type SSH.
+- Noms validés à l'import (longueur, `..`, barre oblique inverse, caractères de contrôle, segment vide, `.` ou `..`) : `.`, `/x`, `x/` et `a//b` sont refusés au lieu de créer des entrées invisibles.
+- Export : une entrée supprimée (suppression douce) n'est plus comptée comme illisible. Import : un seul listage par dossier pour détecter les doublons, au lieu d'une lecture par entrée ; résultat identique.
+- Export et import partagent un plafond de 100 Mo, compté à l'export en octets UTF-8 écrits (et non en caractères) : un export contenant des caractères non ASCII ne peut plus dépasser la limite de lecture, tout export accepté se réimporte.
+- Import « écraser les doublons » : une entrée n'est tenue pour absente que sur une réponse `404`. Toute autre erreur de lecture (réseau, `403`, `500`) compte la ligne en échec, sans rien écrire.
+
+**Intégrité des données**
+- Clés TOTP (nommage inchangé) : supprimer une entrée ne détruit plus la clé partagée avec un coffre de même préfixe (`Banque` / `users/x/Banque`). Le déplacement d'une entrée dont la clé TOTP changerait de nom est refusé (la copie reste permise). Supprimer un coffre local supprime ses propres clés TOTP, jamais celles d'un autre coffre.
+- Entrée « Clé SSH » : la clé privée multi-lignes s'enregistre de nouveau ; clés privée et publique contrôlées (taille, caractères de contrôle).
+- « Restaurer » une version réécrit la version stockée telle quelle : tags, champs personnalisés, pièces jointes, type et champs inconnus conservés.
+- Déplacements et glisser-déposer : une entrée homonyme à destination n'est plus écrasée, l'entrée déplacée est renommée (`nom_1`). Renommer vers une entrée existante est refusé ; un échec d'écriture ne fait plus disparaître l'entrée.
+- Coffre local : le listage d'un dossier ne renvoie plus d'entrées des dossiers voisins (correspondance exacte).
+- TOTP : « Afficher le code » utilise la période réelle de la clé (code et compte à rebours justes) ; périodes de 10 à 120 s acceptées à l'identique par l'interface et le coffre local (plus de remplacement silencieux par 30 s).
+- TOTP : la fenêtre « Afficher le code » renouvelle le code dès le changement de période, même quand l'application est en arrière-plan. Le renouvellement n'avait lieu que sur une seconde précise, souvent sautée quand Chromium espace les minuteurs, ce qui laissait un code périmé tout un cycle. Une réponse tardive n'écrase plus un code plus récent.
+- « + Nouvelle entrée » et « Dupliquer » n'écrasent plus une entrée existante du même nom.
+- Supprimer une entrée ne détruit plus sa clé TOTP : en KV v2, « Restaurer » la rend avec son code ; en KV v1 (suppression définitive), la clé est conservée et un avertissement l'indique. La boîte de confirmation annonce le sort réel de la clé : en KV v2, une note indique qu'elle est conservée et que « Restaurer » rend l'entrée avec son code TOTP ; en KV v1, la case « Supprimer aussi la clé TOTP (irréversible) » reste proposée, décochée par défaut.
+- « Supprimer le TOTP » : la graine n'étant pas récupérable, l'action ouvre une boîte de confirmation (action dangereuse, « Supprimer la clé TOTP ») ; rien n'est supprimé avant le clic sur « Supprimer », et rien du tout si un autre coffre a été ouvert entre-temps. La suppression est refusée si une entrée d'un autre coffre revendique la même clé. Règle exacte, y compris quand un tiret fait coïncider les noms (`Prod` + `EU-db` et `Prod-EU` + `db`) ; la même règle protège la suppression d'une entrée ou d'un coffre local.
+- « Afficher les supprimés » coché : la liste garde les entrées supprimées après un ajout ou retrait de tag, une opération de dossier ou une restauration de version.
+- Migrer, Copier, Déplacer dans un dossier, glisser-déposer : données recopiées telles quelles (champs hors schéma RDVAULT conservés), opérations exécutées une à une dans l'application (deux glisser-déposer simultanés ne prennent plus le même nom), délai réseau de 30 s. Ouvrir un autre coffre pendant l'opération n'affiche plus la liste du coffre source sous son en-tête.
+- Migrer, Copier, Déplacer, glisser-déposer : si la liste des entrées du coffre de destination ne peut pas être obtenue (réseau après nouvel essai, `403`, `5xx`, coffre trop grand), l'opération est annulée avant toute écriture, avec un message traduit. Une liste vide servait jusque-là de référence pour les doublons, et une entrée existante pouvait être écrasée. Coffre de destination vide (`404`) : inchangé.
+- Migrer, Copier, Déplacer, glisser-déposer : l'écriture à destination est une création seule (check-and-set `cas: 0`, appliqué par Vault KV v2 et par le coffre local). Une entrée créée sous le même nom par un autre poste entre le listage et l'écriture n'est plus remplacée : l'écriture est refusée, comptée en échec, et la source est conservée. KV v1 n'a pas de contrôle de version : pour une destination KV v1, cette fenêtre demeure.
+
+**Session, connexion et presse-papiers**
+- Après une expiration de session, la session suivante retrouve son délai d'inactivité et les liens de partage fonctionnent.
+- À l'expiration : modales et menus fermés (plus de mot de passe en clair à l'écran de connexion ni à la session suivante), état administrateur et vue réinitialisés.
+- Une déconnexion pendant une synchronisation de l'extension ne republie plus l'état « connecté » avec les mots de passe.
+- Réponse arrivée après une déconnexion ou une expiration : abandonnée. Le menu contextuel, la confirmation de suppression, le code ou la configuration TOTP et la confirmation d'un partage RBI reçu ne réapparaissent plus sur l'écran de connexion ni dans la session suivante, éventuellement d'un autre utilisateur (menu qui copiait le mot de passe de la session précédente, « Supprimer » qui visait l'entrée homonyme du nouveau coffre). Après plusieurs clics droits rapides, seul le dernier ouvre son menu.
+- Presse-papiers : la dernière copie, y compris celles des connexions RDP/SFTP, est toujours effacée à la fermeture et par « Effacer maintenant », historique Windows (Win+V) compris.
+- Coffres « RBI uniquement » : entrées non révélables ni copiables en recherche multi-coffre, et plus transmises à l'extension ni à la CLI.
+- Jeton Vault renouvelé aux 2/3 de sa durée (`auth/token/renew-self`). Jeton expiré ou révoqué : fin de session propre (extension vidée, écran de connexion, message), au lieu d'une session « connectée » sur un coffre vide qui servait encore les mots de passe à l'extension.
+- Connexion : Vault indisponible (scellé, `5xx`) ou quota (`429`) n'est plus compté comme un mot de passe faux (plus de blocage de 5 min) ; MFA Vault exigée ou réponse sans jeton : message explicite, aucune session ouverte.
+- Déconnexion immédiate : écran et extension vidés avant la révocation du jeton, qui pouvait faire attendre 30 s hors ligne.
+- Après déconnexion ou expiration, la fenêtre revient à la carte de connexion (540×820).
+- Erreur imprévue pendant l'affichage : écran de secours traduit (titre, message, bouton « Recharger l'interface », annoncé aux lecteurs d'écran) au lieu d'une fenêtre transparente vide. Rien de l'erreur n'est affiché ni journalisé (elle peut contenir des données du coffre) ; recharger l'interface purge l'état servi à l'extension et demande une nouvelle connexion.
+
+**Recherche et tableau**
+- Recherche multi-coffres : Modifier, Dupliquer, Supprimer, TOTP, Historique, Déplacer, Migrer et glisser-déposer agissent sur le coffre de l'entrée, et non plus sur le coffre sélectionné (mauvaise entrée modifiée ou supprimée, graine TOTP d'une autre entrée détruite).
+- Recherche multi-coffres : deux entrées du même nom dans deux coffres ne sont plus sélectionnées ni révélées ensemble (clé de ligne « coffre + nom » pour une entrée d'un autre coffre que le coffre ouvert, séparateur interdit dans les noms). En sortant des résultats, ces lignes quittent la sélection et leurs mots de passe révélés sont masqués ; une sélection qui mêle plusieurs coffres n'est pas déplaçable par glisser-déposer.
+- Recherche multi-coffres : après une modification d'une entrée du coffre sélectionné, ses résultats sont relus. Un second « Modifier » rouvrait l'ancien contenu, pris pour une création et refusé (« existe déjà »). Ajouter ou retirer un tag depuis les résultats relit aussi la liste du coffre sélectionné : une fois la recherche vidée, « Modifier » ne réécrit plus l'ancien tag.
+- Case « Rechercher dans tous les coffres » : cochable seulement avec une recherche, toujours décochable, décochée quand la recherche est vidée. Un filtre tapé juste avant un changement de coffre ne s'applique plus au nouveau coffre. Recherche vidée (par l'utilisateur, au changement de coffre, à la déconnexion ou à l'expiration) : le filtre en attente est annulé et la liste complète s'affiche aussitôt.
+- Changement de coffre (barre latérale, création ou suppression d'un coffre, action dans le coffre d'une entrée, connexion) : sélection et mots de passe révélés vidés avant l'affichage du nouveau coffre. Une entrée homonyme du nouveau coffre apparaissait sélectionnée (emportée par un glisser-déposer) ou révélée en clair. Supprimer un autre coffre laisse le coffre affiché à l'écran : on revenait sur le premier coffre de la liste.
+- Noms, identifiants, URL, notes et coffre tronqués par une ellipse : texte complet en infobulle (1 000 caractères au plus), jamais pour le mot de passe, ni pour l'identifiant et les notes d'une entrée « RBI uniquement ».
+- Menu contextuel : l'intertitre de la section des autres coffres devient « Autre coffre » ; il répétait « Migrer vers... », l'action placée juste en dessous. « Historique » en est séparé.
+- Dossier ou entrée nommé `constructor`, `toString`, `__proto__`… : plus de fenêtre vide en vue arborescence, plus de mot de passe affiché sans clic.
+- Colonnes : le double-clic sur une poignée n'affiche plus « Copié », la largeur automatique de la colonne mot de passe ne trahit plus la longueur du mot de passe, le premier glissement part de la largeur affichée.
+
+**Performance (gros coffres)**
+- Lectures massives (tableau, extension, recherche multi-coffres, audit, panneau d'administration) limitées à 24 requêtes simultanées, avec nouvel essai. Au-delà d'environ 1 350 entrées, Chromium rejetait des requêtes et des entrées disparaissaient sans avertissement ; les entrées non lues sont désormais signalées.
+- Extension : une écriture ne relit plus toutes les entrées de tous les coffres (plus de 10 000 requêtes pour un mot de passe modifié sur un gros coffre) ; seul le coffre affiché est relu en entier.
+- Tableau : lignes mémoïsées, re-rendues seulement si leur entrée change ; redimensionnement de colonne recalculé au plus une fois par image ; plus de spinner au rafraîchissement du coffre affiché.
+- Audit de santé : vérifications Have I Been Pwned en parallèle (6 au plus), arrêtées à la fermeture de la fenêtre d'audit et à la déconnexion.
+- Plafonds explicites : listage d'un coffre jusqu'à 20 000 entrées au total et 20 niveaux de dossiers (5 000 par niveau auparavant, sans avertissement) ; jusqu'à 100 000 entrées transmises à l'extension (5 000 auparavant).
+- Au-delà de ces bornes de listage, les entrées déjà listées sont affichées, lues par la recherche multi-coffres et l'audit et transmises à l'extension, au lieu d'un coffre vide. L'incomplétude est toujours signalée : avertissement traduit dans le tableau (« la liste est incomplète »). La recherche multi-coffres, l'audit de santé et le rechargement des tags affichent le même message précis (borne atteinte, nombre d'entrées lues), et non plus « entrées illisibles (erreur réseau ou serveur) », réservé aux vraies erreurs de lecture. Ces bornes ne sont plus réessayées : un listage de 20 000 clés n'est plus refait deux fois pour rien (idem pour une entrée refusée par la validation).
+
+**Coffre local**
+- Mot de passe maître de plus de 72 octets : bcrypt n'en compare que les 72 premiers, la fin est désormais vérifiée par la clé dérivée. Un mot de passe qui ne diffère qu'après le 72e octet est refusé ; hachage stocké inchangé.
+- Échec de déchiffrement (intégrité AES-GCM ou contexte authentifié) : réponse `500 « decryption failed »` au lieu de `404`. L'entrée est signalée illisible au lieu d'être traitée comme absente (et écrasée).
+- Horodatages des versions renvoyés en ISO 8601 UTC (`…Z`), comme Vault : l'historique affiche la bonne heure locale. Format en base inchangé.
+- Blobs internes cachés (`.rdvault-*`, dont les passkeys) : seule la dernière version est conservée, les précédentes sont effacées à chaque écriture. La clé privée d'une passkey supprimée ne reste plus lisible dans l'historique, et la base ne grossit plus à chaque signature. Les entrées ordinaires gardent tout leur historique, sauf une entrée nommée `.rdvault-…` à la racine du coffre (voir « Reste à faire »).
+- Effacement physique : après la destruction d'une entrée (toutes ses versions), la suppression d'un coffre, la suppression ou le remplacement d'une graine TOTP et la purge des versions d'un blob caché, le journal WAL est recopié dans la base puis vidé (`wal_checkpoint(TRUNCATE)`). Avec `secure_delete`, les chiffrés effacés ne restent ni dans la base ni dans le journal. Au mieux : si une lecture l'en empêche, le point de contrôle automatique suivant prend le relais. Une suppression ordinaire reste une suppression douce, restaurable.
+- Premier démarrage : la connexion passe en écran de création du compte administrateur (confirmation du mot de passe maître, 8 caractères minimum, indicateur de force), détecté par `GET /v1/sys/init` (non authentifiée, réponse `{ initialized }` comme Vault, soumise aux mêmes barrières anti cross-site que le reste du serveur). Le serveur local exige la confirmation identique pour créer le premier compte (`400` sinon, sans consommer le quota anti-force brute) et crée un seul administrateur même si deux demandes arrivent en même temps. Si la détection échoue (délai, serveur pas encore prêt), ce refus fait passer l'écran en création du compte administrateur, avec un message, sans compter de tentative échouée. Les comptes existants se connectent comme avant.
+- Écriture conditionnelle (check-and-set, `options.cas`) appliquée comme par Vault KV v2 : l'écriture n'a lieu que si la version courante vaut `cas` (`0` : l'entrée ne doit pas exister), sinon `400` sans rien écrire. Les écritures conditionnelles du blob des passkeys sont donc aussi contrôlées en mode local. Côté client, l'écriture brute (`writeSecretToEngine`) accepte l'option `cas` en KV v2 (ignorée en KV v1, valeur invalide refusée sans requête) ; Migrer, Copier, Déplacer et le glisser-déposer l'utilisent pour écrire à destination (voir « Intégrité des données »).
+
+**Connexion au serveur Vault (mode entreprise)**
+- Épinglage TLS (`TRUSTED_CERT_FINGERPRINTS`) appliqué à tout certificat présenté par l'hôte exact de `VAULT_URL`, y compris un certificat reconnu par le magasin Windows (CA publique, CA d'entreprise, boîtier d'inspection TLS). Seuls les certificats jugés invalides étaient contrôlés ; pour les autres hôtes de `TRUSTED_DOMAINS`, c'est toujours le cas. **Avec l'épinglage actif, ajoutez l'empreinte d'un certificat renouvelé avant de le déployer** (`DEPLOYMENT.md`, « Maintenance »).
+- Coffres affichés pour un utilisateur sans droit sur `sys/mounts` (format réel de `sys/internal/ui/mounts`).
+- `VAULT_URL` et `RBI_PROXY_URL` normalisées au démarrage (barre finale, paramètres et, pour `VAULT_URL`, suffixe `/v1` retirés) : une barre finale empêchait la connexion.
+- Listage : l'échec de listage d'un sous-dossier est signalé au lieu de faire disparaître ses entrées (`403` et `404` restent ignorés).
+
+**Démarrage et installeur**
+- Installation silencieuse `/S /CONFIG=fichier.cfg` : le fichier est copié tel quel (toutes les clés, dont `TRUSTED_CERT_FINGERPRINTS` et `LANG`) ; il était ignoré au profit des valeurs d'exemple. `/MODE=` ne remplace que `APP_MODE`. Fichier illisible ou mode invalide : arrêt (code 2) sans modification.
+- Mise à jour, silencieuse ou interactive : `config.cfg` conservé à l'octet près, appairage de l'extension conservé. Contrairement à ce qu'annonçait la 1.5.0, elle remettait la configuration aux valeurs d'exemple et désappairait l'extension.
+- `RDVAULT.exe` porte les informations de version de RDVAULT (il s'identifiait comme « Electron », « GitHub, Inc. »). La désinstallation retire bien l'entrée des applications installées.
+- Seconde instance (raccourci, lien `rdvault://`) : elle transmet sa ligne de commande à la première puis se ferme sans rien démarrer. Elle affichait « Chargement échoué » et cassait la liaison `mvault` de la première.
+- `config.cfg` (et `config.json`) enregistré en UTF-16 LE ou BE, avec ou sans BOM (Bloc-notes « Unicode », `Out-File` et `>` de Windows PowerShell 5.1), ou en UTF-8 avec BOM : lu correctement, avec un avertissement dans le journal (UTF-8 recommandé). Il était ignoré sans message, et l'application démarrait avec les valeurs par défaut. Un fichier non vide dont aucune clé n'est reconnue est signalé dans le journal (sans aucune valeur de configuration).
+
+**Administration (mode Vault)**
+- `DEPLOYMENT.md` : la policy « self-service-ldap » ne donne plus accès à toutes les clés et codes TOTP ; le modèle « Modérateur » est en lecture seule sur les policies, montages et groupes (il permettait de devenir administrateur), avec le marqueur reconnu par l'application et un avertissement sur la délégation.
+- Limites documentées : un motif TOTP est un préfixe (`TOTP/code/WEB-*` couvre aussi `WEB-PROD-…`, `PERSO-*` tous les coffres personnels `perso`) ; « RBI uniquement » est une restriction de l'application (mêmes droits Vault que « Lecture seule »).
+- Builder : une policy existante n'est modifiable que si sa relecture est fidèle ; sinon elle reste en lecture seule. « Sauvegarder » sans changement ne modifie plus les droits.
+- « Supprimer ce tag de toutes les entrées » parcourt les dossiers et ne réécrit que les entrées qui portent ce tag.
+- Modérateur : actions d'écriture système masquées, conformément à sa policy. « Policies liées » détecte aussi les règles par secret et les motifs qui couvrent le coffre.
+
+**Hygiène**
+- Lint sans avertissement : échappements inutiles retirés des expressions régulières (entrées acceptées et refusées identiques, vérifié), détections volontaires de caractères de contrôle et dépendances de hooks délibérées annotées et justifiées.
+- Logo de l'interface ramené de 1024 à 352 px (1,4 Mo → 51 ko) ; l'icône de l'installeur est inchangée.
+- Fichiers inutilisés retirés de `public/` : `icon.png` (0,8 Mo) et `logo.ico` (copie de `favicon.ico`), embarqués dans le build et l'installeur sans être référencés. Icônes de la fenêtre et de l'installeur inchangées.
+- `npm test` enchaîne aussi les tests Node de l'extension (`npm run test:extension`, dont les noms d'entrée et de clé TOTP transmis sans altération par le service worker) et ceux de l'installeur (`npm run test:installer` : banc NSIS isolé et identité de `RDVAULT.exe`, environ 15 s, chaque test ignoré sans `makensis` ou l'outil winCodeSign dans le cache d'electron-builder).
+- Tests sans résidu : les dossiers temporaires des tests du broker SSH et de `known_hosts` (`%TEMP%\rdvault-kh-*`) et des tests de bout en bout qui pilotent l'application sont supprimés en fin de test ; en cas d'échec, `test/e2e/run.js` et `test/e2e/app-ui.js` gardent le leur pour consultation de `app.log`. `test/e2e/real-sites.js` supprime le sien à chaque exécution (profil Chrome, environ 200 Mo, laissé jusque-là) ; après une erreur globale, il copie d'abord `app.log` à côté des captures.
+- Tests sur sites réels (`npm run test:e2e:sites`) : ils ne testaient plus rien depuis que le coffre local exige la confirmation du premier compte, et sortaient pourtant avec le code 0. Le premier compte est créé avec la confirmation et la connexion passe par l'aide commune des e2e ; code de sortie 1 si rien n'a été testé ou si l'entrée factice d'un site manque dans le menu. Le diagnostic `test/e2e/diag-fields.js` crée de même le premier compte avec la confirmation et sort avec le code 1 en cas d'erreur.
+- Tests de l'extension (`run.js`, `real-sites.js`, `diag-fields.js`) : refus de démarrer si le port de synchronisation 45678 est déjà pris (trois nouveaux essais espacés de 60 s), puis contrôle qu'il est tenu par la seule application de test. Une instance RDVAULT réelle aurait servi ses identifiants à l'extension de test, que le harnais des sites réels aurait saisis dans de vraies pages de connexion ; seule l'entrée factice du site est désormais cliquée.
+- `config.example.cfg` : commentaire de `TRUSTED_CERT_FINGERPRINTS` aligné sur le code (empreinte contrôlée pour tout certificat de l'hôte exact de `VAULT_URL`, même reconnu par le magasin Windows) et fichier entièrement en ASCII.
+- Anti-rebond de la recherche annulé au démontage de l'interface (plus d'appel sur un composant démonté) et annulable explicitement ; paramètre inutilisé retiré du hook de migration.
+- Documentation : `SECURITY.md` et `docs/THREAT-MODEL.md` décrivent le niveau « RBI uniquement » comme une restriction d'interface (mêmes droits Vault que « Lecture seule », mot de passe lu avec le jeton de l'utilisateur) ainsi que la liste des hébergements mutualisés et le sens sûr de la correspondance ; `README.md` et `DEPLOYMENT.md` précisent les droits du modérateur et le modèle self-service sans TOTP.
+- Documentation : `SECURITY.md` et `docs/THREAT-MODEL.md` décrivent l'épinglage TLS appliqué aux certificats valides, le drapeau UV des passkeys (déverrouillage du coffre), l'injection RBI limitée au domaine, la purge de l'historique des blobs cachés et la limite des postes multi-sessions ; `DEPLOYMENT.md` ajoute le contrat d'API du proxy RBI, la durée des sessions Vault, l'encodage de `config.cfg` et le renouvellement d'un certificat épinglé ; `docs/PRODUCTION-READINESS.md` décrit l'installeur (mise à jour qui conserve la configuration).
+- Documentation : épinglage TLS limité à l'hôte exact de `VAULT_URL` pour les certificats valides (`SECURITY.md`, `docs/THREAT-MODEL.md`, `DEPLOYMENT.md`, `README.md`) ; effacement physique dans le journal WAL, premier démarrage du coffre local, session Vault (renouvellement du jeton, `5xx` / `429` non décomptés, MFA), listage borné et limite des postes multi-sessions dans `SECURITY.md` et `docs/THREAT-MODEL.md` ; `PASSKEYS.md` (drapeau UV, historique du blob en mode local et en mode Vault) ; lecture de `config.cfg` en UTF-16 (`README.md`, `DEPLOYMENT.md`) ; tests de l'installeur dans `npm test` (`README.md`, `docs/PRODUCTION-READINESS.md`).
+- Documentation : compatibilité avec les coffres 1.5.0 (`README.md`, `docs/PRODUCTION-READINESS.md`) ; écriture en création seule à destination des copies et déplacements (`SECURITY.md`, `docs/THREAT-MODEL.md`, `README.md`, `DEPLOYMENT.md`) ; réponses tardives abandonnées après la fin de session, état servi à l'extension après suppression du dernier coffre et coffre personnel des comptes 1.5.0 (`SECURITY.md`, `docs/THREAT-MODEL.md`) ; arabe dans le panneau d'administration (`README.md`) ; garde du port 45678, pages e2e et code de sortie des tests sur sites réels (`test/README.md`).
+
+**Reste à faire (constaté, non corrigé)**
+- Liaison extension ↔ application : port fixe commun à toutes les sessions Windows d'un poste ; seuls les avertissements sont en place, au démarrage et après la connexion (voir `SECURITY.md`).
+- Passkeys en mode Vault : l'historique KV v2 du blob suit les réglages du moteur (`max_versions`). Les versions antérieures, avec la clé privée des passkeys supprimées, restent lisibles avec le droit de lecture du coffre.
+- Entrées utilisateur nommées `.rdvault…` à la racine d'un coffre (créées en 1.5.0, ou depuis l'éditeur, qui ne réserve que les noms internes exacts) : affichées dans le tableau, mais toujours exclues de l'export, de la recherche multi-coffres, de l'audit de santé et de l'extension, et refusées à l'import, qui appliquent encore la règle du préfixe. Dans le coffre local, celles qui commencent par `.rdvault-` ne gardent que leur dernière version à chaque écriture (règle des blobs internes, reconnus à ce préfixe). Contournement : renommer l'entrée.
+
+## 1.6.0 — 2026-10 (passkeys)
+
+### Nouvelle fonctionnalité : passkeys (WebAuthn / FIDO2)
+L'extension enrichie agit comme un fournisseur de passkeys logiciel : quand un site demande une passkey, RDVAULT propose la sienne dans une petite fenêtre, au lieu de laisser uniquement le navigateur ou Windows Hello répondre. Réimplémentation indépendante de la spécification W3C WebAuthn / CTAP2 (ES256, attestation « none »), aucun code tiers copié.
+
+- **Moteur FIDO2** (`passkey-core.js`) : génère les paires de clés P-256, construit les objets d'attestation (création) et d'assertion (authentification) conformes à la spec (CBOR, COSE, authenticatorData, signature DER). Validé par tests unitaires Node (`npm run test:passkey`).
+- **Architecture de sécurité** : l'interception de `navigator.credentials.create`/`get` se fait dans le monde de la page (`passkey-inject.js`, monde MAIN) qui ne fait AUCUNE cryptographie ; toute la crypto et la clé privée vivent dans le monde isolé (`passkey-bridge.js`), hors de portée de la page. Le `rp.id` est validé contre l'origine réelle de la frame.
+- **Choix utilisateur** : la fenêtre propose « Utiliser RDVAULT », « Utiliser un autre appareil » (bascule vers l'authentificateur natif / clé matérielle) ou « Annuler » (erreur WebAuthn standard, sans bascule).
+- **Stockage dans le coffre chiffré** : les passkeys (clé privée comprise) sont stockées dans le coffre RDVAULT, agrégées dans un secret interne `.rdvault-passkeys` du coffre personnel, chiffré comme le reste (AES-256-GCM en mode local). Elles bénéficient ainsi du chiffrement par la clé maître et de la sauvegarde. Le secret interne est masqué de la liste affichée et de la synchronisation d'autofill. L'écriture passe par le renderer (qui seul détient le token Vault), via trois endpoints authentifiés du serveur sync (`/api/passkeys`, `/api/passkey`, `/api/passkey/count`), réservés à l'extension appairée.
+- **Vérifié de bout en bout** : test unitaire crypto (`npm run test:passkey`) ; test local auto-vérifiant qui crée, authentifie, valide la signature dans la page ET confirme l'écriture dans le coffre (`npm run test:e2e:passkey`) ; validation serveur réelle sur **webauthn.io** avec la passkey stockée dans le coffre (enregistrement et authentification acceptés).
+
+- **Attestation** : par défaut « none » ; quand un site demande une attestation (`direct`/`enterprise`), RDVAULT fournit une auto-attestation « packed » (signée par la clé de la passkey). Accepté par les sites qui demandent une attestation mais tolèrent l'auto-attestation (vérifié sur webauthn.io en mode Direct). Les sites qui exigent une chaîne de certificats fabricant (AAGUID connu, FIDO MDS) la refuseront : c'est une propriété de sécurité de FIDO2, pas contournable sans être un authentificateur certifié. Pour ces sites, le bouton « Utiliser un autre appareil » permet de recourir à une vraie clé matérielle / Windows Hello.
+
+Limites de cette version :
+- Seule l'extension enrichie gère les passkeys (pas la variante « simple »).
+- La création/utilisation d'une passkey requiert l'app desktop ouverte et déverrouillée (comme l'autofill des mots de passe).
+- Sites exigeant une attestation matérielle certifiée : non supportés (par conception FIDO2).
+- Les sites exigeant une attestation matérielle vérifiée (certains contextes entreprise) rejetteront l'attestation « none » ; les sites grand public l'acceptent.
+- L'objet renvoyé est conforme en structure mais n'est pas une instance réelle de `PublicKeyCredential` : un site qui teste `instanceof` strictement pourrait le refuser.
+
+## 1.5.0 — 2026-09 (audit de sécurité n°9 et remédiation)
+
+### Changements incompatibles
+- **Extension Chrome** : appairage obligatoire. À la première connexion, l'application affiche l'identifiant de l'extension et demande une approbation. L'ancien endpoint `/api/secrets` sans paramètre `host` n'existe plus ; l'extension livrée dans `chrome-extension/vault-autofill-extension/` est mise à jour en conséquence.
+- **Installeur** : installation par machine (Program Files). Une mise à jour silencieuse sans `/CONFIG=` conserve le `config.cfg` existant.
+- **Proxy RBI** : `RBI_PROXY_URL` doit être en `https://`, sinon le partage est désactivé. Voir les exigences de sécurité dans `DEPLOYMENT.md` (étape 8).
+- **CLI** : `mvault rules set` retiré (jamais implémenté côté serveur). `mvault get` masque les champs sensibles sauf `--reveal`.
+
+### Sécurité
+- Le serveur de synchronisation de l'extension ne délivre plus son token à n'importe quelle origine `chrome-extension://` : appairage explicite par identifiant, mémorisé dans `paired-extensions.json`. L'extension s'identifie par l'en-tête `X-Vault-Extension-Id` (Chrome n'envoie pas d'en-tête `Origin` vers les hôtes couverts par `host_permissions`) ; l'en-tête `Origin` reste accepté quand il est présent.
+- Les secrets ne sont plus écrits sur disque pour l'extension (fichier `vault-sync.enc` supprimé, état en mémoire uniquement). Les anciens fichiers sont écrasés puis supprimés au démarrage.
+- L'extension ne reçoit que les secrets de l'hôte courant, sans mot de passe ; le mot de passe est transmis uniquement à la sélection (`/api/secret`).
+- Pinning de certificat optionnel (`TRUSTED_CERT_FINGERPRINTS`). Sans pinning, un avertissement est journalisé.
+- Coffre local : hash bcrypt factice valide (suppression de l'énumération d'utilisateurs par timing), dérivation de clé asynchrone, données authentifiées (AAD) liant chaque valeur chiffrée à sa ligne, migration transparente des données existantes, contrôle de propriété sur les coffres et clés TOTP, validation des paramètres TOTP, `secure_delete` et versionnage du schéma SQLite.
+- RBI : Chromium lancé avec son sandbox et la vérification TLS normale, filtrage réseau de toutes les ressources après connexion, correction d'une erreur de portée qui laissait un Chromium zombie, blocage du presse-papiers au niveau des prototypes, nettoyage des champs dans tous les frames.
+- Deep link `rdvault://share/…` : confirmation utilisateur affichant l'URL cible avant toute ouverture.
+- Panneau d'administration : la policy « modérateur » générée ne donne plus les droits d'écriture sur `sys/policies/acl/*`, `sys/mounts/*` et les groupes LDAP.
+- Timeout de session : l'inactivité de 15 minutes fonctionne réellement (un argument était passé au mauvais rang).
+- Export CSV admin : neutralisation des formules ; import : apostrophe de protection retirée.
+- Objets d'erreur axios (contenant le token) non journalisés ; token CLI non copié dans `localStorage`.
+- Presse-papiers : 12 secondes partout, historique Windows vidé systématiquement, effacement à la fermeture.
+- CLI : validation de `engine` comme `path`, règles d'auto-approbation par segments, confirmations sérialisées et fermées au timeout, journal d'audit lisible, corps de requête tronqué au-delà de 10 Ko.
+- Serveur local et IPC : vérification de l'émetteur sur les réponses CLI, validation des filtres de dialogue et des noms de fichiers d'export, `will-navigate` robuste.
+- Configuration : validation de `TRUSTED_DOMAINS`, `LANG`, `RBI_PROXY_URL` ; lecture prioritaire de `%PROGRAMDATA%\RDVAULT\`.
+
+### Corrections fonctionnelles (bugs trouvés par les tests de bout en bout)
+- **Import CSV** : nouveau parseur RFC 4180 partagé (`src/utils/csv.js`). Un guillemet au milieu d'un champ non guillemeté ne décale plus les colonnes suivantes ; les guillemets doublés sont restitués ; les valeurs ne sont plus tronquées (espaces des mots de passe conservés) ; les sauts de ligne des notes sont conservés ; le BOM UTF-8 écrit par Excel n'empêche plus l'import ; le séparateur est détecté sur l'en-tête.
+- **Export/Import** : l'apostrophe anti-formule est réversible sans perte, y compris pour une valeur commençant déjà par une apostrophe.
+- **XML** : ordre de décodage des entités corrigé (`&amp;` en dernier) et prise en charge de `&apos;`, des entités numériques et de CDATA ; une valeur contenant littéralement `&lt;` n'est plus transformée en `<` à l'import.
+- **Langue** : `LANG` de `config.cfg` n'était jamais appliqué au premier démarrage (la langue par défaut était persistée avant le chargement de la configuration). Corrigé ; les chaînes « Aucun secret à afficher » et « Racine » passent par l'i18n.
+- **Vue liste** : un secret situé dans un dossier affiche désormais son chemin complet (dossier en retrait) au lieu du seul nom de fichier, ce qui évitait de distinguer deux secrets homonymes.
+- **Mode local** : la lecture d'une version supprimée (soft-delete) renvoie 404 comme Vault KV v2 ; les secrets supprimés disparaissent bien de la liste quand « Afficher les supprimés » est décoché.
+- **Extension Chrome** : identification par en-tête `X-Vault-Extension-Id`, car Chrome n'envoie pas d'en-tête `Origin` vers les hôtes couverts par `host_permissions` (l'appairage échouait systématiquement).
+
+### Correspondance de domaine sur sites réels (corrections)
+Test de l'extension sur 14 vrais portails de connexion (`test/e2e/real-sites.js`). Corrections apportées :
+- **Public Suffix List** : le filtrage secret ↔ hôte utilise désormais `tldts` (domaine enregistrable réel). Un secret « ovh.com » est proposé sur « login.ovh.com », un secret « impots.gouv.fr » sur « cfspart-idp.impots.gouv.fr », mais « a.github.io » n'est jamais proposé sur « b.github.io » (github.io est un suffixe public).
+- **Domaines équivalents** : table de correspondances pour les portails de connexion hébergés sur un autre domaine que le site principal (ovh.com ↔ ovhcloud.com, wikipedia.org ↔ wikimedia.org, microsoft.com ↔ microsoftonline.com, amazon.fr ↔ amazon.com, etc.). Sans cette table, l'autofill échouait sur OVH et Wikipédia, qui redirigent la connexion vers un domaine distinct.
+- **Cache anti-régression** : un échec de chargement des identifiants (application fermée, service worker froid) n'est plus mis en cache 60 secondes ; il est retenté rapidement. Auparavant, si la première tentative échouait, l'icône restait vide une minute.
+- **Formulaires en iframe** : `all_frames` passe à `true` et le hostname de référence devient celui de la frame émettrice (jamais fourni par la page), de sorte qu'une iframe tierce ne reçoit que ses propres secrets.
+
+**Détection par ancrage (améliore la couverture).** Les deux extensions détectent désormais le champ identifiant par deux mécanismes complémentaires, repris des gestionnaires de mots de passe éprouvés (techniques réimplémentées, aucun code tiers copié — RDVAULT reste sous licence MIT) :
+- scoring par attributs (name/id/autocomplete/label/classe), comme avant ;
+- **ancrage sur le champ mot de passe** : pour chaque champ password visible, l'identifiant est le candidat visible qui le précède immédiatement dans le même formulaire. Ce mécanisme fonctionne même quand le champ identifiant n'a AUCUN attribut reconnaissable (id/nom hachés), cas fréquent sur les sites modernes et les frameworks à classes générées.
+Heuristiques complémentaires (toujours réimplémentées, pas de code tiers) :
+- **attributs `data-*`** (`data-testid`, `formcontrolname`, `ng-reflect-name`...) pris en compte dans le scoring, car les frameworks modernes y mettent le vrai nom du champ ;
+- **`type="email"`** traité comme signal fort d'identifiant, même sans autre attribut ;
+- **formulaires d'inscription évités** : un champ `autocomplete="new-password"` (sans `current-password`) marque une création de compte ou un changement de mot de passe — l'extension n'y propose plus les identifiants de connexion.
+Garde-fous : exclusion explicite des champs de recherche, carte bancaire, code postal, code à usage unique ; filet « identifiant seul » (connexion en deux étapes) limité aux pages à contexte de connexion avéré et à champ unique, pour éviter tout faux positif. Tests dédiés : `test/e2e/site/obfuscated.html` (ancrage sur attributs illisibles) et `test/e2e/site/signup.html` (pas d'autofill sur inscription). Les deux extensions (enrichie et simple) partagent ces heuristiques.
+
+Note de licence : l'utilisateur a explicitement demandé de s'inspirer d'autres extensions. Les techniques de Bitwarden/KeePassXC (GPL) ont été réimplémentées de zéro, aucune ligne de leur code n'a été copiée ; RDVAULT reste sous licence MIT.
+
+**Campagne de test sur 42 vrais sites** (`test/e2e/real-sites.js`). ~33/42 s'autoremplissent : GitHub, GitLab, Bitbucket, npm, Heroku, Gitea, SourceForge, Google, Microsoft, Proton, Yahoo, Zoho, Fastmail, Facebook, LinkedIn, X, Reddit, Instagram, Pinterest, Discord, Mastodon, eBay, Dropbox, Figma, Trello, WordPress, Mailchimp, Bitwarden (vault), Spotify, Netflix, OVH, StackOverflow, Wikipédia, Archive.org. Corrections issues de cette campagne :
+- **Filtre d'exclusion resserré** : il rejetait à tort les champs mentionnant « phone » / « mobile » / « téléphone », alors que beaucoup de formulaires de connexion acceptent « Email ou téléphone » (Instagram, etc.). Ces mots ne sont plus exclus ; seuls restent exclus recherche, carte bancaire, CVV, code postal, quantité, coupon.
+- **Domaines équivalents ajoutés** : notion.so ↔ notion.com, proton.me ↔ protonmail.com (portail de connexion hébergé sur un domaine distinct du site principal).
+
+**Fonctionnalités vérifiées de bout en bout** (`test/e2e/features.js`) :
+- **Connexion en deux pages distinctes** (identifiant sur une URL, mot de passe sur une autre) : fonctionne. L'identifiant est rempli sur la page 1 ; sur la page 2 (URL séparée), le champ mot de passe reçoit l'icône et le menu s'ouvre désormais aussi au focus du champ, pas seulement au clic sur l'icône.
+- **TOTP automatique** : après remplissage des identifiants, l'extension détecte le champ de code à usage unique, demande le code au desktop (généré depuis la clé TOTP du coffre) et le saisit. Le code saisi correspond bien au code TOTP attendu (RFC 6238).
+
+Cas restants, qui ne sont PAS des défauts de détection : formulaires chargés dans une iframe d'un autre domaine (certaines étapes de Notion, Orange, La Poste, Yahoo, Etsy — limite partagée par tous les gestionnaires) et sites bloquant le navigateur automatisé par anti-robot avant d'afficher le formulaire (GitLab, leboncoin, parfois Amazon). Ameli pointe sur une page d'accueil, le vrai formulaire est un clic plus loin. Vérifié au passage que l'extension ne se déclenche pas sur un formulaire d'inscription (`new-password`).
+
+Résultat : 11 des 14 sites testés s'autoremplissent (GitHub, LinkedIn, Stack Overflow, Facebook, Reddit, Google, Microsoft, Amazon, X, OVH, Wikipédia). Les 3 autres ne sont pas des limites de l'extension : impots.gouv.fr affiche le menu mais son propre script échoue dans le navigateur de test ; GitLab et leboncoin bloquent le navigateur automatisé par une protection anti-robot (Cloudflare / DataDome) avant même d'afficher le formulaire. Limite connue conservée : un formulaire chargé dans une iframe d'un autre domaine que l'onglet reste hors de portée du filtrage par hôte de l'onglet.
+
+### Tests exécutés
+- Unitaires : 91 tests Jest (React) et 11 tests Node (Electron).
+- Fumée Electron : coffre local (33 vérifications), serveur de synchronisation (19 vérifications).
+- Bout en bout avec Chrome for Testing et l'application réelle : extension sur 5 types de formulaires (classique, deux étapes, SPA à inputs contrôlés, shadow DOM, champs pièges invisibles) plus le refus des événements synthétiques ; interface de l'app : login, arborescence, fil d'Ariane, recherche locale et multi-coffres, création et édition d'entrée, affichage des supprimés, export/import CSV et XML avec aller-retour exact sur des valeurs piégeuses, déconnexion/reconnexion.
+
+### Qualité
+- Journalisation centralisée (`electron/logger.js`) : silencieuse en production sauf avertissements et erreurs, jamais d'URL complète.
+- Tests unitaires : modules Electron (`node --test`) et React (Jest). CI bloquante sur l'audit des dépendances de production (niveau high). *(Depuis la 1.7.0, l'étape d'audit du workflow CI est non bloquante : voir 1.7.0, « Hygiène / documentation / CI ».)*
+- Dépendances inutilisées retirées (`electron-packager`, `electron-winstaller`, `electron-installer-windows`, `sharp`, `react-modal`) ; `node_modules` n'est plus copié intégralement dans l'installeur.
+- Modales du panneau d'administration extraites dans des fichiers dédiés ; doublons de code factorisés ; fichiers morts supprimés (`config_page.ini`, `PolicyBuilderModal.jsx` à la racine, `vault-client.js` et `sync-helper.js` de l'extension enrichie).
+
+### Reste à faire (hors périmètre de cette version)
+- Signature de code de l'exécutable et de l'installeur (certificat requis).
+- Migration de `react-scripts` vers Vite et mise à jour d'Electron vers une version supportée.
+- Transport Native Messaging pour l'extension (remplacerait le serveur HTTP local).
+- i18n complète du panneau d'administration.
+- Fournisseur de passkeys (FIDO2/WebAuthn) pour Windows Hello.

@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Espace client</title></head>
+<body>
+<h1>Espace client</h1>
+<!-- Formulaire de CONNEXION (un seul mot de passe visible) contenant des champs mot de passe
+     CACHÉS : pot de miel anti-robot hors de l'écran et section « création de compte » repliée
+     (display:none). Ni l'id, ni le nom, ni l'action ne contiennent d'indicateur de connexion ou
+     d'inscription : seule l'heuristique « plus d'un mot de passe = inscription » décide. Les champs
+     cachés ne doivent pas compter : le formulaire doit être reconnu et rempli, pas les pièges. -->
+<form id="f" onsubmit="return false">
+  <label>E-mail <input type="email" id="hu" name="email" autocomplete="username"></label><br>
+  <label>Mot de passe <input type="password" id="hp" name="pw" autocomplete="current-password"></label><br>
+  <div aria-hidden="true" style="position:absolute; left:-9999px; top:0">
+    <input type="password" id="hp_offscreen" name="pw_check" tabindex="-1" autocomplete="off">
+  </div>
+  <div id="create" style="display:none">
+    <input type="password" id="hp_hidden" name="pw_new" autocomplete="off">
+  </div>
+  <button type="button" id="go">Valider</button>
+</form>
+<script>
+go.addEventListener('click', () => {
+  fetch('/submit', { method: 'POST', body: JSON.stringify({ page: 'honeypot', user: hu.value, password: hp.value, hp_offscreen: hp_offscreen.value, hp_hidden: hp_hidden.value }) });
+});
+</script>
+</body></html>

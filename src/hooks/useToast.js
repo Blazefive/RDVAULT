@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 
 /**
  * Composant Toast — affiche un message temporaire
@@ -26,11 +26,12 @@ export function useToast() {
   const [toast, setToast] = useState({ visible: false, type: 'info', message: '' });
   const toastTimer = useRef(null);
 
-  const showToast = (message, type = 'info', duration = 2300) => {
+  // Mémoïsé : showToast est passé en prop/dépendance à de nombreux hooks et composants
+  const showToast = useCallback((message, type = 'info', duration = 2300) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ visible: true, type, message });
     toastTimer.current = setTimeout(() => setToast(t => ({ ...t, visible: false })), duration);
-  };
+  }, []);
 
   return { toast, showToast };
 }

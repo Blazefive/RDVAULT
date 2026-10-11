@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Identifiez-vous</title>
+<style>
+  /* Motif « étiquette flottante » (relevé sur login.orange.fr) : l'input vide et sans focus
+     est rendu TRANSPARENT (opacity:0) au-dessus de son étiquette, puis redevient opaque au
+     focus. Il reste cliquable : c'est bien lui que l'utilisateur atteint. */
+  .wrap { position: relative; width: 420px; height: 56px; background: #f4f4f4; margin: 24px 0; }
+  .wrap label { position: absolute; left: 14px; top: 18px; color: #555; z-index: 0; }
+  .wrap input { position: absolute; left: 0; top: 16px; width: 400px; height: 24px; padding: 0 14px;
+    border: 0; background: transparent; z-index: 1; font-size: 16px; }
+  .wrap input:placeholder-shown:not(:focus) { opacity: 0; }
+  .cover-box { position: relative; width: 300px; height: 40px; }
+  .cover-box input { width: 280px; height: 30px; opacity: 0; }
+  .cover-box .cover { position: absolute; inset: 0; background: #fff; }
+</style></head>
+<body>
+<h1>Identifiez-vous</h1>
+<form id="f" onsubmit="return false">
+  <div class="wrap">
+    <label id="login-label" for="login">Adresse e-mail ou n° de mobile</label>
+    <input type="text" id="login" name="login" placeholder=" " maxlength="256">
+  </div>
+  <button type="submit" id="next">Continuer</button>
+</form>
+<!-- Pièges HORS formulaire (chacun isolé, pour ne pas activer l'heuristique « plusieurs mots de
+     passe = inscription ») : transparents ET non atteignables par un clic (pointer-events:none,
+     recouvert par un autre élément, minuscule). Ils ne doivent JAMAIS être détectés ni remplis. -->
+<input type="password" id="trap_pe" autocomplete="current-password" style="opacity:0; pointer-events:none; position:absolute; left:500px; top:120px; width:220px; height:30px">
+<div class="cover-box"><input type="password" id="trap_cov" autocomplete="current-password"><div class="cover"></div></div>
+<input type="text" id="trap_tiny" autocomplete="username" style="opacity:0; position:absolute; left:760px; top:40px; width:2px; height:2px">
+</body></html>

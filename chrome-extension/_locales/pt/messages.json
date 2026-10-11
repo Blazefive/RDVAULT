@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "Preenchimento automático de formulários com o HashiCorp Vault"
+  },
+  "popupLoading": {
+    "message": "Carregando..."
+  },
+  "popupVaultUrlLabel": {
+    "message": "URL do Vault"
+  },
+  "popupNamespaceLabel": {
+    "message": "Namespace (opcional)"
+  },
+  "popupNamespacePlaceholder": {
+    "message": "Deixe em branco se não for usado"
+  },
+  "popupUsernameLabel": {
+    "message": "Usuário LDAP"
+  },
+  "popupUsernamePlaceholder": {
+    "message": "Nome de usuário"
+  },
+  "popupPassword": {
+    "message": "Senha"
+  },
+  "popupLoginButton": {
+    "message": "Entrar"
+  },
+  "popupConnectedAs": {
+    "message": "Conectado como"
+  },
+  "popupRefreshButton": {
+    "message": "Atualizar o cache"
+  },
+  "popupLogoutButton": {
+    "message": "Sair"
+  },
+  "popupDefaultUser": {
+    "message": "Usuário"
+  },
+  "popupFillRequired": {
+    "message": "Preencha todos os campos obrigatórios"
+  },
+  "popupLoggingIn": {
+    "message": "Entrando..."
+  },
+  "popupLoginSuccess": {
+    "message": "Login realizado com sucesso"
+  },
+  "popupLogoutSuccess": {
+    "message": "Logout realizado com sucesso"
+  },
+  "popupRefreshing": {
+    "message": "Atualizando..."
+  },
+  "popupCacheRefreshed": {
+    "message": "Cache atualizado ($COUNT$ segredos)",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "42"
+      }
+    }
+  },
+  "popupError": {
+    "message": "Erro: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Authentication failed"
+      }
+    }
+  },
+  "autofillIconTitle": {
+    "message": "Preencher automaticamente com o Vault"
+  },
+  "autofillHeader": {
+    "message": "Credenciais do Vault"
+  },
+  "autofillNoResults": {
+    "message": "Nenhuma credencial encontrada para este site"
+  },
+  "autofillUnnamed": {
+    "message": "Sem nome"
+  },
+  "autofillNoUsername": {
+    "message": "(sem nome de usuário)"
+  },
+  "autofillLoading": {
+    "message": "Recuperando a credencial..."
+  },
+  "autofillFetchFailed": {
+    "message": "Não foi possível recuperar a credencial"
+  },
+  "bgErrUnauthorizedSource": {
+    "message": "Origem não autorizada"
+  },
+  "bgErrInsecurePage": {
+    "message": "Página não segura"
+  },
+  "bgErrNameRequired": {
+    "message": "Nome do segredo obrigatório"
+  },
+  "bgErrNotFound": {
+    "message": "Credencial não encontrada para este site"
+  },
+  "bgErrInvalidVaultUrl": {
+    "message": "URL do Vault inválida (https obrigatório)"
+  },
+  "bgErrAuthFailed": {
+    "message": "Falha na autenticação"
+  },
+  "bgErrInternal": {
+    "message": "Erro interno"
+  }
+}

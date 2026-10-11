@@ -14,30 +14,47 @@
 // - Évite surcharge CPU/Mémoire
 // - Prévient spam d'actions sensibles
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect, useMemo } from 'react';
 
 /**
  * Hook pour debouncing (attendre que l'utilisateur arrête de taper)
  *
+ * L'appel en attente est ANNULÉ au démontage du composant (aucun rappel sur un composant démonté,
+ * ex. setState après la fermeture d'une vue) et peut l'être explicitement par `debounced.cancel()`
+ * (ex. champ vidé, changement de coffre, déconnexion).
+ *
  * @param {Function} callback - Fonction à appeler après le délai
  * @param {number} delay - Délai en ms (défaut: 300ms)
- * @returns {Function} Fonction debouncée
+ * @returns {Function & { cancel: Function }} Fonction debouncée (+ cancel() : annule l'appel en attente)
  *
  * @example
  * const debouncedSearch = useDebounce(handleSearch, 300);
+ * debouncedSearch.cancel(); // abandonne la recherche en attente
  */
 export function useDebounce(callback, delay = 300) {
   const timeoutRef = useRef(null);
 
-  return useCallback((...args) => {
+  const cancel = useCallback(() => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
     }
+  }, []);
 
-    timeoutRef.current = setTimeout(() => {
-      callback(...args);
-    }, delay);
-  }, [callback, delay]);
+  // Démontage : appel en attente annulé
+  useEffect(() => cancel, [cancel]);
+
+  return useMemo(() => {
+    const debounced = (...args) => {
+      cancel();
+      timeoutRef.current = setTimeout(() => {
+        timeoutRef.current = null;
+        callback(...args);
+      }, delay);
+    };
+    debounced.cancel = cancel;
+    return debounced;
+  }, [callback, delay, cancel]);
 }
 
 /**
@@ -53,6 +70,14 @@ export function useDebounce(callback, delay = 300) {
 export function useThrottle(callback, limit = 1000) {
   const lastCallRef = useRef(0);
   const timeoutRef = useRef(null);
+
+  // Démontage : appel différé en attente annulé (même règle que useDebounce)
+  useEffect(() => () => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
 
   return useCallback((...args) => {
     const now = Date.now();

@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "Автозаполнение форм с HashiCorp Vault"
+  },
+  "popupLoading": {
+    "message": "Загрузка..."
+  },
+  "popupVaultUrlLabel": {
+    "message": "URL Vault"
+  },
+  "popupNamespaceLabel": {
+    "message": "Namespace (необязательно)"
+  },
+  "popupNamespacePlaceholder": {
+    "message": "Оставьте пустым, если не используется"
+  },
+  "popupUsernameLabel": {
+    "message": "Пользователь LDAP"
+  },
+  "popupUsernamePlaceholder": {
+    "message": "Имя пользователя"
+  },
+  "popupPassword": {
+    "message": "Пароль"
+  },
+  "popupLoginButton": {
+    "message": "Войти"
+  },
+  "popupConnectedAs": {
+    "message": "Вход выполнен как"
+  },
+  "popupRefreshButton": {
+    "message": "Обновить кэш"
+  },
+  "popupLogoutButton": {
+    "message": "Выйти"
+  },
+  "popupDefaultUser": {
+    "message": "Пользователь"
+  },
+  "popupFillRequired": {
+    "message": "Заполните все обязательные поля"
+  },
+  "popupLoggingIn": {
+    "message": "Вход..."
+  },
+  "popupLoginSuccess": {
+    "message": "Вход выполнен"
+  },
+  "popupLogoutSuccess": {
+    "message": "Выход выполнен"
+  },
+  "popupRefreshing": {
+    "message": "Обновление..."
+  },
+  "popupCacheRefreshed": {
+    "message": "Кэш обновлён (секретов: $COUNT$)",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "42"
+      }
+    }
+  },
+  "popupError": {
+    "message": "Ошибка: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Authentication failed"
+      }
+    }
+  },
+  "autofillIconTitle": {
+    "message": "Заполнить с помощью Vault"
+  },
+  "autofillHeader": {
+    "message": "Учётные данные Vault"
+  },
+  "autofillNoResults": {
+    "message": "Для этого сайта учётные данные не найдены"
+  },
+  "autofillUnnamed": {
+    "message": "Без названия"
+  },
+  "autofillNoUsername": {
+    "message": "(без имени пользователя)"
+  },
+  "autofillLoading": {
+    "message": "Получение учётных данных..."
+  },
+  "autofillFetchFailed": {
+    "message": "Не удалось получить учётные данные"
+  },
+  "bgErrUnauthorizedSource": {
+    "message": "Неразрешённый источник"
+  },
+  "bgErrInsecurePage": {
+    "message": "Незащищённая страница"
+  },
+  "bgErrNameRequired": {
+    "message": "Требуется имя секрета"
+  },
+  "bgErrNotFound": {
+    "message": "Учётные данные для этого сайта не найдены"
+  },
+  "bgErrInvalidVaultUrl": {
+    "message": "Недопустимый URL Vault (требуется https)"
+  },
+  "bgErrAuthFailed": {
+    "message": "Ошибка аутентификации"
+  },
+  "bgErrInternal": {
+    "message": "Внутренняя ошибка"
+  }
+}

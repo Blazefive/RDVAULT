@@ -146,7 +146,7 @@
 <body>
   <h1>Vault Autofill</h1>
 
-  <div id="loading" class="loading">
+  <div id="loading" class="loading" data-i18n="popupLoading">
     Chargement...
   </div>
 
@@ -154,40 +154,40 @@
     <div id="status" class="hidden"></div>
 
     <div class="form-group">
-      <label for="vaultUrl">URL Vault</label>
+      <label for="vaultUrl" data-i18n="popupVaultUrlLabel">URL Vault</label>
       <input type="text" id="vaultUrl" value="https://vault.example.com:8200" placeholder="https://vault:8200">
     </div>
 
     <div class="form-group">
-      <label for="vaultNamespace">Namespace (optionnel)</label>
-      <input type="text" id="vaultNamespace" placeholder="Laisser vide si non utilisé">
+      <label for="vaultNamespace" data-i18n="popupNamespaceLabel">Namespace (optionnel)</label>
+      <input type="text" id="vaultNamespace" placeholder="Laisser vide si non utilisé" data-i18n-placeholder="popupNamespacePlaceholder">
     </div>
 
     <div class="form-group">
-      <label for="username">Utilisateur LDAP</label>
-      <input type="text" id="username" placeholder="Nom d'utilisateur">
+      <label for="username" data-i18n="popupUsernameLabel">Utilisateur LDAP</label>
+      <input type="text" id="username" placeholder="Nom d'utilisateur" data-i18n-placeholder="popupUsernamePlaceholder">
     </div>
 
     <div class="form-group">
-      <label for="password">Mot de passe</label>
-      <input type="password" id="password" placeholder="Mot de passe">
+      <label for="password" data-i18n="popupPassword">Mot de passe</label>
+      <input type="password" id="password" placeholder="Mot de passe" data-i18n-placeholder="popupPassword">
     </div>
 
-    <button id="loginBtn" class="btn-primary">Se connecter</button>
+    <button id="loginBtn" class="btn-primary" data-i18n="popupLoginButton">Se connecter</button>
   </div>
 
   <div id="authenticatedView" class="hidden">
     <div class="authenticated">
       <div class="authenticated-info">
-        Connecté en tant que<br>
+        <span data-i18n="popupConnectedAs">Connecté en tant que</span><br>
         <span class="authenticated-user" id="currentUser"></span>
       </div>
     </div>
 
     <div id="statusAuth" class="hidden"></div>
 
-    <button id="refreshBtn" class="btn-primary">Actualiser le cache</button>
-    <button id="logoutBtn" class="btn-secondary">Se déconnecter</button>
+    <button id="refreshBtn" class="btn-primary" data-i18n="popupRefreshButton">Actualiser le cache</button>
+    <button id="logoutBtn" class="btn-secondary" data-i18n="popupLogoutButton">Se déconnecter</button>
   </div>
 
   <script src="popup.js"></script>

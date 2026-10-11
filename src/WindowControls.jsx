@@ -1,34 +1,29 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from './i18n';
 
 // ========================================
 // COMPOSANT WINDOW CONTROLS - Boutons fenêtre frameless (style VS Code)
 // ========================================
 export default function WindowControls() {
+  const { t } = useTranslation();
   const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
-    // Écouter les changements d'état de la fenêtre
-    const handleMaximizeChange = (_event, maximized) => setIsMaximized(maximized);
-    if (window.electronWindow?.onMaximizeChange) {
-      window.electronWindow.onMaximizeChange(handleMaximizeChange);
-    }
+    // Écouter les changements d'état de la fenêtre (onMaximizeChange renvoie la fonction de désabonnement)
+    const off = window.electronWindow?.onMaximizeChange?.((maximized) => setIsMaximized(maximized));
     // Vérifier l'état initial
     if (window.electronWindow?.isMaximized) {
       window.electronWindow.isMaximized().then(setIsMaximized).catch(() => {});
     }
-    return () => {
-      if (window.electronWindow?.removeMaximizeListener) {
-        window.electronWindow.removeMaximizeListener(handleMaximizeChange);
-      }
-    };
+    return () => { if (typeof off === 'function') off(); };
   }, []);
 
   return (
     <div className="window-controls">
-      <button onClick={() => window.electronWindow?.minimize()} title="Minimiser" type="button">
+      <button onClick={() => window.electronWindow?.minimize()} title={t('window.minimize')} type="button">
         <svg width="10" height="1" viewBox="0 0 10 1"><rect fill="currentColor" width="10" height="1" /></svg>
       </button>
-      <button onClick={() => { window.electronWindow?.maximize(); setIsMaximized(m => !m); }} title={isMaximized ? 'Restaurer' : 'Maximiser'} type="button">
+      <button onClick={() => { window.electronWindow?.maximize(); setIsMaximized(m => !m); }} title={isMaximized ? t('window.restore') : t('window.maximize')} type="button">
         {isMaximized ? (
           /* Icône restaurer : deux carrés superposés */
           <svg width="10" height="10" viewBox="0 0 10 10">
@@ -42,7 +37,7 @@ export default function WindowControls() {
           </svg>
         )}
       </button>
-      <button className="btn-close" onClick={() => window.electronWindow?.close()} title="Fermer" type="button">
+      <button className="btn-close" onClick={() => window.electronWindow?.close()} title={t('common.close')} type="button">
         <svg width="10" height="10" viewBox="0 0 10 10"><path stroke="currentColor" strokeWidth="1.2" d="M1,1 L9,9 M9,1 L1,9" /></svg>
       </button>
     </div>

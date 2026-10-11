@@ -54,6 +54,7 @@ export default function Toolbar({
         value={searchInput}
         onChange={(e) => { setSearchInput(e.target.value); debouncedSearch(e.target.value); }}
         placeholder={multiVaultSearch ? t('toolbar.searchAll') : t('toolbar.search')}
+        aria-label={multiVaultSearch ? t('toolbar.searchAll') : t('toolbar.search')}
         className="search-input"
         style={{
           flex: 1,
@@ -66,11 +67,15 @@ export default function Toolbar({
           {t('common.loading')}
         </span>
       )}
-      <label className="checkbox-label" style={{ marginBottom: 0, whiteSpace: 'nowrap', flexShrink: 0, opacity: !search.trim() ? 0.5 : 1 }}>
+      {/* SEARCH-16 : sans recherche (ou pendant un chargement), la case ne peut pas être COCHÉE,
+          mais une case cochée reste toujours décochable, y compris pendant le chargement, qui est
+          annulable (avant : cochée ET désactivée une fois la recherche vidée, arborescence perdue).
+          App la décoche d'elle-même quand la recherche est vidée. */}
+      <label className="checkbox-label" style={{ marginBottom: 0, whiteSpace: 'nowrap', flexShrink: 0, opacity: !search.trim() && !multiVaultSearch ? 0.5 : 1 }}>
         <input
           type="checkbox"
           checked={multiVaultSearch}
-          disabled={loadingAllSecrets || !search.trim()}
+          disabled={!multiVaultSearch && (loadingAllSecrets || !search.trim())}
           onChange={(e) => { setMultiVaultSearch(e.target.checked); setVisiblePasswords({}); }}
         />
         <span>{t('toolbar.searchAll').split('...')[0]}</span>
@@ -106,9 +111,11 @@ export default function Toolbar({
                 localStorage.setItem('rdvault-tree-view-enabled', JSON.stringify(newValue));
                 if (!newValue) setCurrentPath('');
               }}
+              type="button"
               style={{
                 padding: 'var(--sp-2) var(--sp-4)',
-                background: treeViewEnabled ? 'var(--accent)' : 'var(--bg-surface)',
+                // Violet de remplissage en thème sombre (texte blanc ≥ 4.5:1) ; identique à --accent en clair
+                background: treeViewEnabled ? 'var(--accent-fill, var(--accent))' : 'var(--bg-surface)',
                 color: treeViewEnabled ? 'white' : 'var(--text-primary)',
                 border: '1px solid var(--border)',
                 borderRadius: 'var(--radius-md)',

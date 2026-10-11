@@ -29,7 +29,7 @@ Ce guide permet de reproduire l'infrastructure serveur nécessaire au fonctionne
 
 - Ubuntu 24.04 LTS (ou Debian 12+)
 - 4 CPU, 8 Go RAM, 30 Go disque minimum
-- Accès réseau depuis les postes clients sur les ports 8200 (HTTPS) et 3001 (HTTP)
+- Accès réseau depuis les postes clients sur les ports 8200 (HTTPS) et 3001 (HTTPS)
 - Un serveur LDAP (Active Directory ou OpenLDAP) pour l'authentification
 - Un nom DNS pointant vers le serveur (ex: `vault.example.com`)
 
@@ -110,6 +110,8 @@ sudo certbot certonly --standalone -d vault.example.com
 ```
 
 > **Important** : Le certificat actuel de l'infra originale est **expiré** (valide jusqu'au 13/12/2025). RDVAULT continue de fonctionner car il accepte les certificats de domaines de confiance via `TRUSTED_DOMAINS` dans la config client. En production, maintenez vos certificats à jour.
+
+> **Épinglage (`TRUSTED_CERT_FINGERPRINTS`)** : l'empreinte épinglée est celle du **certificat serveur** (SHA-256 du certificat, pas de la clé). Elle est contrôlée pour tout certificat présenté par l'hôte exact de `VAULT_URL`, y compris un certificat Let's Encrypt ou d'une CA d'entreprise reconnu par Windows. Chaque renouvellement (tous les 60 à 90 jours avec Let's Encrypt) change donc l'empreinte : voir « Maintenance › Renouveler le certificat TLS ».
 
 ---
 
@@ -274,6 +276,14 @@ vault write auth/ldap/config \
   starttls=true
 ```
 
+### Durée des sessions RDVAULT
+
+- RDVAULT renouvelle son jeton aux 2/3 de sa durée par `POST auth/token/renew-self`, autorisé par la policy `default` de Vault : gardez `default` dans les mappings de groupes (voir étape 7d). Sans ce droit, le jeton n'est pas renouvelé et la session se termine à son expiration.
+- Vault ne renouvelle jamais au-delà de la durée maximale du jeton (`token_max_ttl` de `auth/ldap` ; à défaut, la durée maximale du montage ou du système). Une fois cette durée atteinte, ou si le jeton est révoqué, RDVAULT termine la session proprement (extension vidée, écran de connexion, message) et l'utilisateur se reconnecte. Exemple : `vault write auth/ldap/config token_ttl=1h token_max_ttl=10h`.
+- Le délai d'inactivité de l'application (15 min) s'applique en plus, indépendamment de Vault.
+- **MFA de connexion Vault** : non prise en charge. Un compte qui l'exige reçoit un message explicite et aucune session n'est ouverte.
+- Vault scellé, en erreur (`5xx`) ou limitant les connexions (`429`) : message dédié, la tentative n'est pas décomptée par la protection anti-force brute du client.
+
 ---
 
 ## Étape 7 — Engines secrets
@@ -301,6 +311,10 @@ vault secrets enable pki
 
 > **Note** : Les engines personnels (`users/<username>/<nom>`) sont créés par les utilisateurs eux-mêmes via l'UI RDVAULT grâce à la policy self-service.
 
+> **Taille des coffres** : RDVAULT liste au plus 20 000 entrées et 20 niveaux de dossiers par coffre. Au-delà, il affiche les entrées déjà listées avec un avertissement (liste incomplète) et refuse de copier ou déplacer des entrées vers ce coffre, faute de pouvoir détecter les doublons. Répartissez les très gros ensembles dans plusieurs coffres.
+
+> **KV v2 recommandé** : outre l'historique et la restauration des versions, il permet les écritures conditionnelles. Une copie ou un déplacement vers un coffre KV v2 écrit en création seule (`cas: 0`) et ne remplace jamais une entrée créée entre-temps sous le même nom par un autre poste ; KV v1 n'offre pas ce contrôle.
+
 ---
 
 ## Étape 7b — Modèle de droits RDVAULT
@@ -318,20 +332,25 @@ RDVAULT utilise 5 niveaux de droits, chacun mappé à une policy Vault et un gro
 │ Admin        │ Tout. Gère les policies, engines, groupes,   │
 │              │ audit. A la policy Vault "admin".            │
 ├──────────────┼──────────────────────────────────────────────┤
-│ Modérateur   │ RW sur les coffres assignés + peut gérer     │
-│              │ les policies, engines et groupes AD.          │
-│              │ Ne voit pas les coffres des autres.           │
+│ Modérateur   │ RW sur les coffres assignés. Consultation    │
+│              │ seule des policies, coffres et groupes AD    │
+│              │ (l'UI n'affiche que ceux qui concernent ses  │
+│              │ coffres ; en lecture, Vault lui ouvre toutes │
+│              │ les policies, la liste des coffres et les    │
+│              │ groupes). Aucun accès au contenu des autres  │
+│              │ coffres.                                     │
 ├──────────────┼──────────────────────────────────────────────┤
 │ RW (écriture)│ Lecture + écriture sur un coffre spécifique. │
-│              │ Peut créer/modifier/supprimer des secrets.    │
+│              │ Peut créer/modifier/supprimer des secrets.   │
 ├──────────────┼──────────────────────────────────────────────┤
-│ RO (lecture)  │ Lecture seule sur un coffre. Voit les secrets│
+│ RO (lecture) │ Lecture seule sur un coffre. Voit les secrets│
 │              │ mais ne peut pas les modifier. Marqué "RO?"  │
 │              │ dans l'UI RDVAULT.                           │
 ├──────────────┼──────────────────────────────────────────────┤
 │ Self-service │ Chaque utilisateur peut créer/gérer ses      │
-│              │ propres coffres sous users/<username>/.       │
-│              │ Aucun accès aux coffres des autres.           │
+│              │ propres coffres sous users/<username>/.      │
+│              │ Aucun accès aux coffres des autres.          │
+│              │ Pas de TOTP (voir la note TOTP, étape 7c).   │
 └──────────────┴──────────────────────────────────────────────┘
 ```
 
@@ -360,6 +379,8 @@ path "Comptabilite/data/*" { capabilities = ["create","read","update","delete","
 ---
 
 ## Étape 7c — Policies
+
+> **Sécurité — délégation** : donner à un non-administrateur l'écriture (`create`, `update`, `delete`, `sudo`) sur `sys/policies/acl/*`, `sys/auth/*`, `auth/<méthode>/groups/*` (ou `users/*`), `identity/*` ou `sys/mounts/*` revient à lui donner `root` : il peut réécrire sa propre policy en `path "*"`, ajouter la policy `admin` à son groupe LDAP, ou monter un moteur d'authentification. Vault ne sait pas limiter le *contenu* d'une policy écrite. Seule la policy `admin` porte ces droits ; les modèles ci-dessous n'en donnent aucun autre (hors montage de ses propres coffres en self-service, chemin délimité par l'identité).
 
 ### Policy `admin` — Accès complet
 
@@ -395,11 +416,11 @@ path "users/{{identity.entity.aliases.${LDAP_ACCESSOR}.name}}/*" {
   capabilities = ["create","update","read","delete","list","patch"]
 }
 
-# TOTP : gestion complète
-path "TOTP/keys/*" { capabilities = ["create","update","read","delete","list"] }
-path "TOTP/code/*" { capabilities = ["create","read","update"] }
+# Pas de droit TOTP ici : voir la note « TOTP et coffres personnels »
 EOF
 ```
+
+> **TOTP et coffres personnels** : RDVAULT nomme une clé TOTP `<COFFRE>-<entrée>`, où `<COFFRE>` est le nom du coffre en majuscules **sans** le préfixe `users/<nom>/` (format existant des clés déjà créées). Le nom de clé ne contient donc pas le propriétaire : `users/alice/perso` et `users/bob/perso` produisent tous deux des clés `PERSO-…`, et un chemin `TOTP/…` ne peut pas être limité à l'utilisateur avec `{{identity…}}`. Les anciennes lignes `path "TOTP/keys/*"` / `path "TOTP/code/*"` de ce modèle donnaient à **chaque** utilisateur la liste, la lecture des codes, le remplacement et la suppression des clés TOTP de **tous** les coffres (y compris les coffres partagés auxquels il n'a pas accès) : retirez-les des policies déjà déployées. Conséquence : en mode Vault, pas de TOTP sur les coffres personnels, sauf droit accordé explicitement par préfixe (`TOTP/code/PERSO-*`…), en sachant que ce préfixe est commun aux coffres personnels homonymes de tous les utilisateurs.
 
 ### Policy RW — Lecture/écriture sur un coffre
 
@@ -425,6 +446,8 @@ path "TOTP/validate/MONCOFFRE-*" { capabilities = ["update"] }
 EOF
 ```
 
+> **Préfixes TOTP** : dans une policy Vault, un `*` final désigne un **préfixe**. `TOTP/code/WEB-*` (coffre `web`) couvre donc aussi les clés du coffre `web-prod` (`WEB-PROD-…`). Choisissez des noms de coffres dont aucun n'est le début d'un autre suivi d'un tiret (évitez `web` et `web-prod`), ou acceptez ce partage. Le builder du panneau d'administration signale les coffres connus concernés.
+
 ### Policy RO — Lecture seule sur un coffre
 
 ```bash
@@ -443,7 +466,9 @@ path "TOTP/validate/MONCOFFRE-*" { capabilities = ["update"] }
 EOF
 ```
 
-### Policy Modérateur — RW + gestion policies/engines/groupes
+### Policy Modérateur — RW + consultation des policies/engines/groupes
+
+Même policy que celle générée par le builder (niveau « Modérateur ») : écriture sur le contenu des coffres gérés, **lecture seule** sur les chemins système.
 
 ```bash
 vault policy write moderateur - <<'EOF'
@@ -451,32 +476,36 @@ vault policy write moderateur - <<'EOF'
 path "sys/mounts"   { capabilities = ["read","list"] }
 path "sys/mounts/*" { capabilities = ["read","list"] }
 
-# KV v2 : accès complet aux coffres gérés
-# MODERATOR: MonCoffre
+# KV v2 MODERATOR (MonCoffre)
 path "MonCoffre/metadata/*" { capabilities = ["list","read","delete"] }
 path "MonCoffre/data/*"     { capabilities = ["create","update","read","delete","list"] }
 path "MonCoffre/delete/*"   { capabilities = ["update"] }
 path "MonCoffre/undelete/*" { capabilities = ["update"] }
 path "MonCoffre/destroy/*"  { capabilities = ["update"] }
+
+# TOTP (MONCOFFRE-*)
 path "TOTP/keys/MONCOFFRE-*"     { capabilities = ["create","update","read","delete"] }
 path "TOTP/code/MONCOFFRE-*"     { capabilities = ["read"] }
 path "TOTP/validate/MONCOFFRE-*" { capabilities = ["update"] }
 
-# Permissions modérateur : gestion policies, mounts, groupes AD
+# Permissions modérateur : lecture seule des policies, mounts et groupes AD + tags partagés
 path "sys/policies/acl"     { capabilities = ["list"] }
-path "sys/policies/acl/*"   { capabilities = ["read","create","update"] }
+path "sys/policies/acl/*"   { capabilities = ["read","list"] }
 path "sys/mounts"           { capabilities = ["read","list"] }
-path "sys/mounts/*"         { capabilities = ["read","create","update","delete"] }
+path "sys/mounts/*"         { capabilities = ["read","list"] }
 path "auth/ldap/groups"     { capabilities = ["list"] }
-path "auth/ldap/groups/*"   { capabilities = ["read","create","update"] }
-
+path "auth/ldap/groups/*"   { capabilities = ["read","list"] }
 # Accès au coffre des tags partagés
 path "tags-shared/metadata/*" { capabilities = ["list","read"] }
 path "tags-shared/data/*"     { capabilities = ["create","update","read","list"] }
 EOF
 ```
 
-> **Note** : RDVAULT détecte automatiquement le rôle modérateur via le commentaire `# MODERATOR:` dans la policy. Ajoutez `# MODERATOR: NomCoffre` pour chaque coffre géré par le modérateur.
+> **Note** : RDVAULT détecte le rôle modérateur grâce au commentaire `# KV v2 MODERATOR (NomCoffre)` (ou `# KV v1 MODERATOR (NomCoffre)` pour un coffre KV v1), placé juste avant les règles du coffre, une ligne par coffre géré. Le plus simple est de générer la policy avec le builder (niveau « Modérateur »). Ce commentaire ne sert qu'à l'interface : les droits réels sont ceux des règles `path`. Le modérateur voit, dans le panneau d'administration, ses coffres et les policies et groupes AD qui les concernent, **en consultation seule** (ce filtrage est celui de l'interface : les règles `read`/`list` ci-dessus lui permettent de lire toutes les policies, la liste des coffres et les groupes LDAP directement auprès de Vault, sans accès au contenu des autres coffres) : la création ou suppression de coffres, l'écriture des policies et la liaison des groupes restent réservées aux administrateurs (voir l'avertissement « Sécurité — délégation » ci-dessus). Si une ancienne version de ce modèle (écriture sur `sys/policies/acl/*`, `sys/mounts/*` ou `auth/ldap/groups/*`, marqueur `# MODERATOR:`) est déployée, remplacez-la.
+
+### Niveau « RBI uniquement » du builder — limite
+
+Le niveau « RBI uniquement » est une restriction d'interface, pas une restriction Vault. La policy générée donne exactement les mêmes droits Vault que « Lecture seule » (`read` sur `<coffre>/data/*` ou sur le secret, plus `TOTP/code/<PRÉFIXE>-*`) : RDVAULT lit l'identifiant avec le jeton de l'utilisateur, puis l'injecte dans la session isolée. Le commentaire `# RBI-ONLY` sert uniquement à l'application, qui masque alors identifiant, mot de passe et notes et force l'ouverture en session sécurisée. L'utilisateur peut donc toujours lire le mot de passe et obtenir le code TOTP hors de RDVAULT avec son propre jeton (`vault login -method=ldap` puis `vault kv get`, API, curl). Une vraie barrière demanderait qu'un service privilégié lise et injecte le secret à la place du poste client, ce que RDVAULT ne propose pas aujourd'hui. N'utilisez pas ce niveau pour des comptes dont l'utilisateur ne doit en aucun cas connaître le mot de passe.
 
 ---
 
@@ -497,7 +526,7 @@ vault write auth/ldap/groups/equipe-compta policies="default,compta-rw"
 # Stagiaires — accès RO au coffre Stagiaires
 vault write auth/ldap/groups/stagiaires-ro policies="default,stagiaires-ro"
 
-# Modérateurs — gestion des coffres et policies
+# Modérateurs — RW sur leurs coffres, consultation des policies et groupes
 vault write auth/ldap/groups/moderateurs policies="default,moderateur"
 ```
 
@@ -545,6 +574,32 @@ vault delete auth/ldap/groups/equipe-nouveau
 
 Le proxy RBI permet le partage de sessions navigateur sécurisées. Il fait du wrapping/unwrapping de secrets Vault.
 
+### Exigences de sécurité (obligatoires)
+
+Le proxy manipule des identifiants en clair et détient un token Vault privilégié. Le client RDVAULT **refuse** une `RBI_PROXY_URL` qui n'est pas en `https://`. L'implémentation de `server.js` doit respecter les points suivants, sans quoi tout partage RBI est exposé :
+
+1. **TLS obligatoire** : servir en HTTPS avec un certificat valide pour les postes clients (CA d'entreprise), ou derrière un reverse proxy TLS (nginx/caddy). Jamais `NODE_TLS_REJECT_UNAUTHORIZED=0` : installer la CA dans le magasin système du serveur (`/usr/local/share/ca-certificates/` + `update-ca-certificates`) ou utiliser `NODE_EXTRA_CA_CERTS=/etc/rbi-proxy/vault-ca.crt`.
+2. **Authentification de chaque appel** : `POST /create-share` et `POST /unwrap-rbi` doivent exiger un token Vault du demandeur (header `X-Vault-Token`) que le proxy vérifie par `GET /v1/auth/token/lookup-self` avant d'agir. Aucun endpoint anonyme.
+3. **Aucune persistance des identifiants** : le proxy ne doit jamais unwrap le token de partage à la création. Il stocke uniquement le wrapping token et le rend au destinataire authentifié, qui unwrap lui-même auprès de Vault. Le wrapping token Vault est à usage unique : cela garantit qu'un partage ne peut être consommé qu'une fois.
+4. **Limites** : `maxUses` plafonné à 5 (pas d'illimité), TTL maximal 24 h, `shareId` généré avec `crypto.randomBytes(32)`, limitation de débit par IP et par token.
+5. **Token du proxy** : policy Vault minimale (`sys/wrapping/lookup` et `sys/wrapping/unwrap` uniquement si le point 3 l'exige, sinon aucun accès aux secrets) ; ne jamais lui donner `TOTP/code/*`.
+6. **Journalisation** sans identifiants : consigner `shareId`, demandeur (entity), horodatage, résultat.
+7. **Code versionné** : `server.js` doit être dans un dépôt revu, avec les mêmes exigences d'audit que le client.
+
+### Contrat d'API attendu par le client RDVAULT
+
+Le client applique ces règles de son côté et refuse un proxy qui ne les suit pas.
+
+| Appel | En-têtes | Corps envoyé | Réponse attendue |
+|---|---|---|---|
+| `POST /create-share` | `X-Vault-Token` (jeton du demandeur), `Content-Type: application/json` | `{ wrappingToken, maxUses, ttl }` : `maxUses` vaut 1, 2, 3 ou 5, `ttl` vaut `1h`, `8h` ou `24h` | `{ shareId }` (lettres, chiffres, `-` ou `_`, 128 caractères au plus) |
+| `POST /unwrap-rbi` | `X-Vault-Token` (jeton du destinataire), `Content-Type: application/json` | `{ shareId }` | `{ wrappingToken }` ; erreurs : `404` partage inconnu, `410` utilisations épuisées, `400` expiré, `401` / `403` non autorisé |
+
+- Le client crée lui-même le wrapping token (`sys/wrapping/wrap`, TTL choisi) avec l'adresse, l'identifiant, le mot de passe et, le cas échéant, l'adresse « site web » de l'entrée (domaine où la saisie reste autorisée) et le **nom** de la clé TOTP. Ce contenu n'est lisible qu'après unwrap : le proxy ne le voit jamais. Le destinataire l'unwrappe lui-même auprès de Vault, confirme l'ouverture (adresse et identifiant affichés), puis lit le code TOTP avec **son propre** jeton s'il y a droit.
+- Un proxy qui renvoie des identifiants en clair au lieu de `{ wrappingToken }` (ancienne implémentation) est refusé.
+- Le wrapping token Vault est à usage unique : même avec `maxUses` supérieur à 1, seul le premier unwrap réussit.
+- En mode entreprise, l'application autorise l'origine `https` de `RBI_PROXY_URL` dans sa politique de sécurité du contenu (CSP) : aucun réglage n'est nécessaire côté poste.
+
 ### Installation
 
 ```bash
@@ -567,9 +622,13 @@ sudo -u rbi-proxy npm install express axios
 
 ```
 VAULT_ADDR=https://vault.example.com:8200
-VAULT_TOKEN=<TOKEN_AVEC_DROITS_WRAPPING>
-NODE_TLS_REJECT_UNAUTHORIZED=0
+VAULT_TOKEN=<TOKEN_AVEC_DROITS_WRAPPING_UNIQUEMENT>
+# CA d'entreprise pour valider le certificat Vault (ne JAMAIS désactiver la vérification TLS)
+NODE_EXTRA_CA_CERTS=/etc/rbi-proxy/vault-ca.crt
 PORT=3001
+# Certificat TLS du proxy lui-même (https obligatoire côté client RDVAULT)
+TLS_CERT=/etc/rbi-proxy/rbi-proxy.crt
+TLS_KEY=/etc/rbi-proxy/rbi-proxy.key
 ```
 
 ### /etc/systemd/system/rbi-proxy.service
@@ -611,6 +670,10 @@ sudo systemctl start rbi-proxy
 
 ## Étape 9 — Configuration du client RDVAULT
 
+L'installeur est **par machine** (Program Files, droits administrateur). Pour un déploiement de masse, déposer la configuration dans `%PROGRAMDATA%\RDVAULT\config.cfg` (lu en priorité, modifiable uniquement par les administrateurs) ; sinon dans le dossier d'installation via `/CONFIG=`. Chaque valeur est validée au démarrage et remplacée par un défaut sûr si elle est invalide.
+
+**Extension enrichie et postes multi-sessions** : la liaison avec l'extension utilise le port local fixe `45678`, commun à toutes les sessions Windows d'un poste (bureau à distance, Citrix, changement rapide d'utilisateur). Seule la première instance RDVAULT l'écoute ; les suivantes affichent un avertissement, et l'extension d'une autre session joindrait l'application de la première. Ne déployez pas l'extension enrichie sur des serveurs de sessions partagés (voir `SECURITY.md`).
+
 Dans le fichier `config.cfg` installé avec le client :
 
 ```ini
@@ -624,8 +687,13 @@ LDAP_AUTH_PATH=auth/ldap
 # (inutile si vous utilisez Let's Encrypt)
 TRUSTED_DOMAINS=vault.example.com,<IP_SERVEUR>,localhost,127.0.0.1
 
-# URL du proxy RBI (laisser vide si non utilisé)
-RBI_PROXY_URL=http://<IP_SERVEUR>:3001
+# URL du proxy RBI (laisser vide si non utilisé ; https obligatoire, sinon ignorée)
+RBI_PROXY_URL=https://rbi-proxy.example.com:3001
+
+# Empreintes SHA-256 des certificats acceptés (pinning, recommandé) : tout certificat de l'hôte de VAULT_URL,
+# même reconnu par Windows, et les certificats auto-signés des TRUSTED_DOMAINS
+# openssl x509 -in vault.crt -noout -fingerprint -sha256
+TRUSTED_CERT_FINGERPRINTS=
 
 # Mode Enterprise (par défaut)
 APP_MODE=enterprise
@@ -633,6 +701,14 @@ APP_MODE=enterprise
 # Langue par défaut
 LANG=en
 ```
+
+Remarques :
+
+- **Encodage** : enregistrez `config.cfg` de préférence en **UTF-8** (avec ou sans BOM). Un fichier UTF-16 (petit ou grand boutiste, avec ou sans BOM : Bloc-notes « Unicode », sortie par défaut de `Out-File` et de la redirection `>` sous Windows PowerShell 5.1) est lu aussi, avec un avertissement dans le journal. Un fichier non vide dont aucune clé n'est reconnue est signalé dans le journal, et l'application démarre avec les valeurs par défaut. Sous PowerShell 5.1, `Set-Content -Encoding UTF8` ou `Out-File -Encoding utf8` produisent de l'UTF-8.
+- **`VAULT_URL` et `RBI_PROXY_URL`** : `https://` obligatoire, sans identifiants. L'application les normalise au démarrage : barre finale, paramètres (`?…`) et fragment (`#…`) retirés, préfixe de chemin d'un proxy inverse conservé. Pour `VAULT_URL`, un suffixe `/v1` collé par erreur est retiré (l'application l'ajoute) ; la correction est journalisée.
+- **`TRUSTED_CERT_FINGERPRINTS`** : liste d'empreintes séparées par des virgules. Si elle est renseignée, tout certificat présenté par l'hôte exact de `VAULT_URL` doit y figurer, **même s'il est reconnu par le magasin Windows** (CA publique, CA d'entreprise, boîtier d'inspection TLS) : un boîtier d'inspection TLS qui intercepte le trafic Vault est alors refusé. Pour les autres hôtes, seuls les certificats jugés invalides (auto-signés) sont contrôlés : un certificat auto-signé d'un autre hôte de `TRUSTED_DOMAINS` (proxy RBI, par exemple) doit lui aussi figurer dans la liste ; un certificat valide d'un autre hôte suit la seule confiance du magasin Windows. Vide : confiance du magasin Windows, plus `TRUSTED_DOMAINS` pour les certificats auto-signés. **Au renouvellement d'un certificat épinglé, ajoutez sa nouvelle empreinte avant de le déployer** (voir « Maintenance »), sinon les postes refusent le serveur.
+- **Installation silencieuse** : `/S /CONFIG=chemin\config.cfg` copie le fichier tel quel dans le dossier d'installation (toutes les clés), `/MODE=local|enterprise` ne remplace que `APP_MODE`. Fichier illisible ou mode invalide : arrêt avec le code `2`, rien n'est modifié.
+- **Mise à jour du client** : silencieuse ou interactive, elle conserve `config.cfg` à l'octet près (épinglage et langue compris) et l'appairage de l'extension. Pendant une mise à jour, `/CONFIG=` remplace la configuration et `/MODE=` seulement `APP_MODE`.
 
 ---
 
@@ -673,6 +749,8 @@ curl -k https://vault.example.com:8200/v1/sys/health
 sudo systemctl reload vault
 ```
 
+> **Avec l'épinglage (`TRUSTED_CERT_FINGERPRINTS`)** : le nouveau certificat a une autre empreinte, et les postes refusent tout certificat absent de la liste, même signé par une autorité reconnue. Procédez en deux temps : (1) générez le nouveau certificat, calculez son empreinte (`openssl x509 -in vault.crt -noout -fingerprint -sha256`) et **ajoutez-la** à `TRUSTED_CERT_FINGERPRINTS` sur les postes, à côté de l'ancienne ; (2) installez le certificat sur Vault, puis retirez l'ancienne empreinte au déploiement suivant. Avec Let's Encrypt, le renouvellement automatique change l'empreinte à chaque fois : réservez l'épinglage aux certificats dont vous maîtrisez la date de remplacement.
+
 ### Unseal après redémarrage
 
 Vault se scelle à chaque redémarrage. Il faut fournir 3 des 5 clés unseal :
@@ -703,5 +781,5 @@ vault operator raft snapshot restore /backup/vault-YYYYMMDD.snap
 |-----------|---------|------|------|
 | HashiCorp Vault | 1.20.2 | 8200 (HTTPS) | Stockage des secrets, auth LDAP, PKI, TOTP |
 | Raft (intégré) | — | 8201 | Stockage persistant (pas besoin de Consul) |
-| RBI Proxy | Node.js | 3001 | Wrapping/unwrapping pour partage RBI (optionnel) |
+| RBI Proxy | Node.js | 3001 (HTTPS) | Relais de wrapping tokens pour partage RBI (optionnel, endpoints authentifiés) |
 | SSH | OpenSSH | 22 | Administration |

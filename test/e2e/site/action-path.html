@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Vos informations</title></head>
+<body>
+<h1>Vos informations</h1>
+<!-- Garde-fou SITES-24 : le CHEMIN de l'action reste un indicateur d'inscription (seules la chaîne
+     de requête et le fragment sont ignorés). Aucun autre indicateur : ni id, ni nom, ni classe,
+     un seul mot de passe sans autocomplete. Sans le chemin « /account/register », ce formulaire
+     passerait pour une connexion : aucune icône ni menu attendus. -->
+<form id="f" method="post" action="/account/register?next=%2Fmon-compte" onsubmit="return false">
+  <label>E-mail <input type="email" id="ae" name="email"></label><br>
+  <label>Mot de passe <input type="password" id="ap" name="password"></label><br>
+  <button type="button" id="go">Valider</button>
+</form>
+</body></html>

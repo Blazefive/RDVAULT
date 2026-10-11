@@ -13,6 +13,17 @@
 // - Protection contre credential stuffing
 // - Ralentissement des attaques automatisées
 // - Logging des tentatives suspectes
+//
+// Messages : `message` est rédigé dans la langue de l'interface (attribut lang du document, tenu à
+// jour par I18nProvider ; repli anglais) ; `messageKey` / `messageParams` permettent à un appelant
+// muni de t() de composer son propre texte.
+
+import { translateKey } from './utils/security';
+
+/** Résultat avec message traduit (clé i18n + paramètres numériques) */
+function withMessage(result, messageKey, messageParams) {
+  return { ...result, message: translateKey(messageKey, messageParams), messageKey, messageParams };
+}
 
 /**
  * Classe pour gérer la protection brute force
@@ -77,7 +88,8 @@ class BruteForceProtection {
    * Enregistre une tentative de connexion échouée
    *
    * @param {string} username - Username
-   * @returns {Object} { blocked: boolean, remainingAttempts: number, retryAfterMs: number }
+   * @returns {Object} { blocked: boolean, remainingAttempts: number, retryAfterMs: number,
+   *   message: string (langue de l'interface), messageKey: string, messageParams: Object }
    */
   registerFailedAttempt(username) {
     if (!username) {
@@ -94,12 +106,11 @@ class BruteForceProtection {
 
       // SÉCURITÉ: Ne pas logger le username
 
-      return {
+      return withMessage({
         blocked: true,
         remainingAttempts: 0,
-        retryAfterMs: Math.max(0, retryAfterMs),
-        message: `Compte temporairement bloqué. Réessayez dans ${Math.ceil(retryAfterMs / 1000)} secondes.`
-      };
+        retryAfterMs: Math.max(0, retryAfterMs)
+      }, 'login.bruteForceLocked', { seconds: Math.max(0, Math.ceil(retryAfterMs / 1000)) });
     }
 
     // Récupérer les tentatives existantes
@@ -125,12 +136,11 @@ class BruteForceProtection {
       this.blocked.set(normalizedUsername, now + this.blockDurationMs);
       this._persistState();
 
-      return {
+      return withMessage({
         blocked: true,
         remainingAttempts: 0,
-        retryAfterMs: this.blockDurationMs,
-        message: `Trop de tentatives échouées. Compte bloqué pour ${this.blockDurationMs / 60000} minutes.`
-      };
+        retryAfterMs: this.blockDurationMs
+      }, 'login.tooManyAttempts', { minutes: Math.ceil(this.blockDurationMs / 60000) });
     }
 
     // SÉCURITÉ: Appliquer le délai exponentiel comme un blocage temporaire
@@ -139,12 +149,11 @@ class BruteForceProtection {
     }
 
     this._persistState();
-    return {
+    return withMessage({
       blocked: false,
       remainingAttempts,
-      retryAfterMs: delayMs,
-      message: `Tentative échouée. ${remainingAttempts} tentative(s) restante(s) avant blocage.`
-    };
+      retryAfterMs: delayMs
+    }, 'login.attemptFailedRemaining', { count: remainingAttempts });
   }
 
   /**

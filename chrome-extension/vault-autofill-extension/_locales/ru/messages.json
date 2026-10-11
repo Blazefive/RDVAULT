@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "Автозаполнение форм и passkeys с RDVAULT (требуется настольное приложение)"
+  },
+  "popupStatusChecking": {
+    "message": "Проверка..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "Для работы расширения настольное приложение Vault должно быть запущено и подключено."
+  },
+  "popupDesktopUnavailable": {
+    "message": "Настольное приложение недоступно"
+  },
+  "popupDesktopNotConnected": {
+    "message": "Настольное приложение запущено, но не подключено"
+  },
+  "popupDesktopConnected": {
+    "message": "Настольное приложение подключено"
+  },
+  "popupUserLabel": {
+    "message": "Пользователь:"
+  },
+  "popupServerLabel": {
+    "message": "Сервер:"
+  },
+  "popupUnknown": {
+    "message": "Неизвестно"
+  },
+  "popupAutofillActive": {
+    "message": "✓ Автозаполнение включено"
+  },
+  "popupPairingPendingTitle": {
+    "message": "Подтвердите доступ в приложении RDVAULT"
+  },
+  "popupPairingPendingDetail": {
+    "message": "Запрос на сопряжение отправлен в RDVAULT. Подтвердите его в приложении (в течение 60 секунд), чтобы включить автозаполнение."
+  },
+  "popupPairingDeniedTitle": {
+    "message": "Доступ отклонён в RDVAULT"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "Сопряжение этого расширения отклонено в приложении. Новый запрос можно будет отправить через минуту."
+  },
+  "popupDisconnectedDetail": {
+    "message": "Запустите настольное приложение и войдите в систему, чтобы использовать автозаполнение."
+  },
+  "autofillIconTitle": {
+    "message": "Заполнить с помощью RDVAULT"
+  },
+  "autofillHeader": {
+    "message": "Учётные данные RDVAULT"
+  },
+  "autofillNoResults": {
+    "message": "Для этого сайта учётные данные не найдены"
+  },
+  "autofillUnnamed": {
+    "message": "Без названия"
+  },
+  "autofillNoUsername": {
+    "message": "(без имени пользователя)"
+  },
+  "autofillLoading": {
+    "message": "Получение учётных данных..."
+  },
+  "autofillFetchFailed": {
+    "message": "Не удалось получить учётные данные"
+  },
+  "pkCreateTitle": {
+    "message": "Создать passkey для $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "Создать в RDVAULT"
+  },
+  "pkGetTitle": {
+    "message": "Использовать ваш passkey для $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "Использовать мой passkey RDVAULT"
+  },
+  "pkChooseAccount": {
+    "message": "выберите учётную запись"
+  },
+  "pkUseAnotherDevice": {
+    "message": "Использовать другое устройство"
+  },
+  "pkCancel": {
+    "message": "Отмена"
+  },
+  "pkBlockedWarning": {
+    "message": "Действие заблокировано: окно RDVAULT скрыто или перекрыто страницей. Используйте «$OTHER$» или «$CANCEL$».",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "Учётная запись без имени"
+  },
+  "pkCreatedOn": {
+    "message": "создан $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "Учётные данные для этого сайта не найдены"
+  },
+  "bgErrHttp": {
+    "message": "Ошибка HTTP $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "Недопустимый ответ"
+  },
+  "bgErrCommunication": {
+    "message": "Ошибка связи с RDVAULT"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "Недопустимое имя ключа"
+  },
+  "bgErrInvalidCode": {
+    "message": "Недопустимый код"
+  },
+  "bgErrTotp": {
+    "message": "Ошибка TOTP"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "недопустимый passkey"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId не разрешён"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "Хранилище недоступно"
+  },
+  "bgErrInsecureSender": {
+    "message": "Запрещено на незащищённой странице"
+  },
+  "bgErrInternal": {
+    "message": "Внутренняя ошибка"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "Требуется URL вкладки"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "Неподдерживаемый тип сообщения"
+  },
+  "bgErrInsecurePage": {
+    "message": "Незащищённая страница"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT недоступен или заблокирован"
+  },
+  "bgErrNameRequired": {
+    "message": "Требуется имя секрета"
+  },
+  "bgErrInvalidCredential": {
+    "message": "Недопустимые учётные данные"
+  },
+  "bgErrSaveCredential": {
+    "message": "Ошибка сохранения учётных данных"
+  },
+  "bgErrReadCredential": {
+    "message": "Ошибка чтения учётных данных"
+  },
+  "bgErrClearCredential": {
+    "message": "Ошибка удаления учётных данных"
+  }
+}

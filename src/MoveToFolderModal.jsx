@@ -1,15 +1,18 @@
 // src/MoveToFolderModal.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useTranslation } from './i18n';
+import Modal from './components/common/Modal';
+import { buildTree } from './hooks/useTreeView';
 
 /**
  * Modal pour déplacer un ou plusieurs secrets vers un dossier du coffre actuel.
  * Affiche l'arborescence des dossiers et permet la navigation.
+ * (squelette commun Modal : Escape, clic hors zone avec tolérance de déplacement ;
+ *  arbre construit par buildTree de useTreeView, plus de doublon local)
  */
 export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onConfirm }) {
   const { t } = useTranslation();
   const [browsingPath, setBrowsingPath] = useState('');
-  const [mouseDownPos, setMouseDownPos] = useState(null);
 
   // Normaliser en tableau
   const secretsList = Array.isArray(secretsToMove) ? secretsToMove : [secretsToMove];
@@ -21,44 +24,11 @@ export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onC
   const secretBaseName = secretParts.pop();
   const currentSecretFolder = secretParts.join('/');
 
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-
-  // Construire l'arbre des dossiers à partir des secrets
-  const buildTree = (secretsList) => {
-    const tree = { folders: {}, secrets: [] };
-    secretsList.forEach(s => {
-      const parts = s.name.split('/');
-      if (parts.length === 1) {
-        if (s.name !== '.placeholder') {
-          tree.secrets.push(s);
-        }
-      } else {
-        let current = tree;
-        for (let i = 0; i < parts.length - 1; i++) {
-          const folderName = parts[i];
-          if (!current.folders[folderName]) {
-            current.folders[folderName] = { folders: {}, secrets: [] };
-          }
-          current = current.folders[folderName];
-        }
-        const leafName = parts[parts.length - 1];
-        if (leafName !== '.placeholder') {
-          current.secrets.push({ ...s, displayName: leafName });
-        }
-      }
-    });
-    return tree;
-  };
+  // Arbre des dossiers (recalculé uniquement quand la liste des secrets change)
+  const tree = useMemo(() => buildTree(secrets || []), [secrets]);
 
   // Obtenir les sous-dossiers du chemin courant
   const getSubfolders = () => {
-    const tree = buildTree(secrets);
     if (!browsingPath) {
       return Object.keys(tree.folders).sort();
     }
@@ -81,41 +51,28 @@ export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onC
   const destinationPath = browsingPath ? `${browsingPath}/${secretBaseName}` : secretBaseName;
   const isSameFolder = browsingPath === currentSecretFolder;
 
-  const handleOverlayMouseDown = (e) => {
-    if (e.target.className === 'modal-overlay') {
-      setMouseDownPos({ x: e.clientX, y: e.clientY });
-    }
-  };
-
-  const handleOverlayMouseUp = (e) => {
-    if (e.target.className === 'modal-overlay' && mouseDownPos) {
-      const deltaX = Math.abs(e.clientX - mouseDownPos.x);
-      const deltaY = Math.abs(e.clientY - mouseDownPos.y);
-      if (deltaX < 5 && deltaY < 5) {
-        onClose();
-      }
-    }
-    setMouseDownPos(null);
-  };
-
   return (
-    <div
-      className="modal-overlay"
-      onMouseDown={handleOverlayMouseDown}
-      onMouseUp={handleOverlayMouseUp}
+    <Modal
+      title={count === 1 ? t('migrate.moveTitle', { name: secretBaseName }) : t('migrate.moveTitlePlural', { count })}
+      onClose={onClose}
+      maxWidth="500px"
+      footer={(
+        <>
+          <button onClick={onClose} className="btn btn-secondary" type="button">
+            {t('migrate.cancel')}
+          </button>
+          <button
+            onClick={() => onConfirm(browsingPath)}
+            className="btn btn-primary"
+            type="button"
+            disabled={isSameFolder}
+            title={isSameFolder ? t('migrate.alreadyInFolder') : ''}
+          >
+            {t('migrate.move')}
+          </button>
+        </>
+      )}
     >
-      <div
-        className="modal-panel"
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: '500px' }}
-      >
-        <div className="modal-header">
-          <h2>{count === 1 ? t('migrate.moveTitle', { name: secretBaseName }) : t('migrate.moveTitlePlural', { count })}</h2>
-        </div>
-
-        <div className="modal-body">
           {/* Breadcrumb */}
           <div style={{
             display: 'flex',
@@ -126,11 +83,12 @@ export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onC
             fontSize: 'var(--text-sm)',
             color: 'var(--text-secondary)'
           }}>
-            <span style={{ marginRight: 'var(--sp-1)' }}>📍</span>
+            <span style={{ marginRight: 'var(--sp-1)' }} aria-hidden="true">📍</span>
             <button
               onClick={() => setBrowsingPath('')}
               className="btn-link"
               type="button"
+              aria-current={browsingPath ? undefined : 'location'}
               style={{
                 background: 'none',
                 border: 'none',
@@ -155,6 +113,7 @@ export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onC
                     onClick={() => setBrowsingPath(pathUpTo)}
                     className="btn-link"
                     type="button"
+                    aria-current={isLast ? 'location' : undefined}
                     style={{
                       background: 'none',
                       border: 'none',
@@ -189,7 +148,7 @@ export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onC
                 color: 'var(--text-tertiary)',
                 fontSize: 'var(--text-sm)'
               }}>
-                Aucun sous-dossier
+                {t('migrate.noSubfolders')}
               </div>
             ) : (
               subfolders.map(folder => {
@@ -222,11 +181,11 @@ export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onC
                       e.currentTarget.style.background = 'none';
                     }}
                   >
-                    <span>📁</span>
+                    <span aria-hidden="true">📁</span>
                     <span style={{ flex: 1 }}>{folder}</span>
                     {isCurrentFolder && (
                       <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}>
-                        (dossier actuel)
+                        {t('migrate.currentFolder')}
                       </span>
                     )}
                   </button>
@@ -246,7 +205,7 @@ export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onC
           }}>
             {count === 1 ? (
               <>
-                Destination : <code style={{
+                {t('migrate.destination')} <code style={{
                   background: 'var(--bg-surface-active)',
                   padding: '2px 6px',
                   borderRadius: 'var(--radius-sm)',
@@ -255,7 +214,7 @@ export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onC
               </>
             ) : (
               <>
-                Déplacer <strong>{count} entrées</strong> vers : <code style={{
+                {t('migrate.moveCountTo', { count })} <code style={{
                   background: 'var(--bg-surface-active)',
                   padding: '2px 6px',
                   borderRadius: 'var(--radius-sm)',
@@ -264,23 +223,6 @@ export default function MoveToFolderModal({ secretsToMove, secrets, onClose, onC
               </>
             )}
           </div>
-        </div>
-
-        <div className="modal-footer">
-          <button onClick={onClose} className="btn btn-secondary" type="button">
-            {t('migrate.cancel')}
-          </button>
-          <button
-            onClick={() => onConfirm(browsingPath)}
-            className="btn btn-primary"
-            type="button"
-            disabled={isSameFolder}
-            title={isSameFolder ? 'L\'entrée est déjà dans ce dossier' : ''}
-          >
-            {t('migrate.move')}
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

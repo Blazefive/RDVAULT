@@ -1,0 +1,252 @@
+{
+  "extName": {
+    "message": "Vault Autofill",
+    "description": "Extension name (brand, not translated)"
+  },
+  "extDescription": {
+    "message": "Form autofill and passkeys with RDVAULT (requires the desktop app)",
+    "description": "Extension description (Chrome Web Store, at most 132 characters)"
+  },
+  "popupStatusChecking": {
+    "message": "Checking...",
+    "description": "Popup: connection status being checked"
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "This extension requires the Vault desktop app to be running and connected.",
+    "description": "Popup: information box"
+  },
+  "popupDesktopUnavailable": {
+    "message": "Desktop app unavailable",
+    "description": "Popup status: the desktop app cannot be reached"
+  },
+  "popupDesktopNotConnected": {
+    "message": "Desktop app running but not connected",
+    "description": "Popup status: the desktop app runs but no user is connected"
+  },
+  "popupDesktopConnected": {
+    "message": "Desktop app connected",
+    "description": "Popup status: connected to the desktop app"
+  },
+  "popupUserLabel": {
+    "message": "User:",
+    "description": "Popup: label before the user name (a space is added after it)"
+  },
+  "popupServerLabel": {
+    "message": "Server:",
+    "description": "Popup: label before the server address (a space is added after it)"
+  },
+  "popupUnknown": {
+    "message": "Unknown",
+    "description": "Popup: unknown user name or server"
+  },
+  "popupAutofillActive": {
+    "message": "✓ Autofill active",
+    "description": "Popup: autofill is active"
+  },
+  "popupPairingPendingTitle": {
+    "message": "Confirm access in the RDVAULT app",
+    "description": "Popup status: pairing request waiting for approval in the desktop app"
+  },
+  "popupPairingPendingDetail": {
+    "message": "A pairing request was sent to RDVAULT. Accept it in the app (within 60 seconds) to enable autofill.",
+    "description": "Popup: explanation while the pairing request is pending"
+  },
+  "popupPairingDeniedTitle": {
+    "message": "Access denied in RDVAULT",
+    "description": "Popup status: pairing was denied in the desktop app"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "Pairing for this extension was denied in the app. You can send a new request in one minute.",
+    "description": "Popup: explanation after the pairing was denied"
+  },
+  "popupDisconnectedDetail": {
+    "message": "Start the desktop app and sign in to use autofill.",
+    "description": "Popup: how to enable autofill when the desktop app is not connected"
+  },
+  "autofillIconTitle": {
+    "message": "Autofill with RDVAULT",
+    "description": "Tooltip of the icon shown in login fields"
+  },
+  "autofillHeader": {
+    "message": "RDVAULT logins",
+    "description": "Autofill menu header (displayed in upper case)"
+  },
+  "autofillNoResults": {
+    "message": "No logins found for this site",
+    "description": "Autofill menu: no saved login matches this site"
+  },
+  "autofillUnnamed": {
+    "message": "Untitled",
+    "description": "Autofill menu: entry without a name"
+  },
+  "autofillNoUsername": {
+    "message": "(no username)",
+    "description": "Autofill menu: entry without a username"
+  },
+  "autofillLoading": {
+    "message": "Retrieving login...",
+    "description": "Autofill menu: the selected login is being retrieved"
+  },
+  "autofillFetchFailed": {
+    "message": "Could not retrieve the login",
+    "description": "Autofill menu: the selected login could not be retrieved"
+  },
+  "pkCreateTitle": {
+    "message": "Create a passkey for $HOST$",
+    "description": "Passkey window: creation request; $HOST$ is the site (relying party) domain",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "Create in RDVAULT",
+    "description": "Passkey window: button that creates the passkey in RDVAULT"
+  },
+  "pkGetTitle": {
+    "message": "Use your passkey for $HOST$",
+    "description": "Passkey window: sign-in request; $HOST$ is the site (relying party) domain",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "Use my RDVAULT passkey",
+    "description": "Passkey window: button that signs in with the RDVAULT passkey"
+  },
+  "pkChooseAccount": {
+    "message": "choose the account",
+    "description": "Passkey window: several accounts, the user must pick one (shown after a dash)"
+  },
+  "pkUseAnotherDevice": {
+    "message": "Use another device",
+    "description": "Passkey window: hand over to the browser's own authenticator (Windows Hello, security key, phone)"
+  },
+  "pkCancel": {
+    "message": "Cancel",
+    "description": "Passkey window: cancel button"
+  },
+  "pkBlockedWarning": {
+    "message": "Action blocked: the RDVAULT window is hidden or covered by the page. Use “$OTHER$” or “$CANCEL$”.",
+    "description": "Passkey window: anti-clickjacking warning; $OTHER$ and $CANCEL$ are the two button labels",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "Unnamed account",
+    "description": "Passkey window: account without a name"
+  },
+  "pkCreatedOn": {
+    "message": "created on $DATE$",
+    "description": "Passkey window: creation date of a passkey; $DATE$ is formatted by the browser",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "Login not found for this site",
+    "description": "Error: the selected login does not exist for this site"
+  },
+  "bgErrHttp": {
+    "message": "HTTP error $STATUS$",
+    "description": "Error: HTTP status returned by the desktop app; $STATUS$ is the numeric code",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "Invalid response",
+    "description": "Error: unexpected reply from the desktop app"
+  },
+  "bgErrCommunication": {
+    "message": "Error communicating with RDVAULT",
+    "description": "Error: the desktop app could not be reached"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "Invalid key name",
+    "description": "Error: invalid TOTP key name"
+  },
+  "bgErrInvalidCode": {
+    "message": "Invalid code",
+    "description": "Error: invalid TOTP code"
+  },
+  "bgErrTotp": {
+    "message": "TOTP error",
+    "description": "Error: the TOTP code could not be obtained"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "invalid passkey",
+    "description": "Error: malformed passkey (internal)"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId not allowed",
+    "description": "Error: the passkey domain (rpId) does not match the tab"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "Vault unavailable",
+    "description": "Error: the RDVAULT vault cannot be reached"
+  },
+  "bgErrInsecureSender": {
+    "message": "Not allowed from an insecure page",
+    "description": "Error: request sent from a page that is not served over HTTPS"
+  },
+  "bgErrInternal": {
+    "message": "Internal error",
+    "description": "Error: unexpected internal error"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "Tab URL required",
+    "description": "Error: the tab address is missing (internal)"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "Unsupported message type",
+    "description": "Error: unknown internal message"
+  },
+  "bgErrInsecurePage": {
+    "message": "Insecure page",
+    "description": "Error: the page is not served over HTTPS"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT unavailable or locked",
+    "description": "Error: RDVAULT is closed, locked or busy"
+  },
+  "bgErrNameRequired": {
+    "message": "Secret name required",
+    "description": "Error: the request does not name the secret to read"
+  },
+  "bgErrInvalidCredential": {
+    "message": "Invalid credential",
+    "description": "Error: malformed login (internal)"
+  },
+  "bgErrSaveCredential": {
+    "message": "Error saving credential",
+    "description": "Error: the last used login could not be remembered (internal)"
+  },
+  "bgErrReadCredential": {
+    "message": "Error reading credential",
+    "description": "Error: the last used login could not be read (internal)"
+  },
+  "bgErrClearCredential": {
+    "message": "Error deleting credential",
+    "description": "Error: the last used login could not be forgotten (internal)"
+  }
+}

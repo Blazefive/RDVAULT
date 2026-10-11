@@ -1,241 +1,134 @@
-# Extension Chrome Vault - Instructions
+# Extension Chrome Vault — Instructions (version enrichie)
 
-## 🎯 Concept
+## Concept
 
-L'extension Chrome est maintenant une **extension pure du client Desktop**. Elle ne fonctionne **que si le client Desktop est lancé et connecté**.
-
-### Architecture
+L'extension `vault-autofill-extension/` est une **extension du client Desktop RDVAULT** : elle ne fonctionne
+que si le Desktop est lancé et l'utilisateur connecté à Vault. Le token Vault reste dans le Desktop ; l'extension
+ne dialogue qu'avec le serveur local `http://127.0.0.1:45678`.
 
 ```
-┌─────────────────────┐
-│  Client Desktop     │
-│  (Electron)         │
-│                     │
-│  ✓ Connexion Vault  │
-│  ✓ Gestion secrets  │
-│  ✓ Serveur HTTP     │
-│     (port 45678)    │
-└──────────┬──────────┘
-           │
-           │ HTTP API
-           │
-┌──────────▼──────────┐
-│ Extension Chrome    │
-│                     │
-│  ✓ Détection forms  │
-│  ✓ Auto-remplissage │
-│  ✓ Affiche statut   │
-└─────────────────────┘
+┌─────────────────────┐        HTTP local (127.0.0.1:45678)        ┌─────────────────────┐
+│  Client Desktop     │ ◄──────────────────────────────────────── │ Extension Chrome    │
+│  (Electron)         │   Origin: chrome-extension://<id>          │                     │
+│  - Connexion Vault  │   Authorization: Bearer <token>            │ - Détection forms   │
+│  - Filtrage par site│ ──────────────────────────────────────►   │ - Auto-remplissage  │
+│  - Appairage        │   JSON                                     │ - Popup de statut   │
+└─────────────────────┘                                            └─────────────────────┘
 ```
 
-## 📋 Installation
+## Installation
 
-### 1. Préparer le Client Desktop
+### 1. Lancer le client Desktop
+
+Depuis la racine du projet :
 
 ```bash
-cd C:\Users\rdekien\OneDrive - Groupe Profession Santé\Documents\VAULT
-
-# Construire l'application React
-npm run build
-
-# Lancer l'application Desktop
-npm run electron
+npm run build      # construit l'application React
+npm run electron   # lance l'application Desktop
 ```
 
-### 2. Charger l'Extension Chrome
+Connectez-vous à Vault dans le Desktop.
 
-1. Ouvrez Chrome et allez à : `chrome://extensions/`
-2. Activez le **Mode développeur** (coin supérieur droit)
-3. Cliquez sur **Charger l'extension non empaquetée**
-4. Sélectionnez le dossier :
-   ```
-   C:\Users\rdekien\OneDrive - Groupe Profession Santé\Documents\VAULT\chrome-extension\vault-autofill-extension
-   ```
-5. L'extension "Vault Autofill" devrait apparaître
+### 2. Charger l'extension
 
-## ✅ Test de Fonctionnement
+1. Ouvrez `chrome://extensions/`
+2. Activez le **Mode développeur**
+3. **Charger l'extension non empaquetée** → dossier `chrome-extension/vault-autofill-extension` du projet
+4. L'extension « Vault Autofill » apparaît
 
-### Test 1 : Vérifier le Statut de Connexion
+### 3. Appairer l'extension
 
-1. **Ouvrez le popup de l'extension** (cliquez sur l'icône dans Chrome)
-2. **Sans Desktop lancé** :
-   - 🔴 Icône rouge
-   - Texte : "Desktop non disponible"
-   - Message : "Lancez l'application Desktop..."
+À la première demande de token, le Desktop affiche une boîte de dialogue identifiant l'extension par son ID
+(`chrome-extension://<id>`). Vous avez **60 secondes** pour accepter.
 
-3. **Lancez le Desktop** mais ne vous connectez pas
-   - 🔴 Icône rouge
-   - Texte : "Desktop démarré mais non connecté"
+- Popup pendant l'attente : **« Confirmez l'accès dans l'application RDVAULT »**
+- Refus : **« Accès refusé dans RDVAULT »** (nouvelle demande possible après une minute)
+- Desktop redémarré : l'appairage est perdu, le serveur répond `403 pairing_required` et l'extension redemande
+  automatiquement un appairage
 
-4. **Connectez-vous dans le Desktop**
-   - 🟢 Icône verte avec effet lumineux
-   - Texte : "Desktop connecté"
-   - Affiche : Utilisateur et serveur Vault
-   - Message : "✓ Auto-remplissage actif"
+## Contrat du serveur sync (127.0.0.1:45678)
 
-### Test 2 : Auto-remplissage
+Tous les endpoints exigent l'identification de l'extension : en-tête `X-Vault-Extension-Id: <id>` (32 lettres a–p, envoyé par `auth-manager.js` via `chrome.runtime.id`) ou en-tête `Origin: chrome-extension://<id>` quand Chrome l'envoie. Sinon `403`. Note : Chrome n'envoie pas d'en-tête `Origin` vers les hôtes couverts par `host_permissions`, d'où l'en-tête dédié.
 
-1. **Dans le Desktop**, créez un secret :
-   - Nom : `test-github`
-   - Username : `monuser@example.com`
-   - Password : `MonMotDePasse123`
-   - Website : `github.com` ⚠️ **Important : remplir ce champ !**
+| Endpoint | Authentification | Réponse |
+|---|---|---|
+| `GET /auth/token` | `X-Vault-Extension-Id` (ou `Origin`) + `X-Vault-Extension: rdvault` | `200 {token}` ; `403 {error:'pairing_denied'}` ; `503 {error:'Token not ready'}`. Déclenche la boîte de dialogue d'appairage à la première demande (jusqu'à 60 s : l'extension attend 65 s) |
+| `GET /sync` | Bearer + extension appairée | `{connected, vaultUrl, username, timestamp}` — **sans token Vault** ; `{connected:false}` si non connecté |
+| `GET /api/secrets?host=<hostname>` | Bearer + appairée | `{success:true, secrets:[{name, engine, username, url, type}]}` — **sans mot de passe ni notes** ; `host` obligatoire (`400` sinon) ; filtrage par hostname côté Desktop |
+| `GET /api/secret?host=&engine=&name=` | Bearer + appairée | `{success:true, secret:{name, engine, username, password, url, type}}` ; `404` si le secret ne correspond pas au site |
+| `GET /api/totp/<keyName>` | Bearer + appairée | `{success:true, code}` |
 
-2. **Allez sur** : `https://github.com/login`
+Erreurs communes : `403 {error:'pairing_required'}` (extension non appairée → redemander `/auth/token`),
+`401` (token manquant/invalide, ou Desktop non connecté à Vault).
 
-3. **Vérifiez** :
-   - Un logo "V" bleu devrait apparaître sur le champ password
-   - Cliquez dessus
-   - Sélectionnez votre credential
-   - Les champs username et password sont remplis automatiquement
+### Matching site ↔ secrets (côté Desktop)
 
-### Test 3 : Matching d'URL
-
-L'extension match les URLs de manière intelligente :
+Le `host` transmis est toujours le hostname de l'onglet (`sender.tab.url`), jamais une valeur fournie par la page.
+Le Desktop compare ce hostname aux champs `URL` / `Website` des secrets :
 
 | Website dans Vault | URL visitée | Match ? |
-|-------------------|-------------|---------|
-| `github.com` | `https://github.com/login` | ✅ |
-| `github.com` | `https://www.github.com` | ✅ |
-| `google.com` | `https://accounts.google.com` | ✅ |
-| `example.org` | `https://example.com` | ❌ |
+|---|---|---|
+| `github.com` | `https://github.com/login` | Oui |
+| `github.com` | `https://www.github.com` | Oui (sous-domaine) |
+| `accounts.google.com` | `https://accounts.google.com` | Oui (exact) |
+| `accounts.google.com` | `https://mail.google.com` | Non |
+| `example.org` | `https://example.com` | Non |
+| `github.io` (suffixe public) | `https://projet.github.io` | Non |
 
-### Test 4 : Déconnexion
+## Tests de fonctionnement
 
-1. **Dans le Desktop**, cliquez sur **Se déconnecter**
-2. **Vérifiez l'extension** :
-   - Le statut passe à "Desktop démarré mais non connecté"
-   - L'icône devient rouge
-   - L'auto-remplissage ne fonctionne plus
+Les textes sont cités en français : l'extension s'affiche dans la langue du navigateur
+(12 langues, anglais par défaut ; voir « Langues » dans `vault-autofill-extension/README.md`).
+Pour la voir en français, choisissez le français comme langue de Chrome (ou lancez Chrome avec `--lang=fr`).
 
-## 🔧 Débogage
+### Test 1 — Statut de connexion (popup)
 
-### Vérifier l'API Desktop
+| Situation | Icône | Texte |
+|---|---|---|
+| Desktop non lancé | rouge | « Desktop non disponible » |
+| Desktop lancé, appairage en attente | orange | « Confirmez l'accès dans l'application RDVAULT » |
+| Appairage refusé | rouge | « Accès refusé dans RDVAULT » |
+| Desktop lancé, non connecté à Vault | rouge | « Desktop démarré mais non connecté » |
+| Desktop connecté | verte | « Desktop connecté » + utilisateur et serveur |
 
-Ouvrez dans un navigateur : `http://127.0.0.1:45678/sync`
+Le popup interroge le background toutes les 10 s (2 s pendant l'appairage).
 
-**Connecté** :
-```json
-{
-  "connected": true,
-  "vaultUrl": "http://192.168.1.15:8200",
-  "token": "hvs.CAES...",
-  "username": "votre-username",
-  "timestamp": 1234567890
-}
-```
+### Test 2 — Auto-remplissage
 
-**Déconnecté** :
-```json
-{
-  "connected": false
-}
-```
+1. Dans le Desktop, créez un secret : nom `test-github`, username `monuser@example.com`, un mot de passe,
+   **Website : `github.com`**
+2. Ouvrez `https://github.com/login`
+3. Une icône « V » apparaît sur le champ mot de passe ; cliquez, sélectionnez l'entrée : les champs sont remplis.
+   Le mot de passe n'est demandé au Desktop (`/api/secret`) qu'à ce moment.
 
-### Console de l'Extension
+### Test 3 — TOTP
 
-1. Clic droit sur l'icône de l'extension → **Inspecter la fenêtre contextuelle**
-2. Onglet **Console** pour voir les erreurs
+Si un champ code est détecté après le remplissage (même page ou page suivante, dans les 5 minutes), l'extension
+demande `GET /api/totp/<ENGINE>-<nom>` au Desktop et remplit le code.
 
-### Console du Content Script
+### Test 4 — Déconnexion
 
-1. Sur une page web, appuyez sur **F12**
-2. Onglet **Console**
-3. Recherchez les messages commençant par `[Vault Autofill]`
+Déconnectez-vous dans le Desktop : le popup passe à « Desktop démarré mais non connecté » et
+`/api/secrets` répond `401`.
 
-## 📝 Fichiers Modifiés
+## Débogage
 
-### Extension Chrome
+- Service worker : `chrome://extensions/` → « Inspecter les vues : service worker »
+- Popup : clic droit sur l'icône → « Inspecter la fenêtre contextuelle »
+- Content script : `F12` sur la page → Console (messages `[Vault …]`)
+- API : `http://127.0.0.1:45678/sync` répond `403` depuis un navigateur (Origin non extension) — c'est normal
 
-- ✅ `popup.html` - Interface simplifiée (statut uniquement)
-- ✅ `popup.js` - Vérifie la connexion Desktop toutes les 2s
-- ✅ `background.js` - Récupère les secrets via API Desktop
-- ✅ `manifest.json` - Permissions minimales (plus de storage)
-- ✅ `content.js` - Inchangé (détection et auto-remplissage)
+## Problèmes connus
 
-### Client Desktop
+**« Extension context invalidated »** : l'extension a été rechargée ; rechargez les pages ouvertes.
 
-- ✅ `electron/main.js` - Ajout endpoint `/api/secrets`
-- ✅ `electron/preload.js` - Ajout API IPC pour secrets
-- ✅ `src/App.jsx` - Gestionnaire IPC pour fournir secrets
+**Le logo « V » n'apparaît pas** : Desktop connecté ? Secret avec `Website` / `URL` correspondant ? Page en https ?
+Champ mot de passe visible ? Formulaire hors iframe (le script n'est pas injecté dans les frames) ?
 
-## ⚡ Avantages de cette Architecture
+**« Desktop non disponible »** : Desktop lancé ? Port 45678 libre ?
 
-1. **Sécurité** : Le token Vault reste dans le Desktop, jamais dans le navigateur
-2. **Simplicité** : Pas de gestion d'authentification dans l'extension
-3. **Synchronisation** : Toujours à jour avec le Desktop (pas de cache)
-4. **Moins de permissions** : L'extension n'a plus besoin de `storage` ni `alarms`
-5. **UX cohérente** : Une seule connexion dans le Desktop
+## Permissions de l'extension
 
-## 🚨 Limitations
-
-- **L'extension ne fonctionne PAS sans le Desktop**
-- Le Desktop doit rester lancé pour l'auto-remplissage
-- Fonctionne uniquement sur `localhost` (127.0.0.1:45678)
-
-## 🐛 Problèmes Connus
-
-### "Extension context invalidated"
-
-**Cause** : L'extension a été rechargée
-
-**Solution** : Fermez et rouvrez les pages web où l'extension est active
-
-### Le logo "V" n'apparaît pas
-
-**Vérifications** :
-1. ✅ Desktop lancé et connecté ?
-2. ✅ Secret a un champ "Website" rempli ?
-3. ✅ Le Website correspond à l'URL actuelle ?
-4. ✅ Console (F12) : erreurs JavaScript ?
-
-### "Desktop non disponible"
-
-**Vérifications** :
-1. ✅ Desktop lancé avec `npm run electron` ?
-2. ✅ Port 45678 libre ? (pas d'autre instance)
-3. ✅ `http://127.0.0.1:45678/sync` répond ?
-
-## 💡 Conseils d'Utilisation
-
-### Organisation des Secrets
-
-Utilisez le champ **Website** pour tous vos secrets :
-
-```
-Nom      : github-account
-Username : user@example.com
-Password : ********
-Website  : github.com          ← Important !
-URL      : https://github.com  ← Optionnel
-Notes    : Compte principal
-```
-
-### Domaines vs Sous-domaines
-
-Le matching est flexible :
-
-- `github.com` → match `github.com`, `www.github.com`, `gist.github.com`
-- `accounts.google.com` → match uniquement `accounts.google.com`
-
-### Workflow Recommandé
-
-1. Gardez le Desktop **toujours ouvert** pendant votre session
-2. Créez vos secrets dans le Desktop
-3. Naviguez normalement, l'extension propose automatiquement les credentials
-4. Déconnectez-vous du Desktop à la fin de votre session
-
-## 📞 Support
-
-Si l'extension ne fonctionne pas :
-
-1. Vérifiez la console du Desktop (erreurs Electron)
-2. Vérifiez la console de l'extension (F12 sur popup)
-3. Testez l'API manuellement : `http://127.0.0.1:45678/sync`
-4. Rechargez l'extension dans `chrome://extensions/`
-
----
-
-**Version** : 1.0.0
-**Date** : 2025
-**Auteur** : Assistant Claude
+`storage` (token de session, dernier identifiant pour le TOTP sans mot de passe), `alarms` (vérification du token
+toutes les minutes), `host_permissions: http://127.0.0.1:45678/*`. Content script sur `https://*/*` uniquement,
+`all_frames: false`.

@@ -2,6 +2,69 @@ import { buildSafeUrl, sanitizeErrorMessage, safeWindowOpen } from './security';
 import secureLogger from '../secureLogger';
 
 /**
+ * Détecte une URL SSH de manière robuste (via new URL(), pas de includes(':22')
+ * qui matchait aussi "https://host:2222" ou "http://host/path:22x").
+ * - schéma ssh:// → SSH
+ * - schéma explicite (http://, ftp://…) avec port === '22' → SSH
+ * - forme "host:22" / "user@host:22" sans schéma → parsée comme ssh://host:22
+ *
+ * @param {string} rawUrl
+ * @returns {boolean}
+ */
+export function isSshUrl(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') return false;
+  const value = rawUrl.trim();
+  if (!value) return false;
+
+  // 1) URL avec schéma explicite (ssh://, https://, ftp://…)
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol === 'ssh:') return true;
+      return parsed.port === '22';
+    } catch {
+      return false;
+    }
+  }
+
+  // 2) Forme host:port sans schéma → interprétée comme ssh://host:port
+  try {
+    const parsed = new URL(`ssh://${value}`);
+    return parsed.port === '22';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Message d'échec d'une session RBI : motif traduit quand le processus principal renvoie un code
+ * stable (RBI_FOREIGN_ORIGIN : page de connexion hors du domaine de l'entrée), sinon le texte
+ * renvoyé ou le message générique.
+ *
+ * @param {{ error?: string, code?: string }} result
+ * @param {Function} t
+ * @returns {string}
+ */
+export function rbiLaunchErrorMessage(result, t) {
+  if (result && result.code === 'RBI_FOREIGN_ORIGIN') return t('error.rbiForeignOrigin');
+  return (result && result.error) || t('error.rbiLaunch');
+}
+
+/**
+ * Champ « website » de l'entrée pour window.electronRBI.launchSession (RBI-11) : seconde adresse de
+ * référence pour la saisie, comme dans l'extension (url OU website). Le processus principal le valide
+ * (nom d'hôte, longueur, caractères de contrôle) et ne l'ouvre jamais : l'URL de lancement reste `url`.
+ * Champ absent, vide ou non textuel : aucune option (sans effet sur la session).
+ *
+ * @param {Object|null|undefined} source - Entrée (ou partage reçu) portant éventuellement `website`
+ * @returns {{ website?: string }}
+ */
+export function rbiWebsiteOption(source) {
+  const website = source && typeof source.website === 'string' ? source.website.trim() : '';
+  return website ? { website } : {};
+}
+
+/**
  * handleUrlAction — route URL clicks to the appropriate handler
  * (SSH, RDP, SFTP, UNC/local paths, FTP/Telnet/VNC, HTTP/HTTPS, RBI-only)
  *
@@ -18,7 +81,7 @@ export async function handleUrlAction(url, secret, {
   t
 }) {
   const urlLower = url.toLowerCase();
-  const isSsh = urlLower.startsWith('ssh://') || urlLower.includes(':22');
+  const isSsh = isSshUrl(url);
   const isUncPath = url.startsWith('\\\\') || url.startsWith('//');
   const isLocalPath = /^[a-zA-Z]:\\/.test(url);
   const isWindowsPath = isUncPath || isLocalPath;
@@ -41,7 +104,7 @@ export async function handleUrlAction(url, secret, {
         showToast(t('error.explorerUnavailable'), 'error');
       }
     } catch (err) {
-      showToast(`${t('error.explorerOpen')} ${sanitizeErrorMessage(err)}`, 'error');
+      showToast(`${t('error.explorerOpen')} ${sanitizeErrorMessage(err, undefined, t)}`, 'error');
     }
     return;
   }
@@ -89,7 +152,8 @@ export async function handleUrlAction(url, secret, {
 
         if (result.success) {
           if (secret.password) {
-            await startClipboardTimer('Password (SSH)', secret.password);
+            // Libellé du minuteur traduit (I18N-32) ; « SSH » / « RDP » ne se traduisent pas
+            await startClipboardTimer(`${t('table.password')} (SSH)`, secret.password);
           }
         } else {
           showToast(result.error || t('error.sshOpen'), 'error');
@@ -98,7 +162,7 @@ export async function handleUrlAction(url, secret, {
         showToast(t('error.sshUnavailable'), 'error');
       }
     } catch (err) {
-      showToast(`${t('error.sshOpen')} ${sanitizeErrorMessage(err)}`, 'error');
+      showToast(`${t('error.sshOpen')} ${sanitizeErrorMessage(err, undefined, t)}`, 'error');
     }
     return;
   }
@@ -129,13 +193,13 @@ export async function handleUrlAction(url, secret, {
 
         if (result.success) {
           if (secret.password) {
-            await startClipboardTimer('Password (RDP)', secret.password);
+            await startClipboardTimer(`${t('table.password')} (RDP)`, secret.password);
           }
         } else {
           showToast(result.error || t('error.rdpOpen'), 'error');
         }
       } catch (err) {
-        showToast(`${t('error.rdpOpen')} ${sanitizeErrorMessage(err)}`, 'error');
+        showToast(`${t('error.rdpOpen')} ${sanitizeErrorMessage(err, undefined, t)}`, 'error');
       }
     } else {
       showToast(t('error.rdpUnavailable'), 'error');
@@ -173,7 +237,7 @@ export async function handleUrlAction(url, secret, {
           showToast(result.error || t('error.sftpOpen'), 'error');
         }
       } catch (err) {
-        showToast(`${t('error.sftpOpen')} ${sanitizeErrorMessage(err)}`, 'error');
+        showToast(`${t('error.sftpOpen')} ${sanitizeErrorMessage(err, undefined, t)}`, 'error');
       }
     } else {
       showToast(t('error.sftpOpen'), 'error');
@@ -221,6 +285,8 @@ export async function handleUrlAction(url, secret, {
     }
     const result = await window.electronRBI.launchSession({
       url: safeUrl,
+      // Adresse « website » de l'entrée : saisie autorisée aussi sur cet hôte (RBI-11)
+      ...rbiWebsiteOption(secret),
       username: secret.username,
       password: secret.password,
       totp: totpCode,
@@ -234,7 +300,7 @@ export async function handleUrlAction(url, secret, {
     if (result.success) {
       showToast(t('toast.rbiOpened'), 'success', 3000);
     } else {
-      showToast(result.error || t('error.rbiLaunch'), 'error');
+      showToast(rbiLaunchErrorMessage(result, t), 'error');
     }
   } else if (window.electronBrowser?.openUrl) {
     await window.electronBrowser.openUrl(safeUrl, 'default');

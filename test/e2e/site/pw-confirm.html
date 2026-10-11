@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Vos informations</title></head>
+<body>
+<h1>Vos informations</h1>
+<!-- Garde-fou : inscription « mot de passe + confirmation » SANS indicateur (id, nom, action,
+     autocomplete ; d'où le nom du fichier, sans « signup »). La confirmation est sous la ligne
+     de flottaison (hors de la fenêtre, mais présente) : elle doit toujours compter, le
+     formulaire n'est pas une connexion. -->
+<form id="f" onsubmit="return false">
+  <label>E-mail <input type="email" id="se" name="email"></label><br>
+  <label>Mot de passe <input type="password" id="sp1" name="pw1"></label><br>
+  <div style="height:1600px"></div>
+  <label>Confirmez le mot de passe <input type="password" id="sp2" name="pw2"></label><br>
+  <button type="button" id="go">Valider</button>
+</form>
+</body></html>

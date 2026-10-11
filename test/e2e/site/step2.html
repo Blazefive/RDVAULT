@@ -1,0 +1,6 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Connexion étape 2</title></head>
+<body><h1>Connexion — étape 2 (mot de passe, PAGE séparée)</h1>
+<form id="f" onsubmit="return false;">
+  <label>Mot de passe <input type="password" name="password" id="p" autocomplete="current-password"></label>
+  <button type="button" id="go" onclick="fetch('/submit',{method:'POST',body:JSON.stringify({page:'step2',password:document.getElementById('p').value})})">Se connecter</button>
+</form></body></html>

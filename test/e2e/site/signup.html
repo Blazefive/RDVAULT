@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Create account</title></head>
+<body>
+<h1>Create account (ne doit PAS déclencher l'autofill de connexion)</h1>
+<!-- autocomplete="new-password" = création de compte. L'extension ne doit pas y
+     proposer les identifiants de connexion. -->
+<form id="register" action="/submit" method="post" onsubmit="return false">
+  <label>Email <input type="email" name="email" autocomplete="email"></label><br>
+  <label>Nouveau mot de passe <input type="password" name="new_password" autocomplete="new-password"></label><br>
+  <button type="button">S'inscrire</button>
+</form>
+</body></html>

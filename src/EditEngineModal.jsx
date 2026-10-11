@@ -15,13 +15,14 @@
 // - Description optionnelle
 // - État de chargement pendant la requête réseau
 //
-// Comportement :
+// Comportement (squelette commun Modal) :
 // - Escape pour fermer (sauf pendant le chargement)
 // - Clic hors modal pour fermer (sauf pendant le chargement)
 // - Focus automatique sur le champ "Chemin" à l'ouverture
 
 import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from './i18n';
+import Modal from './components/common/Modal';
 
 /**
  * Modal de création d'un nouveau secret engine (coffre)
@@ -36,16 +37,8 @@ export default function EditEngineModal({ onClose, onCreate, isAdmin }) {
   // Détecte le username pour suggérer le préfixe self-service (sauf pour les admins)
   const username = localStorage.getItem('vault-client.username') || '';
   const userPrefix = username && !isAdmin ? `users/${username}/` : '';
-  const showUserPrefix = !isAdmin && username; // Afficher l'info uniquement pour les non-admins
 
   useEffect(() => { pathRef.current?.focus(); }, []);
-
-  // Fermer sur ESC (sans gêner la saisie)
-  useEffect(() => {
-    const onKey = (e) => { if (!loading && e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose, loading]);
 
   const handleCreate = async () => {
     if (loading) return;
@@ -71,51 +64,12 @@ export default function EditEngineModal({ onClose, onCreate, isAdmin }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={() => !loading && onClose()}>
-      <div className="modal-panel" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>{t('engine.newEngine')}</h2>
-        </div>
-
-        <div className="modal-body">
-          <div className="form-group-vertical">
-            <label className="modal-label">{t('engine.path')}</label>
-            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-              <input
-                ref={pathRef}
-                className="modal-input"
-                style={{
-                  marginBottom: 0
-                }}
-                placeholder={isAdmin ? t('engine.placeholderAdmin') : t('engine.placeholderUser')}
-                defaultValue=""
-                autoComplete="off"
-                disabled={loading}
-              />
-            </div>
-            {isAdmin && (
-              <div className="info-box">
-                <div className="info-box-title">{t('engine.adminMode')}</div>
-                <div className="info-box-content">
-                  🛡️ {t('engine.adminModeDesc')}
-                </div>
-              </div>
-            )}
-          </div>
-
-
-          <div className="form-group-vertical">
-            <label className="modal-label">{t('engine.description')}</label>
-            <textarea
-              ref={descRef}
-              className="modal-textarea"
-              placeholder={t('engine.placeholderDesc')}
-              disabled={loading}
-            />
-          </div>
-        </div>
-
-        <div className="modal-footer">
+    <Modal
+      title={t('engine.newEngine')}
+      onClose={onClose}
+      disableClose={loading}
+      footer={(
+        <>
           <button
             type="button"
             onClick={onClose}
@@ -132,8 +86,43 @@ export default function EditEngineModal({ onClose, onCreate, isAdmin }) {
           >
             {loading ? t('engine.creating') : t('engine.create')}
           </button>
+        </>
+      )}
+    >
+      <div className="form-group-vertical">
+        <label className="modal-label">{t('engine.path')}</label>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <input
+            ref={pathRef}
+            className="modal-input"
+            style={{
+              marginBottom: 0
+            }}
+            placeholder={isAdmin ? t('engine.placeholderAdmin') : t('engine.placeholderUser')}
+            defaultValue=""
+            autoComplete="off"
+            disabled={loading}
+          />
         </div>
+        {isAdmin && (
+          <div className="info-box">
+            <div className="info-box-title">{t('engine.adminMode')}</div>
+            <div className="info-box-content">
+              🛡️ {t('engine.adminModeDesc')}
+            </div>
+          </div>
+        )}
       </div>
-    </div>
+
+      <div className="form-group-vertical">
+        <label className="modal-label">{t('engine.description')}</label>
+        <textarea
+          ref={descRef}
+          className="modal-textarea"
+          placeholder={t('engine.placeholderDesc')}
+          disabled={loading}
+        />
+      </div>
+    </Modal>
   );
 }

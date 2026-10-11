@@ -2,81 +2,58 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: Build & Verify
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm install --no-audit
-
-      - name: Build React
-        run: npx react-scripts build
-
-  security:
-    name: Security Scan
+  # Tests rapides (logique pure, pas d'Electron) sur Linux
+  unit:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      - name: Install dependencies
-        run: npm install --no-audit
-
-      - name: Audit dependencies
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Audit des dépendances (non bloquant)
         run: npm audit --omit=dev || true
+      - name: Tests React (Jest)
+        run: npm run test:react
+      - name: Tests unitaires Electron (crypto, hostMatch, …)
+        run: npm run test:electron
+      - name: Tests passkeys (moteur FIDO2)
+        run: npm run test:passkey
+      - name: Générer le SBOM
+        run: npm run sbom
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
 
-  build-installer:
-    name: Build Installer
+  # Build + tests de fumée Electron sur Windows (cible principale)
+  windows:
     runs-on: windows-latest
-    needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      - name: Install dependencies
-        run: npm install --no-audit
-
+      - name: Install
+        run: npm ci
       - name: Build React
-        run: npx react-scripts build
-
-      - name: Build Windows installer
-        run: npx electron-builder --win --config electron-builder.json
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload installer
-        uses: actions/upload-artifact@v4
-        with:
-          name: RDVAULT-Setup
-          path: dist/*.exe
-          retention-days: 30
+          CI: false # avertissements lint préexistants non traités comme erreurs
+          GENERATE_SOURCEMAP: false
+        run: npm run build
+      - name: Tests de fumée (coffre local, sync, adversarial, ssh+winrm — userData temporaire)
+        run: npm run test:smoke

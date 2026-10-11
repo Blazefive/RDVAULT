@@ -4,6 +4,7 @@ node_modules/
 # Build output
 build/
 dist/
+sbom.json
 
 # Local config (contains real URLs/IPs)
 config.cfg

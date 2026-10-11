@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "Auto-remplissage de formulaires avec HashiCorp Vault"
+  },
+  "popupLoading": {
+    "message": "Chargement..."
+  },
+  "popupVaultUrlLabel": {
+    "message": "URL Vault"
+  },
+  "popupNamespaceLabel": {
+    "message": "Namespace (optionnel)"
+  },
+  "popupNamespacePlaceholder": {
+    "message": "Laisser vide si non utilisé"
+  },
+  "popupUsernameLabel": {
+    "message": "Utilisateur LDAP"
+  },
+  "popupUsernamePlaceholder": {
+    "message": "Nom d'utilisateur"
+  },
+  "popupPassword": {
+    "message": "Mot de passe"
+  },
+  "popupLoginButton": {
+    "message": "Se connecter"
+  },
+  "popupConnectedAs": {
+    "message": "Connecté en tant que"
+  },
+  "popupRefreshButton": {
+    "message": "Actualiser le cache"
+  },
+  "popupLogoutButton": {
+    "message": "Se déconnecter"
+  },
+  "popupDefaultUser": {
+    "message": "Utilisateur"
+  },
+  "popupFillRequired": {
+    "message": "Veuillez remplir tous les champs obligatoires"
+  },
+  "popupLoggingIn": {
+    "message": "Connexion..."
+  },
+  "popupLoginSuccess": {
+    "message": "Connexion réussie"
+  },
+  "popupLogoutSuccess": {
+    "message": "Déconnexion réussie"
+  },
+  "popupRefreshing": {
+    "message": "Actualisation..."
+  },
+  "popupCacheRefreshed": {
+    "message": "Cache actualisé ($COUNT$ secrets)",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "42"
+      }
+    }
+  },
+  "popupError": {
+    "message": "Erreur : $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Authentication failed"
+      }
+    }
+  },
+  "autofillIconTitle": {
+    "message": "Auto-remplir avec Vault"
+  },
+  "autofillHeader": {
+    "message": "Identifiants Vault"
+  },
+  "autofillNoResults": {
+    "message": "Aucun identifiant trouvé pour ce site"
+  },
+  "autofillUnnamed": {
+    "message": "Sans nom"
+  },
+  "autofillNoUsername": {
+    "message": "(pas de username)"
+  },
+  "autofillLoading": {
+    "message": "Récupération de l'identifiant..."
+  },
+  "autofillFetchFailed": {
+    "message": "Impossible de récupérer l'identifiant"
+  },
+  "bgErrUnauthorizedSource": {
+    "message": "Source non autorisée"
+  },
+  "bgErrInsecurePage": {
+    "message": "Page non sécurisée"
+  },
+  "bgErrNameRequired": {
+    "message": "Nom de secret requis"
+  },
+  "bgErrNotFound": {
+    "message": "Identifiant introuvable pour ce site"
+  },
+  "bgErrInvalidVaultUrl": {
+    "message": "URL Vault invalide (https obligatoire)"
+  },
+  "bgErrAuthFailed": {
+    "message": "Authentification échouée"
+  },
+  "bgErrInternal": {
+    "message": "Erreur interne"
+  }
+}

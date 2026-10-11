@@ -47,6 +47,10 @@
     .status-icon.disconnected {
       background: #ef4444;
     }
+    .status-icon.pending {
+      background: #f59e0b;
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+    }
     .status-text {
       font-size: 14px;
       font-weight: 500;
@@ -55,7 +59,7 @@
     .status-details {
       font-size: 13px;
       color: #6b7280;
-      padding-left: 20px;
+      padding-inline-start: 20px;
     }
     .status-details p {
       margin: 4px 0;
@@ -85,12 +89,12 @@
   <div id="statusCard" class="status-card">
     <div class="status-header">
       <div id="statusIcon" class="status-icon disconnected"></div>
-      <div id="statusText" class="status-text">Vérification...</div>
+      <div id="statusText" class="status-text" data-i18n="popupStatusChecking">Vérification...</div>
     </div>
     <div id="statusDetails" class="status-details"></div>
   </div>
 
-  <div class="info-box">
+  <div class="info-box" data-i18n="popupInfoRequiresDesktop">
     Cette extension nécessite que l'application Desktop Vault soit lancée et connectée.
   </div>
 

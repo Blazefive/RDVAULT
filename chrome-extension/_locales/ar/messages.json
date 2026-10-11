@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "التعبئة التلقائية للنماذج باستخدام HashiCorp Vault"
+  },
+  "popupLoading": {
+    "message": "جارٍ التحميل..."
+  },
+  "popupVaultUrlLabel": {
+    "message": "عنوان URL لـ Vault"
+  },
+  "popupNamespaceLabel": {
+    "message": "Namespace (اختياري)"
+  },
+  "popupNamespacePlaceholder": {
+    "message": "اتركه فارغًا إذا لم يكن مستخدمًا"
+  },
+  "popupUsernameLabel": {
+    "message": "مستخدم LDAP"
+  },
+  "popupUsernamePlaceholder": {
+    "message": "اسم المستخدم"
+  },
+  "popupPassword": {
+    "message": "كلمة المرور"
+  },
+  "popupLoginButton": {
+    "message": "تسجيل الدخول"
+  },
+  "popupConnectedAs": {
+    "message": "تم تسجيل الدخول باسم"
+  },
+  "popupRefreshButton": {
+    "message": "تحديث ذاكرة التخزين المؤقت"
+  },
+  "popupLogoutButton": {
+    "message": "تسجيل الخروج"
+  },
+  "popupDefaultUser": {
+    "message": "المستخدم"
+  },
+  "popupFillRequired": {
+    "message": "يرجى ملء جميع الحقول المطلوبة"
+  },
+  "popupLoggingIn": {
+    "message": "جارٍ تسجيل الدخول..."
+  },
+  "popupLoginSuccess": {
+    "message": "تم تسجيل الدخول بنجاح"
+  },
+  "popupLogoutSuccess": {
+    "message": "تم تسجيل الخروج بنجاح"
+  },
+  "popupRefreshing": {
+    "message": "جارٍ التحديث..."
+  },
+  "popupCacheRefreshed": {
+    "message": "تم تحديث ذاكرة التخزين المؤقت ($COUNT$ من الأسرار)",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "42"
+      }
+    }
+  },
+  "popupError": {
+    "message": "خطأ: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Authentication failed"
+      }
+    }
+  },
+  "autofillIconTitle": {
+    "message": "التعبئة التلقائية باستخدام Vault"
+  },
+  "autofillHeader": {
+    "message": "بيانات اعتماد Vault"
+  },
+  "autofillNoResults": {
+    "message": "لم يتم العثور على بيانات اعتماد لهذا الموقع"
+  },
+  "autofillUnnamed": {
+    "message": "بلا اسم"
+  },
+  "autofillNoUsername": {
+    "message": "(لا يوجد اسم مستخدم)"
+  },
+  "autofillLoading": {
+    "message": "جارٍ استرداد بيانات الاعتماد..."
+  },
+  "autofillFetchFailed": {
+    "message": "تعذّر استرداد بيانات الاعتماد"
+  },
+  "bgErrUnauthorizedSource": {
+    "message": "مصدر غير مصرّح به"
+  },
+  "bgErrInsecurePage": {
+    "message": "صفحة غير آمنة"
+  },
+  "bgErrNameRequired": {
+    "message": "اسم السر مطلوب"
+  },
+  "bgErrNotFound": {
+    "message": "لم يتم العثور على بيانات الاعتماد لهذا الموقع"
+  },
+  "bgErrInvalidVaultUrl": {
+    "message": "عنوان URL لـ Vault غير صالح (https إلزامي)"
+  },
+  "bgErrAuthFailed": {
+    "message": "فشلت المصادقة"
+  },
+  "bgErrInternal": {
+    "message": "خطأ داخلي"
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "HashiCorp Vault를 이용한 양식 자동 완성"
+  },
+  "popupLoading": {
+    "message": "로딩 중..."
+  },
+  "popupVaultUrlLabel": {
+    "message": "Vault URL"
+  },
+  "popupNamespaceLabel": {
+    "message": "Namespace(선택 사항)"
+  },
+  "popupNamespacePlaceholder": {
+    "message": "사용하지 않으면 비워 두세요"
+  },
+  "popupUsernameLabel": {
+    "message": "LDAP 사용자"
+  },
+  "popupUsernamePlaceholder": {
+    "message": "사용자 이름"
+  },
+  "popupPassword": {
+    "message": "비밀번호"
+  },
+  "popupLoginButton": {
+    "message": "로그인"
+  },
+  "popupConnectedAs": {
+    "message": "로그인한 사용자:"
+  },
+  "popupRefreshButton": {
+    "message": "캐시 새로 고침"
+  },
+  "popupLogoutButton": {
+    "message": "로그아웃"
+  },
+  "popupDefaultUser": {
+    "message": "사용자"
+  },
+  "popupFillRequired": {
+    "message": "필수 입력란을 모두 채우세요"
+  },
+  "popupLoggingIn": {
+    "message": "로그인 중..."
+  },
+  "popupLoginSuccess": {
+    "message": "로그인했습니다"
+  },
+  "popupLogoutSuccess": {
+    "message": "로그아웃했습니다"
+  },
+  "popupRefreshing": {
+    "message": "새로 고치는 중..."
+  },
+  "popupCacheRefreshed": {
+    "message": "캐시를 새로 고쳤습니다(시크릿 $COUNT$개)",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "42"
+      }
+    }
+  },
+  "popupError": {
+    "message": "오류: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Authentication failed"
+      }
+    }
+  },
+  "autofillIconTitle": {
+    "message": "Vault로 자동 완성"
+  },
+  "autofillHeader": {
+    "message": "Vault 로그인 정보"
+  },
+  "autofillNoResults": {
+    "message": "이 사이트의 로그인 정보를 찾을 수 없습니다"
+  },
+  "autofillUnnamed": {
+    "message": "이름 없음"
+  },
+  "autofillNoUsername": {
+    "message": "(사용자 이름 없음)"
+  },
+  "autofillLoading": {
+    "message": "로그인 정보를 가져오는 중..."
+  },
+  "autofillFetchFailed": {
+    "message": "로그인 정보를 가져올 수 없습니다"
+  },
+  "bgErrUnauthorizedSource": {
+    "message": "허가되지 않은 출처"
+  },
+  "bgErrInsecurePage": {
+    "message": "안전하지 않은 페이지"
+  },
+  "bgErrNameRequired": {
+    "message": "시크릿 이름이 필요합니다"
+  },
+  "bgErrNotFound": {
+    "message": "이 사이트의 로그인 정보를 찾을 수 없습니다"
+  },
+  "bgErrInvalidVaultUrl": {
+    "message": "잘못된 Vault URL(https 필수)"
+  },
+  "bgErrAuthFailed": {
+    "message": "인증에 실패했습니다"
+  },
+  "bgErrInternal": {
+    "message": "내부 오류"
+  }
+}

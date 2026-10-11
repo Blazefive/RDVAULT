@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "Preenchimento automático de formulários e passkeys com o RDVAULT (requer o aplicativo de desktop)"
+  },
+  "popupStatusChecking": {
+    "message": "Verificando..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "Esta extensão requer que o aplicativo de desktop Vault esteja aberto e conectado."
+  },
+  "popupDesktopUnavailable": {
+    "message": "Aplicativo de desktop indisponível"
+  },
+  "popupDesktopNotConnected": {
+    "message": "Aplicativo de desktop aberto, mas não conectado"
+  },
+  "popupDesktopConnected": {
+    "message": "Aplicativo de desktop conectado"
+  },
+  "popupUserLabel": {
+    "message": "Usuário:"
+  },
+  "popupServerLabel": {
+    "message": "Servidor:"
+  },
+  "popupUnknown": {
+    "message": "Desconhecido"
+  },
+  "popupAutofillActive": {
+    "message": "✓ Preenchimento automático ativo"
+  },
+  "popupPairingPendingTitle": {
+    "message": "Confirme o acesso no aplicativo RDVAULT"
+  },
+  "popupPairingPendingDetail": {
+    "message": "Uma solicitação de pareamento foi enviada ao RDVAULT. Aceite-a no aplicativo (prazo: 60 segundos) para ativar o preenchimento automático."
+  },
+  "popupPairingDeniedTitle": {
+    "message": "Acesso negado no RDVAULT"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "O pareamento desta extensão foi recusado no aplicativo. Uma nova solicitação será possível em um minuto."
+  },
+  "popupDisconnectedDetail": {
+    "message": "Abra o aplicativo de desktop e faça login para usar o preenchimento automático."
+  },
+  "autofillIconTitle": {
+    "message": "Preencher automaticamente com o RDVAULT"
+  },
+  "autofillHeader": {
+    "message": "Credenciais do RDVAULT"
+  },
+  "autofillNoResults": {
+    "message": "Nenhuma credencial encontrada para este site"
+  },
+  "autofillUnnamed": {
+    "message": "Sem nome"
+  },
+  "autofillNoUsername": {
+    "message": "(sem nome de usuário)"
+  },
+  "autofillLoading": {
+    "message": "Recuperando a credencial..."
+  },
+  "autofillFetchFailed": {
+    "message": "Não foi possível recuperar a credencial"
+  },
+  "pkCreateTitle": {
+    "message": "Criar uma passkey para $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "Criar no RDVAULT"
+  },
+  "pkGetTitle": {
+    "message": "Usar sua passkey para $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "Usar minha passkey do RDVAULT"
+  },
+  "pkChooseAccount": {
+    "message": "escolha a conta"
+  },
+  "pkUseAnotherDevice": {
+    "message": "Usar outro dispositivo"
+  },
+  "pkCancel": {
+    "message": "Cancelar"
+  },
+  "pkBlockedWarning": {
+    "message": "Ação bloqueada: a janela do RDVAULT está oculta ou coberta pela página. Use “$OTHER$” ou “$CANCEL$”.",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "Conta sem nome"
+  },
+  "pkCreatedOn": {
+    "message": "criada em $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "Credencial não encontrada para este site"
+  },
+  "bgErrHttp": {
+    "message": "Erro HTTP $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "Resposta inválida"
+  },
+  "bgErrCommunication": {
+    "message": "Erro de comunicação com o RDVAULT"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "Nome de chave inválido"
+  },
+  "bgErrInvalidCode": {
+    "message": "Código inválido"
+  },
+  "bgErrTotp": {
+    "message": "Erro de TOTP"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "passkey inválida"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId não autorizado"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "Cofre indisponível"
+  },
+  "bgErrInsecureSender": {
+    "message": "Não permitido a partir de uma página não segura"
+  },
+  "bgErrInternal": {
+    "message": "Erro interno"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "URL da guia obrigatória"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "Tipo de mensagem não suportado"
+  },
+  "bgErrInsecurePage": {
+    "message": "Página não segura"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT indisponível ou bloqueado"
+  },
+  "bgErrNameRequired": {
+    "message": "Nome do segredo obrigatório"
+  },
+  "bgErrInvalidCredential": {
+    "message": "Credencial inválida"
+  },
+  "bgErrSaveCredential": {
+    "message": "Erro ao salvar a credencial"
+  },
+  "bgErrReadCredential": {
+    "message": "Erro ao ler a credencial"
+  },
+  "bgErrClearCredential": {
+    "message": "Erro ao excluir a credencial"
+  }
+}

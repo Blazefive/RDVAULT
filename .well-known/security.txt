@@ -1,0 +1,8 @@
+# RDVAULT — security.txt (RFC 9116)
+# À héberger sur https://<domaine>/.well-known/security.txt une fois le site en ligne,
+# et à mettre à jour (Expires, Contact) avant publication.
+
+Contact: mailto:security@rdvault.example
+Preferred-Languages: fr, en
+Policy: https://github.com/Blazefive/RDVAULT/blob/main/SECURITY.md
+Expires: 2027-10-04T00:00:00.000Z

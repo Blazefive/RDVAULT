@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Hidden field trap</title></head>
+<body>
+<h1>Visible form + hidden trap form</h1>
+<!-- Piège : formulaire invisible (hors écran) qui ne doit JAMAIS être rempli -->
+<div style="position:absolute; left:-9999px; top:0">
+  <input type="text" id="trap_user" autocomplete="username">
+  <input type="password" id="trap_pass" autocomplete="current-password">
+</div>
+<div style="opacity:0"><input type="password" id="trap_pass2"></div>
+<form id="f" onsubmit="return false">
+  <label>User <input type="text" id="vu" autocomplete="username"></label><br>
+  <label>Pass <input type="password" id="vp" autocomplete="current-password"></label><br>
+  <button type="button" id="b">Login</button>
+</form>
+<script>
+b.addEventListener('click', () => {
+  fetch('/submit', { method: 'POST', body: JSON.stringify({ page: 'hidden', user: vu.value, password: vp.value, trap_user: trap_user.value, trap_pass: trap_pass.value, trap_pass2: trap_pass2.value }) });
+});
+</script>
+</body></html>

@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import secureLogger from '../secureLogger';
+import { entryKeyEngine } from './useSelection';
 
 /**
  * Hook useDragDrop — gère le drag & drop de secrets entre engines et dossiers
+ *
+ * @param {Object} options
+ * @param {{ current: Array|null }} [options.displayedSecretsRef] - Lignes affichées par le tableau
+ *   (useSelection / SecretsTable). Fourni, seules les entrées AFFICHÉES du coffre sélectionné sont
+ *   emportées par un glisser (APP-4, défense en profondeur).
  */
 export function useDragDrop({
   selectedSecrets,
@@ -12,6 +18,7 @@ export function useDragDrop({
   moveSecretsToFolder,
   selectedEngine,
   secretEngines,
+  displayedSecretsRef,
   showToast,
   t
 }) {
@@ -19,20 +26,49 @@ export function useDragDrop({
   const [dragOverTarget, setDragOverTarget] = useState(null);
 
   /**
+   * APP-4 (défense en profondeur) : noms réellement déplaçables depuis le coffre sélectionné.
+   * La sélection est indexée par nom : une sélection restée d'un autre coffre (homonymes), une entrée
+   * sélectionnée puis masquée par la recherche ou par le dossier ouvert, ou la clé « coffre + nom » d'un
+   * résultat d'un autre coffre ne doivent jamais partir avec le glisser. Ne sont gardés que les noms
+   * d'entrées affichées (ni dossier, ni entrée supprimée) appartenant au coffre sélectionné. Sans liste
+   * affichée fournie, seules les clés composées d'autres coffres sont écartées.
+   */
+  const draggableNames = (names) => {
+    const kept = names.filter(n => typeof n === 'string' && n !== '' && !entryKeyEngine(n));
+    const shown = displayedSecretsRef && Array.isArray(displayedSecretsRef.current) ? displayedSecretsRef.current : null;
+    if (!shown) return kept;
+    const engineName = selectedEngine?.name;
+    const allowed = new Set();
+    for (const row of shown) {
+      if (!row || typeof row.name !== 'string' || row.isFolder || row.deleted) continue;
+      if (row.engineName && row.engineName !== engineName) continue;
+      allowed.add(row.name);
+    }
+    return kept.filter(n => allowed.has(n));
+  };
+
+  /**
    * Gestionnaire de début de drag
    */
   const handleDragStart = (e, secret) => {
+    // Entrée glissée absente des lignes affichées du coffre sélectionné (ligne périmée, autre coffre) :
+    // aucun glisser, la sélection n'est pas emportée à sa place
+    if (!secret || !draggableNames([secret.name]).length) {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault();
+      return;
+    }
+    const inSelection = selectedSecrets.has(secret.name);
+    const names = inSelection ? draggableNames(Array.from(selectedSecrets)) : [secret.name];
+
     // Si le secret n'est pas dans la sélection, le sélectionner seul
-    if (!selectedSecrets.has(secret.name)) {
+    if (!inSelection) {
       setSelectedSecrets(new Set([secret.name]));
     }
 
     // Stocker les données de drag
     const dragData = {
       type: 'secrets',
-      secrets: selectedSecrets.has(secret.name)
-        ? Array.from(selectedSecrets)
-        : [secret.name],
+      secrets: names,
       sourceEngine: selectedEngine?.name,
       sourceVersion: selectedEngine?.version
     };
@@ -43,16 +79,20 @@ export function useDragDrop({
     setIsDragging(true);
 
     // Créer un élément de drag visuel personnalisé
+    // Fond « accent-fill » : en thème sombre, --accent est un violet clair destiné au texte
+    // (blanc dessus ≈ 2.7:1) ; --accent-fill n'existe qu'en sombre, le thème clair est inchangé.
+    // Libell\u00E9 traduit (\u00E9tait \u00AB N entr\u00E9e(s) \u00BB cod\u00E9 en dur en fran\u00E7ais), singulier / pluriel
     const dragCount = dragData.secrets.length;
     const dragGhost = document.createElement('div');
     dragGhost.className = 'drag-ghost';
-    dragGhost.textContent = `\u{1F4E6} ${dragCount} entr\u00E9e${dragCount > 1 ? 's' : ''}`;
+    const countLabel = t(dragCount === 1 ? 'table.dragCountOne' : 'table.dragCountMany', { count: dragCount });
+    dragGhost.textContent = `\u{1F4E6} ${countLabel}`;
     dragGhost.style.cssText = `
       position: absolute;
       top: -1000px;
       left: -1000px;
       padding: 8px 16px;
-      background: var(--accent, #3b82f6);
+      background: var(--accent-fill, var(--accent, #3b82f6));
       color: white;
       border-radius: 8px;
       font-weight: 600;
@@ -113,6 +153,7 @@ export function useDragDrop({
       // SÉCURITÉ: Valider les données du drag-and-drop
       if (dragData.secrets.length > 500) { showToast(t('error.tooManyEntries'), 'error'); return; }
       if (typeof dragData.sourceEngine !== 'string' || !secretEngines.some(eng => eng.name === dragData.sourceEngine)) return;
+      // eslint-disable-next-line no-control-regex -- volontaire : nom d'entrée avec caractère de contrôle refusé
       if (dragData.secrets.some(n => typeof n !== 'string' || n.includes('..') || /[\x00-\x1F]/.test(n) || n.length > 512)) return;
 
       // Vérifier les droits d'écriture sur l'engine cible
@@ -160,6 +201,7 @@ export function useDragDrop({
       }
       // SÉCURITÉ: Valider les données du drag-and-drop
       if (dragData.secrets.length > 500) return;
+      // eslint-disable-next-line no-control-regex -- volontaire : nom d'entrée avec caractère de contrôle refusé
       if (dragData.secrets.some(n => typeof n !== 'string' || n.includes('..') || /[\x00-\x1F]/.test(n) || n.length > 512)) return;
 
       // Vérifier qu'on est dans le même engine

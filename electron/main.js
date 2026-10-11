@@ -12,41 +12,70 @@
 
 // Mesure de performance pour suivre le temps de démarrage
 const startTime = Date.now();
-console.log('[PERF] Electron main.js start');
 
 // ========================================
 // IMPORTS - Modules Node.js et Electron
 // ========================================
-const { app, BrowserWindow, Menu, globalShortcut, dialog, ipcMain, clipboard, shell, safeStorage, powerMonitor } = require('electron');
+const { app, BrowserWindow, Menu, globalShortcut, dialog, ipcMain, clipboard, shell, powerMonitor } = require('electron');
 const path = require('path');      // Manipulation de chemins de fichiers
 const fs = require('fs');          // Système de fichiers
 const http = require('http');      // Serveur HTTP pour la sync extension Chrome
-const https = require('https');    // Support HTTPS (non utilisé actuellement)
 const crypto = require('crypto');  // Génération de tokens d'authentification sécurisés
 const { spawn } = require('child_process');  // Exécution de commandes système (ouverture navigateurs)
+const { fileURLToPath } = require('url');
 const { copyPasswordWithAutoClear } = require('./secureClipboard');  // Copie sécurisée avec auto-effacement
 const { Client } = require('ssh2');  // Client SSH pour lecture de logs distants
-const { getTrustedDomains, getConfig, getAppMode } = require('./configLoader');  // Chargement de la configuration
+const { createHostVerifier } = require('./sshBroker');  // Vérification de la clé d'hôte SSH (épinglage / known_hosts / invite)
+const { createKnownHosts } = require('./knownHosts');  // Mémoire persistante des clés d'hôte SSH (partagée avec le serveur CLI)
+const { getTrustedDomains, getTrustedCertFingerprints, getConfig, getAppMode } = require('./configLoader');  // Chargement de la configuration
+const { fingerprintMatches } = require('./certPinning');  // Pinning TLS (logique pure testable)
+const log = require('./logger');   // Journalisation centralisée (warn/error seulement en production)
 const secureSession = require('./secureSession');  // Sessions navigateur isolées (RBI)
 const cliServer = require('./cliServer');  // Serveur CLI local pour accès secrets via ligne de commande
+// Textes du processus principal (boîtes de dialogue natives, erreurs IPC affichées en toast) dans la
+// langue de l'interface : src/locales n'est pas empaqueté, les traductions vivent dans electron/mainI18n.js
+const mainI18n = require('./mainI18n');
+const { tm } = mainI18n;
 
-console.log(`[PERF] Modules loaded: ${Date.now() - startTime}ms`);
+log.info(`[PERF] Modules loaded: ${Date.now() - startTime}ms`);
+
+// ========================================
+// INSTANCE UNIQUE — verrou demandé AVANT tout effet de bord (STARTUP-23)
+// ========================================
+// Une seconde instance (double-clic sur le raccourci, lien rdvault://share/… pendant que l'application tourne)
+// transmet sa ligne de commande à la première (évènement 'second-instance', voir plus bas) puis se termine.
+// Elle ne doit RIEN démarrer ni nettoyer : Electron émet quand même 'ready' après un app.quit() demandé avant
+// 'ready', et 'will-quit' y est émis AVANT 'ready'. Sans garde, elle ouvrait le coffre local, réécrivait la
+// session CLI (userData/cli/session.json) avec son propre port, affichait « Chargement échoué », puis supprimait
+// cette session en se fermant : mvault ne joignait plus la première instance, pourtant toujours lancée.
+// Toutes les étapes de démarrage et de fermeture ci-dessous sont donc conditionnées par gotTheLock.
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  // Profils RBI orphelins (crash, fermeture avant la fin du nettoyage) : supprimés par la SEULE instance qui
+  // détient le verrou (une seconde instance ne doit pas toucher aux profils des sessions de la première).
+  secureSession.cleanupStaleProfiles();
+}
 
 // Sanitise une valeur destinée à un fichier RDP ou INI pour empêcher l'injection de retours à la ligne
+// eslint-disable-next-line no-control-regex -- volontaire : retirer les caractères de contrôle (injection RDP/INI)
 const sanitizeConnectionValue = (val) => typeof val === 'string' ? val.replace(/[\r\n\x00-\x1F]/g, '') : '';
 
-// Valide les paramètres de connexion (host, username, port)
+// Valide les paramètres de connexion (host, username, port) ; message d'erreur dans la langue de l'interface
 const validateConnectionParams = (host, username, port) => {
-  if (typeof host !== 'string' || host.length === 0 || host.length > 253 || /[\x00-\x1F\s;|&`$(){}@#\[\]\/\?%]/.test(host)) {
-    return { valid: false, error: 'Nom d\'hôte invalide' };
+  // eslint-disable-next-line no-control-regex -- volontaire : un hôte contenant un caractère de contrôle est refusé
+  if (typeof host !== 'string' || host.length === 0 || host.length > 253 || /[\x00-\x1F\s;|&`$(){}@#[\]/?%]/.test(host)) {
+    return { valid: false, error: tm('error.invalidHost') };
   }
+  // eslint-disable-next-line no-control-regex -- volontaire : un identifiant contenant un caractère de contrôle est refusé
   if (username !== undefined && username !== null && (typeof username !== 'string' || /[\x00-\x1F;|&`$(){}@]/.test(username))) {
-    return { valid: false, error: 'Nom d\'utilisateur invalide' };
+    return { valid: false, error: tm('error.invalidUsername') };
   }
   if (port !== undefined && port !== null) {
     const portNum = Number(port);
     if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
-      return { valid: false, error: 'Port invalide (1-65535)' };
+      return { valid: false, error: tm('error.invalidPort') };
     }
   }
   return { valid: true };
@@ -66,6 +95,23 @@ const validateUrlScheme = (url) => {
 // Échappe les caractères HTML pour éviter l'injection dans le presse-papier riche
 const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+// Valide la structure des filtres de dialogue fournis par le renderer
+const sanitizeDialogFilters = (filters) => {
+  const fallback = [{ name: 'All Files', extensions: ['*'] }];
+  if (!Array.isArray(filters)) return fallback;
+  const safe = filters
+    .filter(f => f && typeof f.name === 'string' && Array.isArray(f.extensions))
+    .slice(0, 10)
+    .map(f => ({
+      name: f.name.slice(0, 64),
+      extensions: f.extensions.filter(e => typeof e === 'string' && /^[a-z0-9*]{1,10}$/i.test(e)).slice(0, 10)
+    }))
+    .filter(f => f.extensions.length > 0);
+  return safe.length ? safe : fallback;
+};
+
+let certWarningShown = false;
+
 // ========================================
 // CONFIGURATION - Constantes centralisées
 // ========================================
@@ -78,7 +124,6 @@ const CONFIG = {
   // PORTS RÉSEAU
   // ========================================
   SYNC_PORT: 45678,              // Port HTTP pour sync avec extension Chrome
-  HTTPS_PORT: 45679,             // Port HTTPS (réservé pour évolution future)
 
   // ========================================
   // TIMEOUTS (en millisecondes)
@@ -87,6 +132,7 @@ const CONFIG = {
   HEARTBEAT_INTERVAL_MS: 30000,  // 30 secondes - Intervalle de mise à jour du timestamp
   CLIPBOARD_TIMEOUT_MS: 12000,   // 12 secondes - Délai avant effacement presse-papier
   SSH_TIMEOUT_MS: 10000,         // 10 secondes - Timeout connexion SSH
+  SSH_EXEC_TIMEOUT_MS: 120000, // 2 minutes - délai d'exécution de la lecture SSH des logs d'audit
   TOTP_REQUEST_TIMEOUT_MS: 5000, // 5 secondes - Timeout requête TOTP
   FILE_CLEANUP_DELAY_MS: 2000,   // 2 secondes - Délai suppression fichiers temporaires (réduit pour sécurité)
 
@@ -95,6 +141,7 @@ const CONFIG = {
   // ========================================
   MAX_TOTP_KEY_LENGTH: 256,      // Longueur max nom clé TOTP
   MAX_LOG_LINES: 1000,           // Nombre max lignes de logs à lire
+  MAX_SYNC_SECRETS: 100000,      // Entrées max transmises à l'extension (au-delà : troncature signalée)
 
   // ========================================
   // TOKENS ET SÉCURITÉ
@@ -103,213 +150,169 @@ const CONFIG = {
 };
 
 // ========================================
-// CHEMINS DE FICHIERS
+// ÉTAT DE SYNCHRONISATION (EN MÉMOIRE UNIQUEMENT)
 // ========================================
-// Fichier de synchronisation pour l'extension Chrome (chiffré avec Electron safeStorage)
-// Contient : token Vault, liste des secrets, état de connexion
-const SYNC_FILE = path.join(app.getPath('userData'), 'vault-sync.enc');
+// SÉCURITÉ: l'état de synchronisation (liste des secrets pour l'extension Chrome)
+// n'est PLUS écrit sur disque. Il vit uniquement dans la mémoire du main process
+// et disparaît à la déconnexion ou à la fermeture de l'application.
+// Les anciens fichiers vault-sync.enc / sync-auth-token.txt sont supprimés au démarrage.
+let syncState = null;
 
-// Fichier contenant le token d'authentification pour le serveur sync
-// Ce token est généré à chaque démarrage et doit être fourni par l'extension pour accéder aux endpoints protégés
-const AUTH_TOKEN_FILE = path.join(app.getPath('userData'), 'sync-auth-token.txt');
-
-// Certificat auto-signé pour le serveur HTTPS local (non utilisé actuellement)
-let httpsCredentials = null;
-
-// Token d'authentification pour le serveur sync (généré au démarrage avec crypto.randomBytes)
-// Format: 64 caractères hexadécimaux (256 bits de sécurité)
+// Token d'authentification du serveur sync (256 bits, généré au démarrage, jamais persisté)
 let syncAuthToken = null;
 
 // SÉCURITÉ: Clé HMAC aléatoire pour la comparaison timing-safe (générée au démarrage, pas persistée)
 const hmacCompareKey = crypto.randomBytes(32);
 
 // ========================================
-// FONCTIONS DE CHIFFREMENT SÉCURISÉ
+// APPAIRAGE DES EXTENSIONS CHROME
 // ========================================
-// Ces fonctions utilisent Electron safeStorage pour chiffrer/déchiffrer le fichier de sync.
-// safeStorage utilise le trousseau de clés du système d'exploitation :
-// - Windows: Data Protection API (DPAPI)
-// - macOS: Keychain
-// - Linux: libsecret
-//
-// Avantages :
-// - Le fichier de sync est chiffré au repos
-// - La clé de chiffrement est gérée par l'OS (pas dans le code)
-// - Un attaquant qui vole le fichier ne peut pas le déchiffrer sans accès au système
+// Le token sync n'est délivré qu'aux extensions dont l'identifiant a été approuvé
+// explicitement par l'utilisateur (boîte de dialogue à la première demande).
+// Les identifiants approuvés sont conservés dans userData/paired-extensions.json.
+// Limite connue : un processus local malveillant peut présenter un faux identifiant.
+// Un identifiant INCONNU déclenche une boîte de dialogue visible ; en revanche, un
+// identifiant DÉJÀ appairé obtient le jeton sans invite (limite documentée dans
+// SECURITY.md / docs/THREAT-MODEL.md). Le remplacement du transport HTTP par Native
+// Messaging reste l'étape suivante recommandée.
+const PAIRED_EXTENSIONS_FILE = path.join(app.getPath('userData'), 'paired-extensions.json');
+const EXTENSION_ID_RE = /^[a-p]{32}$/;
+const EXTENSION_ORIGIN_RE = /^chrome-extension:\/\/([a-p]{32})$/;
+const PAIRING_TIMEOUT_MS = 60000;
+const pairedExtensionIds = new Set();
+const pendingPairings = new Map(); // extId -> Promise<boolean>
+
+function loadPairedExtensions() {
+  try {
+    if (!fs.existsSync(PAIRED_EXTENSIONS_FILE)) return;
+    const ids = JSON.parse(fs.readFileSync(PAIRED_EXTENSIONS_FILE, 'utf8'));
+    if (Array.isArray(ids)) {
+      for (const id of ids) {
+        if (typeof id === 'string' && EXTENSION_ID_RE.test(id)) pairedExtensionIds.add(id);
+      }
+    }
+  } catch {
+    log.warn('[Pairing] Fichier des extensions appairées illisible, ignoré');
+  }
+}
+
+function savePairedExtensions() {
+  try {
+    fs.writeFileSync(PAIRED_EXTENSIONS_FILE, JSON.stringify([...pairedExtensionIds]), { mode: 0o600 });
+  } catch {
+    log.error('[Pairing] Impossible d\'enregistrer les extensions appairées');
+  }
+}
 
 /**
- * Génère un certificat auto-signé pour le serveur HTTPS local
- * Non utilisé actuellement - réservé pour évolution future si besoin de HTTPS local
- *
- * @returns {Promise<{key: string, cert: string}>} Certificat et clé privée au format PEM
+ * Demande à l'utilisateur d'approuver une extension Chrome (une seule fois par identifiant).
+ * Les demandes concurrentes pour le même identifiant partagent la même boîte de dialogue.
+ * @param {string} extId - Identifiant d'extension (32 lettres a-p)
+ * @returns {Promise<boolean>} true si approuvée
  */
-function generateSelfSignedCert() {
-  try {
-    const pem = require('pem');
-    return new Promise((resolve, reject) => {
-      pem.createCertificate({ days: 365, selfSigned: true }, (err, keys) => {
-        if (err) {
-          console.error('❌ Erreur génération certificat:', err);
-          reject(err);
-        } else {
-          resolve({
-            key: keys.serviceKey,
-            cert: keys.certificate
-          });
-        }
+function requestExtensionPairing(extId) {
+  if (pairedExtensionIds.has(extId)) return Promise.resolve(true);
+  if (pendingPairings.has(extId)) return pendingPairings.get(extId);
+
+  const pairing = (async () => {
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    if (!win) return false;
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), PAIRING_TIMEOUT_MS);
+    try {
+      win.show();
+      win.focus();
+      // Textes dans la langue de l'interface ; ordre des boutons inchangé (0 = autoriser, 1 = refuser, par défaut)
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'question',
+        buttons: [tm('button.allow'), tm('button.deny')],
+        defaultId: 1,
+        cancelId: 1,
+        title: tm('pairing.title'),
+        message: tm('pairing.message'),
+        detail: tm('pairing.detail', { extId }),
+        noLink: true,
+        signal: abort.signal,
       });
-    });
-  } catch (err) {
-    // Fallback : générer un certificat simple avec openssl si pem n'est pas disponible
-    console.warn('⚠️ Module pem non disponible, utilisation de certificats en dur');
-    // Note: En production, il faudrait générer un vrai certificat
-    return Promise.resolve(null);
-  }
+      if (response === 0) {
+        pairedExtensionIds.add(extId);
+        savePairedExtensions();
+        log.info('[Pairing] Extension approuvée');
+        return true;
+      }
+      log.warn('[Pairing] Extension refusée par l\'utilisateur (ou délai dépassé)');
+      return false;
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+      pendingPairings.delete(extId);
+    }
+  })();
+
+  pendingPairings.set(extId, pairing);
+  return pairing;
 }
 
-/**
- * Écrit des données chiffrées dans le fichier de sync
- *
- * Utilise Electron safeStorage pour chiffrer les données avant écriture.
- * Le fichier contient l'état de synchronisation : token Vault, secrets, état de connexion.
- *
- * Pourquoi chiffrer ?
- * - Le token Vault donne accès à TOUS les secrets de l'utilisateur
- * - Sans chiffrement, n'importe quel processus peut lire le fichier
- * - Avec safeStorage, seule cette application peut déchiffrer le fichier
- *
- * @param {Object} data - Données à chiffrer et écrire (sera sérialisé en JSON)
- * @throws {Error} Si le chiffrement échoue ou n'est pas disponible
- * @returns {boolean} true si succès
- */
-function writeEncryptedSyncFile(data) {
-  try {
-    // Vérifier que safeStorage est disponible
-    if (!safeStorage.isEncryptionAvailable()) {
-      console.error('❌ Chiffrement safeStorage non disponible sur ce système');
-      throw new Error('Chiffrement non disponible');
-    }
-
-    const jsonString = JSON.stringify(data);
-    const encryptedBuffer = safeStorage.encryptString(jsonString);
-
-    // Écrire le buffer chiffré (binaire)
-    // SÉCURITÉ: Écrire avec permissions restrictives
-    fs.writeFileSync(SYNC_FILE, encryptedBuffer, { mode: 0o600 });
-
-    console.log('✅ Fichier sync chiffré écrit avec succès');
-    return true;
-  } catch (error) {
-    console.error('❌ Erreur écriture fichier chiffré:', error);
-    throw error;
-  }
-}
-
-/**
- * Lit et déchiffre le fichier de sync
- *
- * Déchiffre le fichier de synchronisation et retourne les données.
- * Utilisé par le serveur HTTP local pour envoyer l'état à l'extension Chrome.
- *
- * @returns {Object|null} Données déchiffrées ou null si le fichier n'existe pas ou est invalide
- */
-function readEncryptedSyncFile() {
-  try {
-    if (!fs.existsSync(SYNC_FILE)) {
-      return null;
-    }
-
-    // Vérifier que safeStorage est disponible
-    if (!safeStorage.isEncryptionAvailable()) {
-      console.error('❌ Déchiffrement safeStorage non disponible');
-      return null;
-    }
-
-    const encryptedBuffer = fs.readFileSync(SYNC_FILE);
-    const decryptedString = safeStorage.decryptString(encryptedBuffer);
-    const data = JSON.parse(decryptedString);
-
-    return data;
-  } catch (error) {
-    console.error('❌ Erreur lecture fichier chiffré:', error);
-    return null;
-  }
-}
-
-/**
- * Génère et sauvegarde un token d'authentification sécurisé
- *
- * Ce token est requis pour accéder aux endpoints protégés du serveur sync (/sync, /api/totp, /api/secrets).
- * Il est généré à chaque démarrage et sauvegardé dans un fichier chiffré que l'extension Chrome peut lire.
- *
- * Sécurité RENFORCÉE :
- * - 256 bits d'entropie (crypto.randomBytes(32))
- * - Format hexadécimal (64 caractères)
- * - Fichier CHIFFRÉ avec safeStorage (DPAPI/Keychain)
- * - Régénéré à chaque démarrage (pas de persistance entre sessions)
- * - Protection contre lecture par malware local
- *
- * @returns {string|null} Token généré ou null si échec
- */
-function generateAuthToken() {
-  try {
-    // Vérifier que safeStorage est disponible
-    if (!safeStorage.isEncryptionAvailable()) {
-      console.error('❌ Chiffrement safeStorage non disponible pour le token');
-      throw new Error('Chiffrement non disponible');
-    }
-
-    // Générer un token aléatoire de 64 caractères hexadécimaux (256 bits)
-    syncAuthToken = crypto.randomBytes(32).toString('hex');
-
-    // Chiffrer le token avec safeStorage avant écriture
-    const encryptedToken = safeStorage.encryptString(syncAuthToken);
-    // SÉCURITÉ: Écrire avec permissions restrictives (lecture/écriture propriétaire uniquement)
-    fs.writeFileSync(AUTH_TOKEN_FILE, encryptedToken, { mode: 0o600 });
-
-    console.log('🔐 Token d\'authentification sync généré et chiffré');
-    return syncAuthToken;
-  } catch (err) {
-    console.error('❌ Erreur critique génération token:', err);
-    // NE PAS utiliser de fallback faible - arrêter le serveur si crypto échoue
-    dialog.showErrorBox(
-      'Erreur de sécurité',
-      'Impossible de générer un token sécurisé. Le serveur sync ne peut pas démarrer.'
-    );
-    syncAuthToken = null;
-    return null;
-  }
+/** Extrait l'identifiant d'extension d'un header Origin strictement formé, ou null */
+function extensionIdFromOrigin(origin) {
+  const m = typeof origin === 'string' ? origin.match(EXTENSION_ORIGIN_RE) : null;
+  return m ? m[1] : null;
 }
 
 /**
  * Vérifie le token d'authentification dans une requête HTTP
- *
- * Extrait le token du header Authorization (format: "Bearer <token>")
- * et le compare avec le token généré au démarrage.
- *
- * @param {http.IncomingMessage} req - Requête HTTP entrante
- * @returns {boolean} true si le token est valide, false sinon
+ * (format "Bearer <token>", comparaison HMAC timing-safe)
  */
 function verifyAuthToken(req) {
-  // SÉCURITÉ: Vérifier que le token sync a été généré (null = serveur pas prêt)
   if (!syncAuthToken) return false;
-
   const authHeader = req.headers['authorization'];
   if (!authHeader) return false;
-
-  // Format attendu : "Bearer <token>"
   const match = authHeader.match(/^Bearer (.+)$/);
   if (!match) return false;
-
-  const providedToken = match[1];
-  // SÉCURITÉ: Comparaison HMAC-based timing-safe (évite l'oracle de longueur)
-  const hmacA = crypto.createHmac('sha256', hmacCompareKey).update(providedToken).digest();
+  const hmacA = crypto.createHmac('sha256', hmacCompareKey).update(match[1]).digest();
   const hmacB = crypto.createHmac('sha256', hmacCompareKey).update(syncAuthToken).digest();
   try {
     return crypto.timingSafeEqual(hmacA, hmacB);
   } catch {
     return false;
   }
+}
+
+// Correspondance secret ↔ hôte : module pur electron/hostMatch.js (testable)
+const { isValidHostname, secretMatchesHost, hostnameOf } = require("./hostMatch");
+
+// Renderer de la fenêtre principale FIGÉ (évènement 'unresponsive' : boucle infinie, blocage du thread
+// JavaScript) : la déconnexion et le délai d'inactivité, qui vivent dans le renderer, ne s'exécutent plus.
+// Tant qu'il ne répond pas, il est traité comme planté (SYNC-28) ; remis à false par 'responsive' ou par
+// un nouveau renderer (rechargement, plantage, fermeture de la fenêtre).
+let rendererUnresponsive = false;
+
+/**
+ * true si l'interface (renderer de la fenêtre principale) qui a écrit l'état de synchronisation est vivante.
+ * SÉCURITÉ (SYNC-28) : la déconnexion et le délai d'inactivité vivent dans le renderer ; renderer planté, figé
+ * ou fenêtre détruite → l'état ne doit plus être servi ni prolongé (la fenêtre morte ne permet plus de se déconnecter).
+ */
+function rendererAlive() {
+  try {
+    return Boolean(mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isCrashed() && !rendererUnresponsive);
+  } catch {
+    return false;
+  }
+}
+
+/** Purge l'état de synchronisation (mots de passe servis à l'extension) ; motif journalisé, sans secret */
+function purgeSyncState(reason) {
+  if (!syncState) return;
+  syncState = null;
+  log.warn('[Sync] État de synchronisation purgé : ' + reason);
+}
+
+/** true si un état de sync connecté et récent est disponible, écrit par une interface toujours vivante */
+function syncStateIsFresh() {
+  return Boolean(syncState && syncState.connected && syncState.timestamp
+    && Date.now() - syncState.timestamp <= CONFIG.SYNC_TIMEOUT_MS
+    && rendererAlive());
 }
 
 // ========================================
@@ -352,38 +355,86 @@ app.on('certificate-error', (event, webContents, url, error, certificate, callba
   // Empêcher l'erreur de bloquer la requête (sinon Electron rejette automatiquement)
   event.preventDefault();
 
-  const parsedUrl = new URL(url);
+  let hostname = '';
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    callback(false);
+    return;
+  }
 
   // Whitelist de domaines de confiance (chargée depuis la configuration)
-  const trustedDomains = getTrustedDomains();
-
-  // Vérifier si le domaine est dans la whitelist
   // Pour les IPs, seule la correspondance exacte est autorisée (pas de subdomain matching)
-  const isIP = /^\d{1,3}(\.\d{1,3}){3}$/.test(parsedUrl.hostname) || parsedUrl.hostname.includes(':');
+  const trustedDomains = getTrustedDomains();
+  const isIP = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':');
   const isTrusted = trustedDomains.some(domain =>
-    parsedUrl.hostname === domain ||
-    (!isIP && parsedUrl.hostname.endsWith('.' + domain))
+    hostname === domain || (!isIP && hostname.endsWith('.' + domain))
   );
-
-  if (isTrusted) {
-    // SÉCURITÉ: Rejeter les erreurs de certificat dangereuses même pour les domaines de confiance
-    const rejectErrors = [
-      'net::ERR_CERT_REVOKED',
-      'net::ERR_CERT_COMMON_NAME_INVALID',
-      'net::ERR_CERT_INVALID'
-    ];
-    if (rejectErrors.includes(error)) {
-      console.warn(`[SSL] Certificat rejeté pour ${parsedUrl.hostname}: ${error}`);
-      callback(false);
-      return;
-    }
-    // Accepter uniquement les erreurs de type self-signed / untrusted CA
-    callback(true);
-  } else {
-    console.warn(`❌ [SSL] Certificat refusé pour ${parsedUrl.hostname} (domaine non autorisé)`);
-    callback(false); // Refuser le certificat
+  if (!isTrusted) {
+    log.warn('[SSL] Certificat refusé pour ' + hostname + ' (domaine non autorisé)');
+    callback(false);
+    return;
   }
+
+  // SÉCURITÉ: erreurs jamais tolérées, même pour un domaine de confiance
+  const rejectErrors = ['net::ERR_CERT_REVOKED', 'net::ERR_CERT_COMMON_NAME_INVALID', 'net::ERR_CERT_INVALID'];
+  if (rejectErrors.includes(error)) {
+    log.warn('[SSL] Certificat rejeté pour ' + hostname + ': ' + error);
+    callback(false);
+    return;
+  }
+
+  // SÉCURITÉ: pinning — si TRUSTED_CERT_FINGERPRINTS est configuré, l'empreinte SHA-256
+  // du certificat doit correspondre exactement. Sans pinning, repli (moins sûr) sur la
+  // confiance par domaine : tout certificat auto-signé présenté pour ce domaine est accepté.
+  const pinned = getTrustedCertFingerprints();
+  if (pinned.length > 0) {
+    if (fingerprintMatches(certificate, pinned)) {
+      callback(true);
+    } else {
+      log.warn('[SSL] Empreinte de certificat inconnue pour ' + hostname + ' — refusé (pinning actif)');
+      callback(false);
+    }
+    return;
+  }
+  if (!certWarningShown) {
+    certWarningShown = true;
+    log.warn('[SSL] Certificat auto-signé accepté par domaine de confiance. Configurez TRUSTED_CERT_FINGERPRINTS pour activer le pinning.');
+  }
+  callback(true);
 });
+
+/** Nom d'hôte comparable (minuscules, sans crochets IPv6 ni point final) */
+function normalizeCertHost(host) {
+  return String(host || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+}
+
+/**
+ * SÉCURITÉ (REMOTE-3) : épinglage TLS appliqué à CHAQUE vérification de certificat du serveur Vault, pas
+ * seulement aux certificats que Chromium juge invalides ('certificate-error' ci-dessus). Avec
+ * use-system-ca-store, un certificat qui chaîne vers une autorité du magasin Windows (CA publique, CA
+ * d'entreprise, boîtier d'inspection TLS déployé par GPO) ne passait jamais par le contrôle d'empreinte : il
+ * était accepté quelle que soit son empreinte, malgré TRUSTED_CERT_FINGERPRINTS.
+ * Décision (callback de session.setCertificateVerifyProc) :
+ *   -2 (refus)  : hôte de VAULT_URL, épinglage configuré, empreinte absente de la liste ;
+ *   -3 (Chromium) sinon : vérification normale, puis 'certificate-error' pour un certificat invalide
+ *                (domaines de confiance et empreinte, règles inchangées). Rien n'est jamais accepté ici.
+ * @param {{ hostname: string, certificate: object, verificationResult?: string }} request
+ * @returns {number}
+ */
+function vaultCertVerifyDecision(request) {
+  let pins;
+  try { pins = getTrustedCertFingerprints(); } catch { return -3; }
+  if (!Array.isArray(pins) || pins.length === 0) return -3;
+  let vaultHost = '';
+  try { vaultHost = normalizeCertHost(new URL(getConfig().VAULT_URL || '').hostname); } catch { return -3; }
+  const host = normalizeCertHost(request && request.hostname);
+  if (!vaultHost || host !== vaultHost) return -3;
+  if (fingerprintMatches(request.certificate, pins)) return -3;
+  log.warn('[SSL] Empreinte de certificat inconnue pour ' + host + ' — refusé (pinning actif, '
+    + String((request && request.verificationResult) || 'vérification système').slice(0, 64) + ')');
+  return -2;
+}
 
 /**
  * Handler pour la sélection de certificat client (mTLS - mutual TLS)
@@ -420,296 +471,295 @@ app.on('select-client-certificate', (event, webContents, url, list, callback) =>
 // ========================================
 // SERVEUR DE SYNCHRONISATION HTTP LOCAL
 // ========================================
-// Serveur HTTP qui écoute sur localhost:45678
-// Permet à l'extension Chrome de récupérer l'état de connexion et les secrets
-// Architecture : Desktop app (maître) -> Fichier chiffré <- Extension Chrome (lecteur)
+// Serveur HTTP qui écoute sur 127.0.0.1:45678 pour l'extension Chrome appairée.
+// Endpoints (GET uniquement) :
+// - /auth/token                          : token de session (appairage à la première demande)
+// - /sync                                : état de connexion (aucun secret)
+// - /api/secrets?host=<hôte>             : secrets de cet hôte, SANS mot de passe ni notes
+// - /api/secret?host=&engine=&name=      : un secret avec mot de passe (à la sélection explicite)
+// - /api/totp/<clé>                      : code TOTP généré par le renderer
+// Sécurité :
+// - Origin chrome-extension:// strictement formé et appairé, sur tous les endpoints
+// - Bearer token (comparaison timing-safe) sur tous les endpoints sauf /auth/token
+// - État en mémoire uniquement, expiré après SYNC_TIMEOUT_MS sans heartbeat
 
 let syncServer = null;
+// Échec d'écoute du serveur de synchronisation (code d'erreur, ex. EADDRINUSE) ; null si le serveur écoute
+let syncServerError = null;
+let syncPortWarningShown = false;
+
+function sendJson(res, status, body) {
+  res.writeHead(status);
+  res.end(JSON.stringify(body));
+}
 
 /**
- * Démarre le serveur de synchronisation HTTP local
- *
- * Endpoints exposés :
- * - GET /sync : Retourne l'état de connexion Vault (protégé par token)
- * - GET /api/totp/<key> : Génère un code TOTP pour une clé (protégé par token)
- * - GET /api/secrets : Retourne tous les secrets de l'utilisateur (protégé par token)
- *
- * Sécurité :
- * - Écoute UNIQUEMENT sur 127.0.0.1 (pas accessible depuis le réseau)
- * - CORS restreint aux extensions Chrome uniquement
- * - Tous les endpoints protégés par token Bearer
- * - Les données sensibles sont chiffrées dans le fichier de sync
+ * Envoie une requête au renderer (fenêtre principale) et attend sa réponse, via IPC
+ * corrélée par requestId. Même motif que le TOTP. Utilisé pour les passkeys (lecture/
+ * écriture dans le coffre, qui n'est accessible qu'avec le token Vault du renderer).
  */
+function requestFromRenderer(channel, payload, timeoutMs) {
+  return new Promise((resolve) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return resolve({ success: false, error: 'Desktop app not ready' });
+    const requestId = crypto.randomBytes(8).toString('hex');
+    let done = false;
+    const handler = (event, result) => {
+      if (event.sender !== mainWindow?.webContents) return; // SÉCURITÉ: réponse de la fenêtre principale uniquement
+      if (done) return; done = true; clearTimeout(t);
+      resolve(result || { success: false, error: 'no result' });
+    };
+    ipcMain.once(channel + '-response-' + requestId, handler);
+    const t = setTimeout(() => {
+      if (done) return; done = true;
+      ipcMain.removeListener(channel + '-response-' + requestId, handler);
+      resolve({ success: false, error: 'timeout' });
+    }, timeoutMs);
+    mainWindow.webContents.send(channel, { ...payload, requestId });
+  });
+}
+
+/** Lit le corps JSON d'une requête (limite de taille), renvoie null si invalide/trop gros */
+function readJsonBody(req, maxBytes) {
+  return new Promise((resolve) => {
+    // Accumule les Buffers (limite en OCTETS) et ne décode qu'une fois : pas de caractère UTF-8 coupé entre deux chunks
+    const chunks = []; let size = 0; let tooBig = false;
+    // Trop gros : régler AVANT destroy(), qui n'émet ni 'end' ni 'error' sur un http.IncomingMessage (seulement 'close')
+    req.on('data', c => { if (tooBig) return; size += c.length; if (size > maxBytes) { tooBig = true; resolve(null); req.destroy(); return; } chunks.push(c); });
+    req.on('end', () => { if (tooBig) return resolve(null); try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')); } catch { resolve(null); } });
+    req.on('error', () => resolve(null));
+  });
+}
+
 function startSyncServer() {
   const syncStart = Date.now();
-  console.log('[PERF] startSyncServer begin');
+  loadPairedExtensions();
+  syncAuthToken = crypto.randomBytes(CONFIG.AUTH_TOKEN_BYTES).toString('hex');
 
-  // Générer le token d'authentification au démarrage du serveur
-  generateAuthToken();
-
-  console.log(`[PERF] Auth token generated: ${Date.now() - syncStart}ms`);
-
-  // Rate limiting simple pour le sync server (60 requêtes/minute par IP)
+  // Rate limiting simple (tout vient de 127.0.0.1 : les limites sont de fait globales).
+  // Deux compteurs indépendants par fenêtre d'une minute :
+  // - « lecture » : /sync et /api/secrets (état en mémoire, JAMAIS de mot de passe ni de
+  //   notes), appelés à chaque onglet par l'extension : une rafale d'onglets ne doit ni
+  //   bloquer l'extension ni épuiser la limite des routes sensibles ;
+  // - « défaut » : tout le reste (appairage /auth/token, /api/secret avec mot de passe,
+  //   TOTP, passkeys, routes inconnues), limite inchangée.
   const syncRateLimit = new Map();
   const SYNC_RATE_LIMIT = 60;
+  const SYNC_READ_RATE_LIMIT = 600;
   const SYNC_RATE_WINDOW = 60000;
+  const SYNC_READ_ROUTES = new Set(['/sync', '/api/secrets']);
 
-  syncServer = http.createServer((req, res) => {
-    // SÉCURITÉ: Rejeter les méthodes non-GET (seules les lectures sont supportées)
-    if (req.method !== 'GET' && req.method !== 'OPTIONS') {
-      res.writeHead(405);
-      res.end(JSON.stringify({ error: 'Method not allowed' }));
-      return;
-    }
-
-    // Rate limiting
-    const clientIp = req.socket.remoteAddress;
-    const now = Date.now();
-    const rateEntry = syncRateLimit.get(clientIp);
-    if (rateEntry && now - rateEntry.start < SYNC_RATE_WINDOW) {
-      rateEntry.count++;
-      if (rateEntry.count > SYNC_RATE_LIMIT) {
-        res.writeHead(429);
-        res.end(JSON.stringify({ error: 'Too many requests' }));
-        return;
-      }
-    } else {
-      syncRateLimit.set(clientIp, { start: now, count: 1 });
-    }
-
-    // SÉCURITÉ: Nettoyer les entrées expirées du rate limit (évite fuite mémoire)
-    if (syncRateLimit.size > 100) {
-      for (const [ip, entry] of syncRateLimit) {
-        if (now - entry.start > 60000) syncRateLimit.delete(ip);
-      }
-    }
-
-    // CORS headers - restreint aux extensions Chrome uniquement
-    // SÉCURITÉ: Seules les origins chrome-extension:// sont autorisées
-    // SÉCURITÉ: Valider l'origin Chrome extension avec un format strict
-    const origin = req.headers.origin;
-    if (origin && /^chrome-extension:\/\/[a-p]{32}$/.test(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    }
-    // Pas de header CORS pour les autres origins → le navigateur bloquera la réponse
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Vault-Extension');
-    // Chrome 117+ : Private Network Access — nécessaire pour que les extensions
-    // puissent accéder à 127.0.0.1 depuis un service worker
-    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  syncServer = http.createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Frame-Options', 'DENY');
 
-    if (req.method === 'OPTIONS') {
-      // Répondre au preflight uniquement si l'origin est une extension Chrome
-      if (origin && /^chrome-extension:\/\/[a-p]{32}$/.test(origin)) {
-        res.writeHead(200);
-      } else {
-        res.writeHead(403);
-      }
-      res.end();
-      return;
+    if (req.method !== 'GET' && req.method !== 'OPTIONS' && req.method !== 'POST') {
+      return sendJson(res, 405, { error: 'Method not allowed' });
     }
 
-    // 🔐 Endpoint d'obtention du token (AVANT le auth check — pas encore de token côté extension)
-    // SÉCURITÉ: Exiger un Origin chrome-extension:// valide pour limiter l'accès aux extensions
-    if (req.url === '/auth/token' && req.method === 'GET') {
-      // SÉCURITÉ: Vérifier l'Origin chrome-extension:// ET le header X-Vault-Extension
-      // Le header custom ne peut pas être envoyé par une page web (CORS preflight bloquerait)
-      // et doit être explicitement ajouté par notre extension
-      const vaultExtHeader = req.headers['x-vault-extension'];
-      // SÉCURITÉ: Exiger un origin chrome-extension:// valide (pas de bypass sans origin)
-      const hasValidOrigin = origin && /^chrome-extension:\/\/[a-p]{32}$/.test(origin);
-      if (!hasValidOrigin || vaultExtHeader !== 'rdvault') {
-        console.warn(`[Sync] /auth/token refusé: origin/header invalide (${origin || 'aucun'})`);
-        res.writeHead(403);
-        res.end(JSON.stringify({ error: 'Forbidden: Chrome extension origin required' }));
-        return;
-      }
-      if (!syncAuthToken) {
-        res.writeHead(503);
-        res.end(JSON.stringify({ error: 'Token not ready' }));
-        return;
-      }
-      res.writeHead(200);
-      res.end(JSON.stringify({ token: syncAuthToken }));
-      return;
-    }
-
-    // 🔐 Vérifier l'authentification pour tous les autres endpoints
-    if (!verifyAuthToken(req)) {
-      res.writeHead(401);
-      res.end(JSON.stringify({
-        error: 'Unauthorized',
-        message: 'Token d\'authentification manquant ou invalide. Utilisez: Authorization: Bearer <token>'
-      }));
-      return;
-    }
-
-    if (req.url === '/sync' && req.method === 'GET') {
-      try {
-        // Lire le fichier chiffré
-        const syncData = readEncryptedSyncFile();
-
-        if (!syncData) {
-          console.warn('[Sync] /sync → connected: false (fichier sync inexistant)');
-          res.writeHead(200);
-          res.end(JSON.stringify({ connected: false }));
-          return;
-        }
-
-        // Vérifier que l'état n'est pas trop vieux (max CONFIG.SYNC_TIMEOUT_MS)
-        const age = Date.now() - (syncData.timestamp || 0);
-        if (!syncData.timestamp || age > CONFIG.SYNC_TIMEOUT_MS) {
-          console.warn(`[Sync] /sync → connected: false (timestamp périmé: ${Math.round(age / 1000)}s, max: ${CONFIG.SYNC_TIMEOUT_MS / 1000}s)`);
-          res.writeHead(200);
-          res.end(JSON.stringify({ connected: false }));
-          return;
-        }
-
-        // SÉCURITÉ: Whitelist des champs autorisés (pas de spread aveugle)
-        res.writeHead(200);
-        res.end(JSON.stringify({
-          connected: true,
-          vaultUrl: syncData.vaultUrl,
-          username: syncData.username,
-          timestamp: syncData.timestamp
-        }));
-      } catch (err) {
-        console.error('❌ Erreur endpoint /sync:', err);
-        res.writeHead(200);
-        res.end(JSON.stringify({ connected: false }));
-      }
-    } else if (req.url.startsWith('/api/totp/') && req.method === 'GET') {
-      // Endpoint pour générer un code TOTP
-      try {
-        // Lire le fichier chiffré
-        const syncData = readEncryptedSyncFile();
-
-        if (!syncData) {
-          res.writeHead(401);
-          res.end(JSON.stringify({ error: 'Not authenticated' }));
-          return;
-        }
-
-        // Vérifier que l'état n'est pas trop vieux
-        if (!syncData.timestamp || Date.now() - syncData.timestamp > CONFIG.SYNC_TIMEOUT_MS || !syncData.connected) {
-          res.writeHead(401);
-          res.end(JSON.stringify({ error: 'Not authenticated' }));
-          return;
-        }
-
-        // Extraire le nom de la clé TOTP de l'URL
-        const parsedTotpUrl = new URL(req.url, 'http://localhost');
-        const totpKeyName = decodeURIComponent(parsedTotpUrl.pathname.replace('/api/totp/', ''));
-
-        // 🔒 Validation du nom de clé TOTP (sécurité path traversal)
-        if (!totpKeyName || totpKeyName.includes('..') || totpKeyName.includes('/') || totpKeyName.includes('\\') || /[\x00-\x1F\x7F]/.test(totpKeyName)) {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: 'Invalid TOTP key name' }));
-          return;
-        }
-
-        // Limiter la longueur pour éviter les abus
-        if (totpKeyName.length > CONFIG.MAX_TOTP_KEY_LENGTH) {
-          res.writeHead(400);
-          res.end(JSON.stringify({ error: 'TOTP key name too long' }));
-          return;
-        }
-
-        // Demander au renderer process de générer le code TOTP
-        if (mainWindow && mainWindow.webContents) {
-          // ID de corrélation pour éviter la race condition entre requêtes TOTP concurrentes
-          const requestId = crypto.randomBytes(8).toString('hex');
-          mainWindow.webContents.send('get-totp-code', totpKeyName, requestId);
-
-          // Attendre la réponse (avec timeout)
-          let responded = false;
-          const totpHandler = (event, result) => {
-            // SÉCURITÉ: Vérifier que la réponse provient bien de la fenêtre principale
-            if (event.sender !== mainWindow?.webContents) return;
-            if (responded) return;
-            responded = true;
-            clearTimeout(timeout);
-            if (result.success) {
-              res.writeHead(200);
-              res.end(JSON.stringify({ success: true, code: result.code }));
-            } else {
-              res.writeHead(404);
-              res.end(JSON.stringify({ error: result.error || 'TOTP not found' }));
-            }
-          };
-          ipcMain.once(`totp-code-response-${requestId}`, totpHandler);
-          const timeout = setTimeout(() => {
-            if (responded) return;
-            responded = true;
-            ipcMain.removeListener(`totp-code-response-${requestId}`, totpHandler);
-            res.writeHead(500);
-            res.end(JSON.stringify({ error: 'Timeout' }));
-          }, CONFIG.TOTP_REQUEST_TIMEOUT_MS);
-        } else {
-          res.writeHead(500);
-          res.end(JSON.stringify({ error: 'Desktop app not ready' }));
-        }
-      } catch (err) {
-        console.error('[TOTP] Erreur endpoint:', err);
-        res.writeHead(500);
-        res.end(JSON.stringify({ error: 'Internal error' }));
-      }
-    } else if (req.url === '/api/secrets' && req.method === 'GET') {
-      // Endpoint pour récupérer tous les secrets (appelé par l'extension)
-      try {
-        // Lire le fichier chiffré
-        const syncData = readEncryptedSyncFile();
-
-        if (!syncData) {
-          res.writeHead(401);
-          res.end(JSON.stringify({ error: 'Not authenticated' }));
-          return;
-        }
-
-        // Vérifier que l'état n'est pas trop vieux (max 2 minutes)
-        if (!syncData.timestamp || Date.now() - syncData.timestamp > CONFIG.SYNC_TIMEOUT_MS || !syncData.connected) {
-          res.writeHead(401);
-          res.end(JSON.stringify({ error: 'Not authenticated' }));
-          return;
-        }
-
-        // Lire les secrets depuis le fichier de sync
-        // SÉCURITÉ: Filtrer les champs sensibles (ne garder que ce dont l'extension a besoin)
-        const rawSecrets = Array.isArray(syncData.secrets) ? syncData.secrets : [];
-        const secrets = rawSecrets.map(s => ({
-          name: s.name,
-          engine: s.engine,
-          username: s.username,
-          password: s.password,
-          url: s.url,
-          tags: s.tags,
-          notes: s.notes,
-          type: s.type
-        }));
-        res.writeHead(200);
-        res.end(JSON.stringify({ success: true, secrets }));
-      } catch (err) {
-        console.error('❌ Erreur endpoint /api/secrets:', err);
-        res.writeHead(500);
-        res.end(JSON.stringify({ error: 'Internal error' }));
-      }
+    const clientIp = req.socket.remoteAddress;
+    const now = Date.now();
+    let limitedRoute = '';
+    try { limitedRoute = new URL(req.url, 'http://127.0.0.1').pathname; } catch { /* compteur par défaut */ }
+    const isReadRoute = (req.method === 'GET' || req.method === 'OPTIONS') && SYNC_READ_ROUTES.has(limitedRoute);
+    const rateKey = clientIp + (isReadRoute ? '|read' : '|default');
+    const rateMax = isReadRoute ? SYNC_READ_RATE_LIMIT : SYNC_RATE_LIMIT;
+    const rateEntry = syncRateLimit.get(rateKey);
+    if (rateEntry && now - rateEntry.start < SYNC_RATE_WINDOW) {
+      rateEntry.count++;
+      if (rateEntry.count > rateMax) return sendJson(res, 429, { error: 'Too many requests' });
     } else {
-      res.writeHead(404);
-      res.end(JSON.stringify({ error: 'Not found' }));
+      syncRateLimit.set(rateKey, { start: now, count: 1 });
     }
+    if (syncRateLimit.size > 100) {
+      for (const [ip, entry] of syncRateLimit) {
+        if (now - entry.start > SYNC_RATE_WINDOW) syncRateLimit.delete(ip);
+      }
+    }
+
+    // SÉCURITÉ: seules les origines chrome-extension:// au format strict sont acceptées
+    // Identification de l'extension : header Origin (envoyé par Chrome quand CORS s'applique) ou,
+    // à défaut, header X-Vault-Extension-Id (Chrome omet Origin sur les hôtes couverts par host_permissions).
+    // Les deux sont forgeables par un processus local : la sécurité repose sur l'approbation explicite
+    // de l'identifiant par l'utilisateur et sur le bearer token, pas sur ce header.
+    const origin = req.headers.origin;
+    let extId = extensionIdFromOrigin(origin);
+    if (!extId) {
+      const headerId = req.headers['x-vault-extension-id'];
+      if (typeof headerId === 'string' && EXTENSION_ID_RE.test(headerId)) extId = headerId;
+    }
+    if (extId && origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Vault-Extension, X-Vault-Extension-Id');
+      // Chrome 117+ : Private Network Access (accès à 127.0.0.1 depuis un service worker)
+      res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(extId ? 200 : 403);
+      return res.end();
+    }
+
+    if (!extId) {
+      // L'origine est journalisée (tronquée) pour faciliter le diagnostic d'appairage ; ce n'est pas un secret
+      log.warn('[Sync] Requête refusée: origin non extension (' + String(origin || 'absent').slice(0, 64) + ')');
+      return sendJson(res, 403, { error: 'Forbidden: Chrome extension origin required' });
+    }
+
+    const reqUrl = new URL(req.url, 'http://127.0.0.1');
+    const route = reqUrl.pathname;
+
+    // Obtention du token : appairage explicite de l'extension à la première demande
+    if (route === '/auth/token' && req.method === 'GET') {
+      if (req.headers['x-vault-extension'] !== 'rdvault') {
+        return sendJson(res, 403, { error: 'Forbidden: Chrome extension origin required' });
+      }
+      if (!syncAuthToken) return sendJson(res, 503, { error: 'Token not ready' });
+      const approved = await requestExtensionPairing(extId);
+      if (!approved) return sendJson(res, 403, { error: 'pairing_denied' });
+      return sendJson(res, 200, { token: syncAuthToken });
+    }
+
+    // Tous les autres endpoints : extension appairée ET bearer valide
+    if (!pairedExtensionIds.has(extId)) return sendJson(res, 403, { error: 'pairing_required' });
+    if (!verifyAuthToken(req)) {
+      return sendJson(res, 401, { error: 'Unauthorized', message: 'Token d\'authentification manquant ou invalide' });
+    }
+
+    if (route === '/sync' && req.method === 'GET') {
+      if (!syncStateIsFresh()) return sendJson(res, 200, { connected: false });
+      return sendJson(res, 200, {
+        connected: true,
+        vaultUrl: syncState.vaultUrl,
+        username: syncState.username,
+        timestamp: syncState.timestamp
+      });
+    }
+
+    if ((route === '/api/secrets' || route === '/api/secret') && req.method === 'GET') {
+      if (!syncStateIsFresh()) return sendJson(res, 401, { error: 'Not authenticated' });
+      const host = String(reqUrl.searchParams.get('host') || '').toLowerCase();
+      if (!isValidHostname(host)) {
+        return sendJson(res, 400, { error: 'Missing or invalid host parameter' });
+      }
+      const matching = syncState.secrets.filter(s => secretMatchesHost(s, host));
+
+      if (route === '/api/secrets') {
+        // SÉCURITÉ: jamais de mot de passe ni de notes dans la liste
+        return sendJson(res, 200, {
+          success: true,
+          secrets: matching.map(s => ({ name: s.name, engine: s.engine, username: s.username, url: s.url, type: s.type }))
+        });
+      }
+
+      const engine = String(reqUrl.searchParams.get('engine') || '');
+      const name = String(reqUrl.searchParams.get('name') || '');
+      const secret = matching.find(s => s.engine === engine && s.name === name);
+      if (!secret) return sendJson(res, 404, { error: 'Secret not found for this host' });
+      log.info('[Sync] Mot de passe transmis à l\'extension pour ' + host);
+      return sendJson(res, 200, {
+        success: true,
+        secret: { name: secret.name, engine: secret.engine, username: secret.username, password: secret.password, url: secret.url, type: secret.type }
+      });
+    }
+
+    if (route.startsWith('/api/totp/') && req.method === 'GET') {
+      if (!syncStateIsFresh()) return sendJson(res, 401, { error: 'Not authenticated' });
+      let totpKeyName;
+      try {
+        totpKeyName = decodeURIComponent(route.slice('/api/totp/'.length));
+      } catch {
+        return sendJson(res, 400, { error: 'Invalid TOTP key name' });
+      }
+      // « / » accepté (SYNC-27) : une entrée rangée dans un dossier a pour nom son chemin complet (« dossier/compte »),
+      // donc une clé TOTP « PRÉFIXE-dossier/compte », créée et servie par l'application ; le renderer encode le nom
+      // (encodeURIComponent) avant de l'insérer dans l'URL du coffre. « .. », « \ » et caractères de contrôle restent refusés.
+      // eslint-disable-next-line no-control-regex -- volontaire : nom de clé TOTP avec caractère de contrôle refusé
+      if (!totpKeyName || totpKeyName.includes('..') || /[\\\x00-\x1F\x7F]/.test(totpKeyName)) {
+        return sendJson(res, 400, { error: 'Invalid TOTP key name' });
+      }
+      if (totpKeyName.length > CONFIG.MAX_TOTP_KEY_LENGTH) return sendJson(res, 400, { error: 'TOTP key name too long' });
+      if (!mainWindow || mainWindow.isDestroyed()) return sendJson(res, 500, { error: 'Desktop app not ready' });
+
+      // Demander au renderer de générer le code (ID de corrélation + timeout)
+      const requestId = crypto.randomBytes(8).toString('hex');
+      let responded = false;
+      const totpHandler = (event, result) => {
+        // SÉCURITÉ: la réponse doit provenir de la fenêtre principale
+        if (event.sender !== mainWindow?.webContents) return;
+        if (responded) return;
+        responded = true;
+        clearTimeout(timeout);
+        if (result && result.success) sendJson(res, 200, { success: true, code: result.code });
+        else sendJson(res, 404, { error: (result && result.error) || 'TOTP not found' });
+      };
+      ipcMain.once('totp-code-response-' + requestId, totpHandler);
+      const timeout = setTimeout(() => {
+        if (responded) return;
+        responded = true;
+        ipcMain.removeListener('totp-code-response-' + requestId, totpHandler);
+        sendJson(res, 500, { error: 'Timeout' });
+      }, CONFIG.TOTP_REQUEST_TIMEOUT_MS);
+      mainWindow.webContents.send('get-totp-code', totpKeyName, requestId);
+      return;
+    }
+
+    // ----- Passkeys (WebAuthn) : stockées dans le coffre chiffré via le renderer -----
+    if (route === '/api/passkeys' && req.method === 'GET') {
+      if (!syncStateIsFresh()) return sendJson(res, 401, { error: 'Not authenticated' });
+      const rpId = String(reqUrl.searchParams.get('rpId') || '').toLowerCase();
+      if (!isValidHostname(rpId)) return sendJson(res, 400, { error: 'Invalid rpId' });
+      const result = await requestFromRenderer('passkey-list', { rpId }, CONFIG.TOTP_REQUEST_TIMEOUT_MS);
+      return sendJson(res, result && result.success ? 200 : 500, result || { success: false });
+    }
+    if (route === '/api/passkey' && req.method === 'POST') {
+      if (!syncStateIsFresh()) return sendJson(res, 401, { error: 'Not authenticated' });
+      const body = await readJsonBody(req, 16384);
+      const pk = body && body.passkey;
+      if (!pk || !isValidHostname(String(pk.rpId || '').toLowerCase()) || typeof pk.credentialId !== 'string' || typeof pk.privateKeyJwk !== 'object') {
+        return sendJson(res, 400, { error: 'Invalid passkey' });
+      }
+      log.info('[Sync] Enregistrement d\'une passkey pour ' + String(pk.rpId).toLowerCase());
+      const result = await requestFromRenderer('passkey-store', { passkey: pk }, 15000);
+      return sendJson(res, result && result.success ? 200 : 500, result || { success: false });
+    }
+    if (route === '/api/passkey/count' && req.method === 'POST') {
+      if (!syncStateIsFresh()) return sendJson(res, 401, { error: 'Not authenticated' });
+      const body = await readJsonBody(req, 4096);
+      if (!body || !isValidHostname(String(body.rpId || '').toLowerCase()) || typeof body.credentialId !== 'string') {
+        return sendJson(res, 400, { error: 'Invalid request' });
+      }
+      const result = await requestFromRenderer('passkey-update-count', { rpId: String(body.rpId).toLowerCase(), credentialId: body.credentialId, signCount: Number(body.signCount) || 0 }, 10000);
+      return sendJson(res, result && result.success ? 200 : 500, result || { success: false });
+    }
+
+    return sendJson(res, 404, { error: 'Not found' });
   });
 
   syncServer.listen(CONFIG.SYNC_PORT, '127.0.0.1', () => {
-    console.log(`[PERF] Sync server ready: ${Date.now() - syncStart}ms`);
-    console.log(`Sync server listening on http://127.0.0.1:${CONFIG.SYNC_PORT}`);
+    syncServerError = null;
+    log.info('[Sync] Serveur prêt sur http://127.0.0.1:' + CONFIG.SYNC_PORT + ' (' + (Date.now() - syncStart) + 'ms)');
   });
-
   syncServer.on('error', (err) => {
-    console.error('Sync server error:', err);
+    log.error('[Sync] Erreur serveur:', err.message);
+    // SYNC-30 : port fixe déjà pris (RDVAULT d'une autre session Windows sur ce poste, autre programme) ou
+    // réservé. L'échec n'était que journalisé : l'extension de ce navigateur pouvait alors joindre une autre
+    // application que la sienne. Avertissement visible, traduit, une seule fois ; boîte INDÉPENDANTE (sans
+    // fenêtre parente) : la fenêtre principale reste utilisable. État exposé par sync-read-state.
+    const code = typeof (err && err.code) === 'string' ? err.code.slice(0, 32) : 'UNKNOWN';
+    if (!['EADDRINUSE', 'EACCES', 'EADDRNOTAVAIL'].includes(code)) return;
+    syncServerError = code;
+    if (syncPortWarningShown) return;
+    syncPortWarningShown = true;
+    dialog.showMessageBox({
+      type: 'warning',
+      title: tm('syncPort.title'),
+      message: tm('syncPort.message', { port: CONFIG.SYNC_PORT }),
+      detail: tm('syncPort.detail', { port: CONFIG.SYNC_PORT, code }),
+      noLink: true,
+    }).catch(() => {});
   });
 }
 
@@ -739,8 +789,8 @@ function loadApp(win) {
   const buildIndex = path.join(__dirname, '../build/index.html');
   if (fs.existsSync(buildIndex)) {
     win.loadFile(buildIndex).catch(err => {
-      console.error('loadFile error:', err);
-      dialog.showErrorBox('Chargement échoué', String(err));
+      log.error('loadFile error:', err);
+      dialog.showErrorBox(tm('load.failed'), String(err));
     });
   } else {
     // SÉCURITÉ: Valider ELECTRON_START_URL pour n'autoriser que localhost en dev
@@ -751,16 +801,16 @@ function loadApp(win) {
         if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
           devUrl = process.env.ELECTRON_START_URL;
         } else {
-          console.warn('[SECURITY] ELECTRON_START_URL non-localhost ignorée');
+          log.warn('[SECURITY] ELECTRON_START_URL non-localhost ignorée');
         }
       } catch {
-        console.warn('[SECURITY] ELECTRON_START_URL invalide, utilisation de localhost:3000');
+        log.warn('[SECURITY] ELECTRON_START_URL invalide, utilisation de localhost:3000');
       }
     }
-    console.warn('[Electron] build/index.html introuvable. Mode DEV →', devUrl);
+    log.warn('[Electron] build/index.html introuvable. Mode DEV →', devUrl);
     win.loadURL(devUrl).catch(err => {
-      console.error('loadURL error:', err);
-      dialog.showErrorBox('Chargement échoué (dev)', String(err));
+      log.error('loadURL error:', err);
+      dialog.showErrorBox(tm('load.failedDev'), String(err));
     });
   }
 }
@@ -778,7 +828,7 @@ function loadApp(win) {
  * - L'utilisateur peut maximiser la fenêtre (plein écran) en mode principal
  * - L'utilisateur NE PEUT PAS redimensionner manuellement (drag des bords)
  * - La restauration depuis maximisé revient à la taille du mode courant
- * - Démarre en mode login (480x560, frameless) puis passe en mode principal (1280x800)
+ * - Démarre en mode login (LOGIN_WIDTH×LOGIN_HEIGHT, frameless) puis passe en mode principal (MAIN_WIDTH×MAIN_HEIGHT)
  */
 
 // Tailles des deux modes fenêtre
@@ -792,7 +842,7 @@ let windowMode = 'login';
 
 function createWindow() {
   const winStart = Date.now();
-  console.log('[PERF] createWindow begin');
+  log.info('[PERF] createWindow begin');
 
   mainWindow = new BrowserWindow({
     show: false,
@@ -819,22 +869,32 @@ function createWindow() {
     },
   });
 
-  console.log(`[PERF] BrowserWindow created: ${Date.now() - winStart}ms`);
+  log.info(`[PERF] BrowserWindow created: ${Date.now() - winStart}ms`);
 
   // SÉCURITÉ: Désactiver l'ouverture des DevTools en production
   if (app.isPackaged) {
     mainWindow.webContents.on('devtools-opened', () => {
       mainWindow.webContents.closeDevTools();
-      console.warn('⚠️ Tentative d\'ouverture des DevTools bloquée (mode production)');
+      log.warn('⚠️ Tentative d\'ouverture des DevTools bloquée (mode production)');
     });
   }
 
   // SÉCURITÉ: Refuser toutes les demandes de permissions (caméra, micro, géoloc, notifications)
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
-    console.warn(`[SECURITY] Permission refusée: ${permission}`);
+    log.warn(`[SECURITY] Permission refusée: ${permission}`);
     callback(false);
   });
   mainWindow.webContents.session.setPermissionCheckHandler(() => false);
+
+  // SÉCURITÉ (REMOTE-3) : épinglage TLS du serveur Vault vérifié pour TOUT certificat présenté, y compris un
+  // certificat reconnu par le magasin système (voir vaultCertVerifyDecision)
+  try {
+    mainWindow.webContents.session.setCertificateVerifyProc((request, callback) => {
+      callback(vaultCertVerifyDecision(request));
+    });
+  } catch (err) {
+    log.error('[SSL] Vérification des certificats (épinglage) non installée : ' + (err && err.message));
+  }
 
   // Gérer la restauration depuis maximisé
   mainWindow.on('unmaximize', () => {
@@ -871,6 +931,18 @@ function createWindow() {
       }
     } catch { /* URL invalide, ignorer */ }
   }
+  // REMOTE-4 : proxy RBI (partage de sessions) joint depuis le renderer (ShareRbiModal : /create-share,
+  // /unwrap-rbi) : son origine doit figurer dans connect-src. Mode entreprise uniquement (get-app-config ne
+  // l'expose pas en mode local), https obligatoire, origine seule (aucun chemin ni caractère injecté).
+  let safeRbiOrigin = '';
+  if (!isLocalMode) {
+    try {
+      const rbiProxy = new URL(getConfig().RBI_PROXY_URL || '');
+      if (rbiProxy.protocol === 'https:') safeRbiOrigin = rbiProxy.origin;
+    } catch { /* non configuré ou invalide : non autorisé */ }
+  }
+  const connectSources = ["'self'", safeVaultUrl, safeRbiOrigin, `http://127.0.0.1:${CONFIG.SYNC_PORT}`, 'https://api.pwnedpasswords.com']
+    .filter(Boolean).join(' ');
 
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -881,7 +953,7 @@ function createWindow() {
           "script-src 'self';",
           "style-src 'self' 'unsafe-inline';",
           "img-src 'self' data:;",
-          `connect-src 'self' ${safeVaultUrl} http://127.0.0.1:${CONFIG.SYNC_PORT};`,
+          `connect-src ${connectSources};`,
           "frame-src 'none';",
           "object-src 'none';",
           "base-uri 'self';",
@@ -891,22 +963,29 @@ function createWindow() {
       }
     });
   });
-  console.log('🔒 Content Security Policy appliquée');
+  log.info('🔒 Content Security Policy appliquée');
 
   // SÉCURITÉ: Bloquer la navigation vers des URLs externes
   mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
-    const parsedUrl = new URL(navigationUrl);
-    // Autoriser uniquement localhost (dev) — file:// restreint au dossier app
-    if (parsedUrl.protocol === 'file:') {
-      const appDir = app.isPackaged ? path.dirname(process.execPath) : path.join(__dirname, '..');
-      const normalizedNav = path.normalize(parsedUrl.pathname);
-      if (!normalizedNav.startsWith(appDir)) {
-        event.preventDefault();
-        console.warn(`[SECURITY] Navigation file:// bloquée hors app: ${parsedUrl.pathname}`);
-      }
-    } else if (parsedUrl.hostname !== 'localhost') {
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(navigationUrl);
+    } catch {
       event.preventDefault();
-      console.warn(`[SECURITY] Navigation bloquée vers: ${parsedUrl.origin}`);
+      return;
+    }
+    // Autoriser uniquement localhost (dev) — file:// restreint au dossier de l'application
+    if (parsedUrl.protocol === 'file:') {
+      const appDir = path.resolve(app.isPackaged ? path.dirname(process.execPath) : path.join(__dirname, '..'));
+      let navPath = '';
+      try { navPath = path.resolve(fileURLToPath(parsedUrl)); } catch { navPath = ''; }
+      if (!navPath || !(navPath === appDir || navPath.startsWith(appDir + path.sep))) {
+        event.preventDefault();
+        log.warn('[SECURITY] Navigation file:// bloquée hors app');
+      }
+    } else if (parsedUrl.hostname !== 'localhost' || app.isPackaged) {
+      event.preventDefault();
+      log.warn('[SECURITY] Navigation bloquée vers: ' + parsedUrl.origin);
     }
   });
 
@@ -925,7 +1004,7 @@ function createWindow() {
           if (targetHost === vaultHost || trustedDomains.some(d => targetHost === d || targetHost.endsWith('.' + d))) {
             shell.openExternal(url);
           } else {
-            console.warn('[SECURITY] Ouverture externe bloquée: domaine non autorisé');
+            log.warn('[SECURITY] Ouverture externe bloquée: domaine non autorisé');
           }
         } catch {
           // URL invalide, ne pas ouvrir
@@ -937,19 +1016,27 @@ function createWindow() {
 
   // Charger l'application (APRÈS la mise en place de la CSP)
   loadApp(mainWindow);
-  console.log(`[PERF] loadApp called: ${Date.now() - winStart}ms`);
+  log.info(`[PERF] loadApp called: ${Date.now() - winStart}ms`);
+
+  // Mise à jour automatique (no-op en dev ou si electron-updater absent)
+  try {
+    const { initAutoUpdater } = require('./autoUpdater');
+    initAutoUpdater(() => mainWindow, { app, ipcMain });
+  } catch (err) {
+    log.warn('[Update] init ignorée: ' + (err && err.message));
+  }
 
   // Afficher la fenêtre RAPIDEMENT (après un court délai pour éviter le flash)
   setTimeout(() => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      console.log(`[PERF] Window shown (early): ${Date.now() - winStart}ms`);
+      log.info(`[PERF] Window shown (early): ${Date.now() - winStart}ms`);
       mainWindow.show();
       mainWindow.focus();
     }
   }, 500);
 
   mainWindow.once('ready-to-show', () => {
-    console.log(`[PERF] Content ready-to-show: ${Date.now() - winStart}ms`);
+    log.info(`[PERF] Content ready-to-show: ${Date.now() - winStart}ms`);
     try {
       mainWindow.webContents.focus();
       mainWindow.webContents.setIgnoreMenuShortcuts(true);
@@ -957,7 +1044,7 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('did-finish-load', () => {
-    console.log(`[PERF] Content did-finish-load: ${Date.now() - winStart}ms`);
+    log.info(`[PERF] Content did-finish-load: ${Date.now() - winStart}ms`);
     try {
       mainWindow.focus();
       mainWindow.webContents.focus();
@@ -971,7 +1058,45 @@ function createWindow() {
     } catch {}
   });
 
-  mainWindow.on('closed', () => { mainWindow = null; });
+  // SÉCURITÉ (SYNC-28) : l'état de synchronisation (mots de passe servis à l'extension) n'est vidé que par le
+  // renderer (déconnexion, délai d'inactivité) ou à la sortie. Renderer planté (mémoire, GPU, V8) : la fenêtre
+  // sans cadre reste affichée mais morte, sans déconnexion possible ; interface rechargée : retour à l'écran de
+  // connexion (session perdue). Dans ces cas, l'état est purgé immédiatement.
+  const ownWebContents = mainWindow.webContents;
+  const ownWindow = mainWindow;
+  ownWebContents.on('render-process-gone', (_event, details) => {
+    rendererUnresponsive = false; // processus disparu : l'état « planté » (isCrashed) prend le relais
+    purgeSyncState('renderer arrêté (' + String((details && details.reason) || 'inconnu').slice(0, 32) + ')');
+  });
+  ownWebContents.on('did-navigate', () => {
+    rendererUnresponsive = false; // nouveau document
+    purgeSyncState('interface rechargée');
+  });
+
+  // Renderer FIGÉ ('unresponsive', détecté par Chromium après plusieurs secondes sans réponse) : même purge
+  // que pour un plantage, et plus aucun état servi ni prolongé tant qu'il ne répond pas (une écriture
+  // reçue juste avant le gel ne doit pas être resservie). De nouveau réactif ('responsive') : il est
+  // invité à republier son état (useSync, depuis son cache, seulement si sa session est encore ouverte à
+  // ce moment ; une déconnexion ou une expiration traitée ensuite purge l'état comme d'habitude).
+  ownWindow.on('unresponsive', () => {
+    if (mainWindow !== ownWindow) return;
+    rendererUnresponsive = true;
+    purgeSyncState('interface figée');
+  });
+  ownWindow.on('responsive', () => {
+    if (mainWindow !== ownWindow || !rendererUnresponsive) return;
+    rendererUnresponsive = false;
+    log.info('[Sync] Interface de nouveau réactive : republication de l\'état demandée');
+    try {
+      if (!ownWebContents.isDestroyed()) ownWebContents.send('sync-resync-request');
+    } catch { /* fenêtre en cours de fermeture : rien à republier */ }
+  });
+
+  mainWindow.on('closed', () => {
+    if (mainWindow === ownWindow) rendererUnresponsive = false;
+    purgeSyncState('fenêtre principale fermée');
+    mainWindow = null;
+  });
 }
 
 // ========================================
@@ -980,8 +1105,27 @@ function createWindow() {
 // Les handlers IPC permettent à React d'appeler des fonctions Node.js/Electron
 // de manière sécurisée via contextBridge et ipcRenderer (défini dans preload.js)
 
-// Stockage des timers de copie sécurisée en cours
+// Stockage des timers de copie sécurisée en cours : la clé 'current' désigne la copie la
+// plus récente, celle qu'effacent « Effacer maintenant » et la fermeture (will-quit).
 let activeClipboardTimers = new Map();
+
+/**
+ * Enregistre une copie sécurisée (clipboard-copy-secure, mot de passe RDP / SFTP) comme
+ * copie courante, pour que la fermeture de l'application et « Effacer maintenant »
+ * l'effacent (presse-papiers s'il la contient encore + historique Win+V).
+ * La copie précédente est annulée : son contenu a été remplacé dans le presse-papiers et
+ * l'historique sera vidé par la nouvelle. Après le délai, l'entrée n'est retirée que si
+ * elle désigne encore CETTE copie (une copie plus récente ne doit pas être « oubliée »).
+ */
+function trackSecureClipboardCopy(timer, timeoutMs) {
+  const previous = activeClipboardTimers.get('current');
+  if (previous && previous !== timer) previous.cancel();
+  activeClipboardTimers.set('current', timer);
+  setTimeout(() => {
+    if (activeClipboardTimers.get('current') === timer) activeClipboardTimers.delete('current');
+  }, timeoutMs + 100);
+  return timer;
+}
 
 /**
  * Handler IPC : clipboard-copy-secure
@@ -1010,19 +1154,13 @@ ipcMain.handle('clipboard-copy-secure', (event, text, timeoutMs = 12000) => {
       activeClipboardTimers.get('current').cancel();
     }
 
-    // Créer le nouveau timer (copie + auto-effacement après délai)
-    const timer = copyPasswordWithAutoClear(text, { timeoutMs });
-
-    activeClipboardTimers.set('current', timer);
-
-    // Nettoyage automatique après le délai
-    setTimeout(() => {
-      activeClipboardTimers.delete('current');
-    }, timeoutMs + 100);
+    // Créer le nouveau timer (copie + auto-effacement après délai), enregistré comme
+    // copie courante (nettoyage différé conditionné à son identité)
+    trackSecureClipboardCopy(copyPasswordWithAutoClear(text, { timeoutMs }), timeoutMs);
 
     return { success: true, timeoutMs };
   } catch (error) {
-    console.error('Erreur lors de la copie sécurisée');
+    log.error('Erreur lors de la copie sécurisée');
     return { success: false, error: 'Erreur lors de la copie' };
   }
 });
@@ -1040,7 +1178,7 @@ ipcMain.handle('clipboard-clear-now', (event) => {
     }
     return { success: true };
   } catch (error) {
-    console.error('Erreur lors de l\'effacement du presse-papier');
+    log.error('Erreur lors de l\'effacement du presse-papier');
     return { success: false, error: 'Erreur lors de l\'effacement' };
   }
 });
@@ -1052,7 +1190,7 @@ ipcMain.handle('clipboard-clear', (event) => {
     clipboard.clear();
     return { success: true };
   } catch (error) {
-    console.error('Erreur lors de l\'effacement du presse-papier');
+    log.error('Erreur lors de l\'effacement du presse-papier');
     return { success: false, error: 'Erreur lors de l\'effacement' };
   }
 });
@@ -1073,104 +1211,88 @@ ipcMain.handle('clipboard-copy-rich-link', (event, url, label) => {
     });
     return { success: true };
   } catch (error) {
-    console.error('Erreur copie lien riche');
+    log.error('Erreur copie lien riche');
     return { success: false, error: 'Erreur copie lien' };
   }
 });
 
-// Gestionnaire IPC pour écrire l'état de synchronisation (maintenant chiffré)
+// Gestionnaire IPC pour écrire l'état de synchronisation (en mémoire uniquement)
 ipcMain.handle('sync-write-state', (event, state) => {
   try {
     if (!validateIpcSender(event)) return { success: false, error: 'Sender non autorisé' };
     if (!state || typeof state !== 'object') return { success: false, error: 'État invalide' };
 
+    // Déconnexion : purger immédiatement
+    if (!state.connected) {
+      syncState = null;
+      return { success: true };
+    }
+
     // SÉCURITÉ: Whitelist des champs autorisés (évite la pollution de données)
-    const MAX_SECRETS = 5000;
-    const syncData = {
-      vaultUrl: typeof state.vaultUrl === 'string' ? state.vaultUrl.slice(0, 2048) : '',
-      // SÉCURITÉ: Le token Vault n'est PAS stocké dans le fichier sync
-      // L'extension obtient son token via le endpoint HTTP /auth/token
-      username: typeof state.username === 'string' ? state.username.slice(0, 256) : '',
-      connected: Boolean(state.connected),
-      secrets: Array.isArray(state.secrets) ? state.secrets.slice(0, MAX_SECRETS).map(s => ({
-        name: typeof s.name === 'string' ? s.name.slice(0, 512) : '',
-        engine: typeof s.engine === 'string' ? s.engine.slice(0, 256) : '',
-        username: typeof s.username === 'string' ? s.username.slice(0, 512) : '',
-        password: typeof s.password === 'string' ? s.password.slice(0, 10000) : '',
-        url: typeof s.url === 'string' ? s.url.slice(0, 2048) : '',
-        website: typeof s.website === 'string' ? s.website.slice(0, 2048) : '',
-        tags: typeof s.tags === 'string' ? s.tags.slice(0, 1024) : '',
-        notes: typeof s.notes === 'string' ? s.notes.slice(0, 10000) : '',
-        type: typeof s.type === 'string' ? s.type.slice(0, 64) : ''
-      })) : [],
+    // Le renderer envoie TOUTES les entrées de TOUS les coffres (aplaties dans l'ordre des noms) : l'ancien
+    // plafond silencieux de 5 000 privait l'autoremplissage des entrées suivantes (souvent les autres coffres).
+    // Plafond de défense en profondeur (renderer compromis) très au-delà d'un usage réel, limites de taille
+    // par champ conservées ; s'il est atteint, la troncature est SIGNALÉE (réponse, sync-read-state, journal).
+    const all = Array.isArray(state.secrets) ? state.secrets : [];
+    const kept = all.length > CONFIG.MAX_SYNC_SECRETS ? all.slice(0, CONFIG.MAX_SYNC_SECRETS) : all;
+    const truncated = all.length - kept.length;
+    const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
+    syncState = {
+      vaultUrl: str(state.vaultUrl, 2048),
+      username: str(state.username, 256),
+      connected: true,
+      secrets: kept.map(s => ({
+        name: str(s.name, 512),
+        engine: str(s.engine, 256),
+        username: str(s.username, 512),
+        password: str(s.password, 10000),
+        url: str(s.url, 2048),
+        website: str(s.website, 2048),
+        type: str(s.type, 64)
+      })),
+      truncated,
       timestamp: Date.now()
     };
-
-    // Écrire le fichier chiffré au lieu de JSON en clair
-    writeEncryptedSyncFile(syncData);
-
-    return { success: true };
-  } catch (error) {
+    if (truncated > 0) {
+      log.warn(`[Sync] ${truncated} entrée(s) au-delà de ${CONFIG.MAX_SYNC_SECRETS} non transmise(s) à l'extension`);
+      return { success: true, stored: kept.length, truncated };
+    }
+    return { success: true, stored: kept.length };
+  } catch {
     return { success: false, error: 'Erreur écriture sync' };
   }
 });
 
-// Gestionnaire IPC pour lire l'état de synchronisation (maintenant déchiffré)
+// Gestionnaire IPC pour lire l'état de synchronisation (sans mot de passe)
 ipcMain.handle('sync-read-state', (event) => {
-  try {
-    if (!validateIpcSender(event)) return { success: false, error: 'Sender non autorisé' };
-    // Lire et déchiffrer le fichier
-    const syncData = readEncryptedSyncFile();
-
-    if (!syncData) {
-      return { success: true, data: null };
-    }
-
-    // Vérifier que l'état n'est pas trop vieux (max 30 secondes)
-    if (Date.now() - syncData.timestamp > CONFIG.HEARTBEAT_INTERVAL_MS) {
-      return { success: true, data: null };
-    }
-
-    // SÉCURITÉ: Ne pas retourner le token Vault au renderer
-    const { token: _discarded, ...safeData } = syncData;
-    return { success: true, data: safeData };
-  } catch (error) {
-    return { success: true, data: null };
+  if (!validateIpcSender(event)) return { success: false, error: 'Sender non autorisé' };
+  // serverError : échec d'écoute du serveur de synchronisation (SYNC-30, ex. EADDRINUSE), sinon null
+  // Tolérance de deux intervalles de heartbeat pour éviter la course à la limite
+  if (!syncState || Date.now() - syncState.timestamp > 2 * CONFIG.HEARTBEAT_INTERVAL_MS) {
+    return { success: true, data: null, serverError: syncServerError };
   }
+  return {
+    success: true,
+    serverError: syncServerError,
+    data: {
+      vaultUrl: syncState.vaultUrl,
+      username: syncState.username,
+      connected: syncState.connected,
+      timestamp: syncState.timestamp,
+      secretCount: syncState.secrets.length,
+      truncated: syncState.truncated || 0 // entrées non transmises à l'extension (plafond atteint)
+    }
+  };
 });
 
-// Gestionnaire IPC pour obtenir le chemin du fichier de sync
-ipcMain.handle('sync-get-path', () => {
-  // SÉCURITÉ: Ne pas exposer le chemin filesystem en production
-  if (app.isPackaged) {
-    return { success: false, error: 'Non disponible en production' };
-  }
-  return { success: true, path: SYNC_FILE };
-});
+// Le fichier de sync n'existe plus : conservé pour compatibilité de l'API preload
+ipcMain.handle('sync-get-path', () => ({ success: false, error: 'État de synchronisation en mémoire uniquement' }));
 
-// Gestionnaire IPC pour lire le token d'authentification chiffré (pour l'extension Chrome)
+// Token du serveur sync (en mémoire) — pour affichage dans les paramètres
 ipcMain.handle('sync-get-auth-token', (event) => {
-  try {
-    if (!validateIpcSender(event)) return { success: false, error: 'Sender non autorisé' };
-    if (!fs.existsSync(AUTH_TOKEN_FILE)) {
-      return { success: false, error: 'Token file not found' };
-    }
-
-    // Vérifier que safeStorage est disponible
-    if (!safeStorage.isEncryptionAvailable()) {
-      console.error('❌ Déchiffrement safeStorage non disponible pour le token');
-      return { success: false, error: 'Encryption not available' };
-    }
-
-    // Lire et déchiffrer le token
-    const encryptedBuffer = fs.readFileSync(AUTH_TOKEN_FILE);
-    const decryptedToken = safeStorage.decryptString(encryptedBuffer);
-
-    return { success: true, token: decryptedToken };
-  } catch (error) {
-    console.error('❌ Erreur lecture token chiffré');
-    return { success: false, error: 'Erreur lecture token' };
-  }
+  if (!validateIpcSender(event)) return { success: false, error: 'Sender non autorisé' };
+  if (!syncAuthToken) return { success: false, error: 'Token not ready' };
+  return { success: true, token: syncAuthToken };
 });
 
 // NOTE: Le handler 'create-https-agent' a été supprimé (exposait rejectUnauthorized: false).
@@ -1204,7 +1326,7 @@ ipcMain.handle('get-app-config', (event) => {
       }
     };
   } catch (error) {
-    console.error('Erreur lors de la récupération de la configuration');
+    log.error('Erreur lors de la récupération de la configuration');
     return { success: false, error: 'Erreur chargement configuration' };
   }
 });
@@ -1235,8 +1357,9 @@ const browserPaths = {
 let installedBrowsersCache = null;
 
 // Gestionnaire IPC pour obtenir la liste des navigateurs installés
-ipcMain.handle('get-installed-browsers', async () => {
+ipcMain.handle('get-installed-browsers', async (event) => {
   try {
+    if (!validateIpcSender(event)) return { success: false, browsers: [] };
     // Retourner le cache si disponible
     if (installedBrowsersCache !== null) {
       return { success: true, browsers: installedBrowsersCache };
@@ -1259,7 +1382,7 @@ ipcMain.handle('get-installed-browsers', async () => {
 
     return { success: true, browsers: installed };
   } catch (error) {
-    console.error('Erreur lors de la détection des navigateurs:', error);
+    log.error('Erreur lors de la détection des navigateurs:', error);
     return { success: false, browsers: [] };
   }
 });
@@ -1291,19 +1414,16 @@ ipcMain.handle('open-ssh-connection', async (event, { host, username, port }) =>
     }
 
     if (!puttyPath) {
-      return { success: false, error: 'PuTTY non trouvé. Veuillez installer PuTTY.' };
+      return { success: false, error: tm('error.puttyNotFound') };
     }
 
-    // Construire la commande
-    const portArg = port && port !== '22' ? `-P ${port}` : '';
     const target = username ? `${username}@${host}` : host;
-
     const args = ['-ssh'];
-    if (portArg) args.push('-P', port);
+    if (port && String(port) !== '22') args.push('-P', String(port));
     args.push(target);
 
     // SÉCURITÉ: Ne pas logger les arguments complets (peuvent contenir des informations sensibles)
-    console.log('[SSH] Lancement PuTTY vers', host);
+    log.info('[SSH] Lancement PuTTY vers', host);
 
     // Lancer PuTTY
     spawn(puttyPath, args, {
@@ -1313,8 +1433,8 @@ ipcMain.handle('open-ssh-connection', async (event, { host, username, port }) =>
 
     return { success: true };
   } catch (error) {
-    console.error('Erreur ouverture SSH');
-    return { success: false, error: 'Erreur ouverture connexion SSH' };
+    log.error('Erreur ouverture SSH');
+    return { success: false, error: tm('error.sshOpen') };
   }
 });
 
@@ -1324,12 +1444,12 @@ ipcMain.handle('open-external-link', async (event, url) => {
     if (!validateIpcSender(event)) return { success: false, error: 'Sender non autorisé' };
     // SÉCURITÉ: Valider le schéma URL pour empêcher les protocoles dangereux (file:, ms-msdt:, etc.)
     if (!validateUrlScheme(url)) {
-      return { success: false, error: 'Protocole URL non autorisé' };
+      return { success: false, error: tm('error.urlSchemeNotAllowed') };
     }
     await shell.openExternal(url);
     return { success: true };
   } catch (error) {
-    return { success: false, error: 'Erreur ouverture lien' };
+    return { success: false, error: tm('error.linkOpen') };
   }
 });
 
@@ -1342,25 +1462,20 @@ ipcMain.handle('open-rdp-connection', async (event, params) => {
     const v = validateConnectionParams(host, username, port);
     if (!v.valid) return { success: false, error: v.error };
 
-    // Parser le username pour extraire le domaine (ex: LAB\username ou username@domain)
-    let domain = '';
+    // Domaine : format DOMAINE\utilisateur, ou paramètre domain explicite.
+    // Le format UPN (utilisateur@domaine) est transmis tel quel : mstsc le gère nativement.
+    let domain = typeof params.domain === 'string' ? params.domain : '';
     let user = username || '';
-
     if (username && username.includes('\\')) {
-      // Format: DOMAIN\username
-      const parts = username.split('\\');
-      domain = parts[0];
-      user = parts[1];
-    } else if (username && username.includes('@')) {
-      // Format: username@domain (UPN)
-      const parts = username.split('@');
-      user = parts[0];
-      domain = parts[1];
+      const idx = username.indexOf('\\');
+      domain = username.slice(0, idx);
+      user = username.slice(idx + 1);
     }
 
     // SÉCURITÉ: Valider le domaine extrait contre l'injection de caractères de contrôle
-    if (domain && (/[\x00-\x1F\s;|&`$(){}#\[\]\/\?%]/.test(domain) || domain.length > 253)) {
-      return { success: false, error: 'Domaine RDP invalide' };
+    // eslint-disable-next-line no-control-regex -- volontaire : détection des caractères de contrôle
+    if (domain && (/[\x00-\x1F\s;|&`$(){}#[\]/?%]/.test(domain) || domain.length > 253)) {
+      return { success: false, error: tm('error.rdpDomainInvalid') };
     }
 
     // Créer un fichier RDP temporaire
@@ -1428,7 +1543,8 @@ ipcMain.handle('open-rdp-connection', async (event, params) => {
 
     // Si un mot de passe est fourni, le copier avec auto-effacement
     if (password) {
-      copyPasswordWithAutoClear(password, { timeoutMs: CONFIG.CLIPBOARD_TIMEOUT_MS || 12000 });
+      // Copie courante : effacée aussi à la fermeture et par « Effacer maintenant »
+      trackSecureClipboardCopy(copyPasswordWithAutoClear(password, { timeoutMs: CONFIG.CLIPBOARD_TIMEOUT_MS || 12000 }), CONFIG.CLIPBOARD_TIMEOUT_MS || 12000);
     }
 
     // Ouvrir la connexion RDP avec mstsc (chemin complet pour éviter le PATH hijacking)
@@ -1452,8 +1568,8 @@ ipcMain.handle('open-rdp-connection', async (event, params) => {
 
     return { success: true };
   } catch (error) {
-    console.error('[RDP] Erreur');
-    return { success: false, error: 'Erreur ouverture connexion RDP' };
+    log.error('[RDP] Erreur');
+    return { success: false, error: tm('error.rdpOpen') };
   }
 });
 
@@ -1545,7 +1661,8 @@ ipcMain.handle('open-sftp-connection', async (event, params) => {
 
       // Copier le mot de passe avec auto-effacement
       if (password) {
-        copyPasswordWithAutoClear(password, { timeoutMs: CONFIG.CLIPBOARD_TIMEOUT_MS || 12000 });
+        // Copie courante : effacée aussi à la fermeture et par « Effacer maintenant »
+        trackSecureClipboardCopy(copyPasswordWithAutoClear(password, { timeoutMs: CONFIG.CLIPBOARD_TIMEOUT_MS || 12000 }), CONFIG.CLIPBOARD_TIMEOUT_MS || 12000);
       }
 
       spawn(fileZillaPath, [sftpUrl], { detached: true, stdio: 'ignore' }).unref();
@@ -1583,7 +1700,8 @@ FSProtocol=2
 
       // Copier le mot de passe avec auto-effacement
       if (password) {
-        copyPasswordWithAutoClear(password, { timeoutMs: CONFIG.CLIPBOARD_TIMEOUT_MS || 12000 });
+        // Copie courante : effacée aussi à la fermeture et par « Effacer maintenant »
+        trackSecureClipboardCopy(copyPasswordWithAutoClear(password, { timeoutMs: CONFIG.CLIPBOARD_TIMEOUT_MS || 12000 }), CONFIG.CLIPBOARD_TIMEOUT_MS || 12000);
       }
 
       spawn(winScpPath, [sftpUrl], { detached: true, stdio: 'ignore' }).unref();
@@ -1602,11 +1720,11 @@ FSProtocol=2
       return { success: true, client: 'winscp', passwordCopied: !!password };
     } else {
       // Ni FileZilla ni WinSCP n'est installé
-      return { success: false, error: 'FileZilla ou WinSCP n\'est pas installé sur ce système' };
+      return { success: false, error: tm('error.sftpClientMissing') };
     }
   } catch (error) {
-    console.error('[SFTP] Erreur');
-    return { success: false, error: 'Erreur ouverture connexion SFTP' };
+    log.error('[SFTP] Erreur');
+    return { success: false, error: tm('error.sftpOpen') };
   }
 });
 
@@ -1615,7 +1733,7 @@ ipcMain.handle('open-url-in-browser', async (event, url, browser) => {
     if (!validateIpcSender(event)) return { success: false, error: 'Sender non autorisé' };
     // SÉCURITÉ: Valider le schéma URL
     if (!validateUrlScheme(url)) {
-      return { success: false, error: 'Protocole URL non autorisé' };
+      return { success: false, error: tm('error.urlSchemeNotAllowed') };
     }
 
     if (browser === 'default') {
@@ -1626,7 +1744,7 @@ ipcMain.handle('open-url-in-browser', async (event, url, browser) => {
 
     const ALLOWED_BROWSERS = ['chrome', 'firefox', 'edge', 'brave'];
     if (browser && browser !== 'default' && !ALLOWED_BROWSERS.includes(browser)) {
-      return { success: false, error: 'Navigateur non reconnu' };
+      return { success: false, error: tm('error.browserUnknown') };
     }
 
     const paths = browserPaths[browser];
@@ -1653,18 +1771,18 @@ ipcMain.handle('open-url-in-browser', async (event, url, browser) => {
 
     // SÉCURITÉ: '--' empêche l'URL d'être interprétée comme un flag du navigateur
     if (url.startsWith('-')) {
-      return { success: false, error: 'URL invalide' };
+      return { success: false, error: tm('error.invalidUrl') };
     }
     spawn(browserPath, ['--', url], { detached: true, stdio: 'ignore' }).unref();
     return { success: true };
   } catch (error) {
-    console.error('Erreur lors de l\'ouverture de l\'URL:', error.message);
+    log.error('Erreur lors de l\'ouverture de l\'URL:', error.message);
     // Fallback sur le navigateur par défaut
     try {
       await shell.openExternal(url);
       return { success: true, fallback: true };
     } catch {
-      return { success: false, error: 'Erreur ouverture URL' };
+      return { success: false, error: tm('error.urlOpen') };
     }
   }
 });
@@ -1729,7 +1847,7 @@ ipcMain.handle('audit-read-log-file', async (event, filePath, maxLines = 1000) =
       loadedLines: limitedLines.length
     };
   } catch (error) {
-    console.error('Erreur lors de la lecture du fichier de logs');
+    log.error('Erreur lors de la lecture du fichier de logs');
     return { success: false, error: 'Erreur lors de la lecture du fichier de logs' };
   }
 });
@@ -1755,7 +1873,7 @@ ipcMain.handle('audit-tail-log-file', async (event, filePath, lines = 100, sshCo
     // Si sshConfig est fourni, lire via SSH
     if (sshConfig && sshConfig.host) {
       // SÉCURITÉ SSH: Validation du chemin en tant que chemin Unix (pas path.resolve Windows)
-      if (!/^\/var\/log\/vault\/[a-zA-Z0-9._\-\/]+$/.test(filePath)) {
+      if (!/^\/var\/log\/vault\/[a-zA-Z0-9._\-/]+$/.test(filePath)) {
         return { success: false, error: 'Chemin SSH non autorisé. Seuls /var/log/vault/* sont accessibles.' };
       }
 
@@ -1763,6 +1881,7 @@ ipcMain.handle('audit-tail-log-file', async (event, filePath, lines = 100, sshCo
       if (typeof sshConfig.host !== 'string' || sshConfig.host.length > 253 || /[\s;|&`$]/.test(sshConfig.host)) {
         return { success: false, error: 'Hôte SSH invalide' };
       }
+      // eslint-disable-next-line no-control-regex -- volontaire : utilisateur SSH avec caractère de contrôle refusé
       if (sshConfig.username && (typeof sshConfig.username !== 'string' || sshConfig.username.length > 128 || /[\x00-\x1F;|&`$]/.test(sshConfig.username))) {
         return { success: false, error: 'Utilisateur SSH invalide' };
       }
@@ -1773,6 +1892,12 @@ ipcMain.handle('audit-tail-log-file', async (event, filePath, lines = 100, sshCo
         const sshPort = Number(sshConfig.port);
         if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) {
           return { success: false, error: 'Port SSH invalide' };
+        }
+      }
+      // Empreinte de clé d'hôte épinglée (facultative) : « SHA256:<base64> », avec ou sans padding
+      if (sshConfig.hostFingerprint !== undefined && sshConfig.hostFingerprint !== null) {
+        if (typeof sshConfig.hostFingerprint !== 'string' || !/^(SHA256:)?[A-Za-z0-9+/]{43}=?$/i.test(sshConfig.hostFingerprint.trim())) {
+          return { success: false, error: 'Empreinte de clé d\'hôte SSH invalide' };
         }
       }
       // Restreindre la clé privée au répertoire ~/.ssh/ (avec résolution de symlinks)
@@ -1835,10 +1960,47 @@ ipcMain.handle('audit-tail-log-file', async (event, filePath, lines = 100, sshCo
       loadedLines: tailLines.length
     };
   } catch (error) {
-    console.error('Erreur lors de la lecture du fichier de logs');
+    // Clé d'hôte SSH inconnue/changée/refusée : message explicite (code + empreintes attendue/observée)
+    // remonté au renderer. Ces messages ne contiennent ni mot de passe ni contenu de fichier.
+    if (error && typeof error.code === 'string' && (error.code.startsWith('HOST_KEY_') || error.code === 'KNOWN_HOSTS_WRITE')) {
+      log.warn(`[Audit SSH] Clé d'hôte refusée (${error.code})`);
+      return { success: false, error: error.message, code: error.code, expected: error.expected || null, observed: error.observed || null };
+    }
+    log.error('Erreur lors de la lecture du fichier de logs');
     return { success: false, error: 'Erreur lors de la lecture du fichier de logs' };
   }
 });
+
+/**
+ * Invite l'utilisateur à accepter (et mémoriser) une clé d'hôte SSH inconnue lors de l'audit SSH.
+ * Bouton par défaut : Refuser. Sans fenêtre principale, la clé est refusée.
+ * Le signal (facultatif) ferme l'invite comme une annulation quand la connexion meurt pendant l'attente :
+ * une invite annulée (ou répondue après l'annulation) renvoie false, rien n'est mémorisé.
+ * @param {{ host: string, port: number, fingerprint: string }} info
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<boolean>}
+ */
+async function confirmNewHostKey({ host, port, fingerprint }, signal) {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  if (!win || (signal && signal.aborted)) return false;
+  try {
+    // Textes dans la langue de l'interface ; ordre des boutons inchangé (0 = mémoriser, 1 = refuser, par défaut)
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: [tm('button.rememberContinue'), tm('button.deny')],
+      defaultId: 1,
+      cancelId: 1,
+      title: tm('hostKey.title'),
+      message: tm('hostKey.message', { host, port }),
+      detail: tm('hostKey.detail', { fingerprint }),
+      noLink: true,
+      ...(signal ? { signal } : {}),
+    });
+    return response === 0 && !(signal && signal.aborted);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Fonction helper pour lire un fichier distant via SSH
@@ -1849,18 +2011,44 @@ ipcMain.handle('audit-tail-log-file', async (event, filePath, lines = 100, sshCo
  * Sécurité :
  * - Whitelist de chemins autorisés (/var/log/vault/* uniquement)
  * - Protection contre command injection (échappement du chemin avec single quotes)
- * - Timeout de connexion (10 secondes)
+ * - Vérification de la clé d'hôte AVANT l'envoi du mot de passe : empreinte épinglée (sshConfig.hostFingerprint),
+ *   sinon mémoire known_hosts.json (userData, partagée avec le serveur CLI), sinon invite utilisateur ;
+ *   clé changée/refusée/inconnue → rejet avec err.code HOST_KEY_* (err.expected / err.observed) ;
+ *   connexion perdue pendant l'invite → invite fermée, rien mémorisé, err.code HOST_KEY_PROMPT_ABORTED
+ * - Timeout de connexion (CONFIG.SSH_TIMEOUT_MS, suspendu pendant l'invite utilisateur)
+ * - Timeout d'exécution après « ready » (CONFIG.SSH_EXEC_TIMEOUT_MS, 2 min par défaut) → err.code EXEC_TIMEOUT
+ * - Limite de 50 Mo en octets ; contenu décodé une seule fois en UTF-8
  * - Authentification par mot de passe ou clé privée
  *
  * @param {string} filePath - Chemin du fichier à lire (doit commencer par /var/log/vault/)
- * @param {Object} sshConfig - Configuration SSH {host, port, username, password, privateKey}
+ * @param {Object} sshConfig - Configuration SSH {host, port, username, password, privateKey, hostFingerprint}
  * @returns {Promise<string>} Contenu du fichier
- * @throws {Error} Si le chemin est invalide, la connexion échoue, ou le fichier n'existe pas
+ * @throws {Error} Si le chemin est invalide, la clé d'hôte est refusée, la connexion échoue, ou le fichier n'existe pas
  */
 function readFileViaSSH(filePath, sshConfig) {
   return new Promise((resolve, reject) => {
     const conn = new Client();
-    let fileContent = '';
+    // Délai de connexion géré ici (readyTimeout: 0 côté ssh2) afin de le suspendre pendant l'invite utilisateur
+    let connTimer = null;
+    let execTimer = null;
+    let connClosed = false; // connexion terminée : ne plus (ré)armer de délai
+    const clearConnTimer = () => { if (connTimer) { clearTimeout(connTimer); connTimer = null; } };
+    const clearExecTimer = () => { if (execTimer) { clearTimeout(execTimer); execTimer = null; } };
+    const armConnTimer = () => {
+      clearConnTimer();
+      if (connClosed) return;
+      connTimer = setTimeout(() => { reject(new Error('Délai de connexion SSH dépassé')); try { conn.destroy(); } catch { /* ignore */ } }, CONFIG.SSH_TIMEOUT_MS);
+    };
+    // Invite « clé d'hôte inconnue » en cours : fermée (AbortSignal) si la connexion meurt pendant l'attente
+    // (ex. LoginGraceTime du serveur), sinon la boîte resterait affichée pour une lecture déjà échouée.
+    let hostKeyPrompt = null;
+    const abortHostKeyPrompt = () => {
+      if (!hostKeyPrompt) return null;
+      hostKeyPrompt.abort();
+      // Message affiché tel quel dans un toast (AdminPanel) : langue de l'interface
+      return Object.assign(new Error(tm('error.hostKeyPromptAborted')),
+        { code: 'HOST_KEY_PROMPT_ABORTED', observed: hv.fingerprint });
+    };
 
     // Validation stricte du chemin de fichier pour éviter l'injection de commandes
     if (!filePath || typeof filePath !== 'string') {
@@ -1878,7 +2066,8 @@ function readFileViaSSH(filePath, sshConfig) {
     }
 
     // Whitelist stricte: uniquement /var/log/vault/ avec segments de caractères sûrs
-    if (!/^\/var\/log\/vault\/[a-zA-Z0-9_\-]+(?:\/[a-zA-Z0-9._\-]+)*$/.test(filePath)) {
+    // (le point est autorisé dans tous les segments, ex. /var/log/vault/audit.log ; '..' reste exclu ci-dessus et ci-dessous)
+    if (!/^\/var\/log\/vault\/[a-zA-Z0-9._-]+(?:\/[a-zA-Z0-9._-]+)*$/.test(filePath) || filePath.split('/').includes('..')) {
       return reject(new Error('Chemin de fichier non autorisé. Seuls les chemins /var/log/vault/* sont autorisés.'));
     }
 
@@ -1890,43 +2079,85 @@ function readFileViaSSH(filePath, sshConfig) {
     // Échapper le chemin pour éviter l'injection de commandes (single quotes)
     const escapedPath = filePath.replace(/'/g, "'\\''");
 
+    // SÉCURITÉ: vérification de la clé d'hôte pendant l'échange de clés (avant l'authentification).
+    // Même fichier known_hosts.json que le serveur CLI ; une clé inconnue déclenche l'invite utilisateur.
+    const sshHost = sshConfig.host;
+    const sshPort = sshConfig.port || 22;
+    const hv = createHostVerifier({
+      host: sshHost,
+      port: sshPort,
+      hostFingerprint: sshConfig.hostFingerprint || null,
+      knownHosts: createKnownHosts(path.join(app.getPath('userData'), 'known_hosts.json')),
+      onNewHostKey: async (info) => {
+        clearConnTimer();
+        hostKeyPrompt = new AbortController();
+        try { return await confirmNewHostKey(info, hostKeyPrompt.signal); } finally { hostKeyPrompt = null; armConnTimer(); }
+      },
+    });
+
     conn.on('ready', () => {
+      clearConnTimer();
+      // Délai d'EXÉCUTION : un canal jamais fermé (FIFO, périphérique, serveur lent ou hostile) ne bloque pas la lecture indéfiniment
+      execTimer = setTimeout(() => {
+        reject(Object.assign(new Error('Délai d\'exécution SSH dépassé'), { code: 'EXEC_TIMEOUT' }));
+        try { conn.destroy(); } catch { /* ignore */ }
+      }, CONFIG.SSH_EXEC_TIMEOUT_MS || 120000);
       conn.exec(`cat '${escapedPath}'`, (err, stream) => {
         if (err) {
+          clearExecTimer();
           conn.end();
           return reject(err);
         }
 
-        // SÉCURITÉ: Limite de taille pour éviter l'accumulation mémoire non bornée
+        // SÉCURITÉ: Limite de taille (en OCTETS) pour éviter l'accumulation mémoire non bornée
         const MAX_SSH_FILE_SIZE = 50 * 1024 * 1024; // 50 MB max
+        // Accumule les Buffers et ne décode qu'une fois : pas de caractère UTF-8 coupé entre deux paquets SSH
+        const chunks = []; let size = 0; let tooBig = false;
         stream.on('close', (code, signal) => {
+          clearExecTimer();
           conn.end();
           if (code !== 0) {
             reject(new Error(`Commande SSH échouée avec le code ${code}`));
           } else {
-            resolve(fileContent);
+            resolve(Buffer.concat(chunks).toString('utf8'));
           }
         }).on('data', (data) => {
-          fileContent += data.toString();
-          if (fileContent.length > MAX_SSH_FILE_SIZE) {
+          if (tooBig) return;
+          size += data.length;
+          if (size > MAX_SSH_FILE_SIZE) {
+            tooBig = true;
+            chunks.length = 0;
             stream.destroy();
             conn.end();
             reject(new Error('Fichier trop volumineux (limite: 50 MB)'));
+            return;
           }
+          chunks.push(data);
         }).stderr.on('data', () => {
-          console.error('SSH stderr: (contenu masqué)');
+          log.error('SSH stderr: (contenu masqué)');
         });
       });
     }).on('error', (err) => {
-      reject(new Error(`Connexion SSH échouée: ${err.message}`));
+      connClosed = true;
+      clearConnTimer();
+      clearExecTimer();
+      // Clé d'hôte refusée : notre erreur (code HOST_KEY_*) remplace l'erreur générique ssh2 « Host denied »
+      reject(abortHostKeyPrompt() || hv.error || new Error(`Connexion SSH échouée: ${err.message}`));
+    }).on('close', () => {
+      connClosed = true;
+      clearConnTimer();
+      clearExecTimer();
+      reject(abortHostKeyPrompt() || hv.error || new Error('Connexion SSH fermée prématurément'));
     }).connect({
-      host: sshConfig.host,
-      port: sshConfig.port || 22,
+      host: sshHost,
+      port: sshPort,
       username: sshConfig.username,
       password: sshConfig.password,
       privateKey: sshConfig.privateKey ? fs.readFileSync(fs.realpathSync(path.resolve(sshConfig.privateKey))) : undefined,
-      readyTimeout: CONFIG.SSH_TIMEOUT_MS
+      readyTimeout: 0, // délai de connexion géré par connTimer (suspendu pendant l'invite)
+      hostVerifier: hv.verifier
     });
+    armConnTimer();
   });
 }
 
@@ -1959,9 +2190,19 @@ ipcMain.handle('rbi-launch-session', async (event, options) => {
     if (typeof options.username !== 'string' || typeof options.password !== 'string') {
       return { success: false, error: 'Credentials requis' };
     }
+    // Champ « website » de l'entrée (facultatif) : seconde adresse de référence pour la saisie (RBI-11), comme
+    // pour l'extension (url OU website). Seul son nom d'hôte sert (jamais ouvert : l'URL de lancement reste
+    // options.url). Texte borné, sans caractère de contrôle, dont un nom d'hôte valide se déduit ; sinon ignoré.
+    let website;
+    // eslint-disable-next-line no-control-regex -- volontaire : valeur avec caractère de contrôle ignorée
+    if (typeof options.website === 'string' && options.website.length <= 2048 && !/[\x00-\x1F\x7F]/.test(options.website)) {
+      const host = hostnameOf(options.website);
+      if (host && isValidHostname(host)) website = options.website.trim();
+    }
     // Construire un objet propre (ne pas passer skipOverlay depuis le renderer)
     const safeOptions = {
       url: options.url,
+      ...(website ? { website } : {}),
       username: options.username,
       password: options.password,
       totp: (typeof options.totp === 'string' && options.totp.length <= 16) ? options.totp : undefined,
@@ -1989,8 +2230,8 @@ ipcMain.handle('rbi-launch-session', async (event, options) => {
     const result = await secureSession.launchSecureSession(safeOptions);
     return result;
   } catch (error) {
-    console.error('[RBI] Erreur IPC launch-session');
-    return { success: false, error: 'Erreur lancement session RBI' };
+    log.error('[RBI] Erreur IPC launch-session');
+    return { success: false, error: tm('rbi.launchError') };
   }
 });
 
@@ -2000,7 +2241,7 @@ ipcMain.handle('rbi-launch-session', async (event, options) => {
 ipcMain.handle('rbi-close-session', async (event, sessionId) => {
   if (!validateIpcSender(event)) return { success: false, error: 'Sender non autorisé' };
   // SÉCURITÉ: Valider le sessionId
-  if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 128 || /[^a-zA-Z0-9_\-]/.test(sessionId)) {
+  if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 128 || /[^a-zA-Z0-9_-]/.test(sessionId)) {
     return { success: false, error: 'ID de session invalide' };
   }
   try {
@@ -2067,9 +2308,24 @@ ipcMain.handle('window-set-login-mode', (event) => {
   windowMode = 'login';
   if (mainWindow.isMaximized()) mainWindow.unmaximize();
   mainWindow.setMaximizable(false);
-  mainWindow.setResizable(false);
+  // Redimensionner AVANT de verrouiller : sous Electron 38, setResizable(false) fige les tailles minimale et
+  // maximale sur la taille COURANTE ; un setSize ultérieur ne réduisait plus la largeur (fenêtre transparente
+  // restée en 1280 px de large après déconnexion / expiration au lieu de la carte LOGIN_WIDTH×LOGIN_HEIGHT).
   mainWindow.setSize(LOGIN_WIDTH, LOGIN_HEIGHT);
+  mainWindow.setResizable(false);
   mainWindow.center();
+});
+
+// ========================================
+// LANGUE DE L'INTERFACE - Textes du processus principal
+// ========================================
+// Le preload signale la langue courante de l'interface (attribut lang du document, mis à jour par
+// I18nProvider) : boîtes de dialogue natives (appairage, approbations CLI, clé d'hôte SSH) et erreurs IPC
+// affichées en toast suivent cette langue. Expéditeur validé, valeur en liste blanche (12 langues) ;
+// une valeur inconnue est ignorée. Sans signal : LANG de config.cfg, puis anglais.
+ipcMain.on('set-ui-language', (event, lang) => {
+  if (!validateIpcSender(event)) return;
+  mainI18n.setUiLanguage(lang);
 });
 
 ipcMain.handle('window-close', (event) => {
@@ -2104,10 +2360,18 @@ ipcMain.handle('window-is-maximized', (event) => {
 // ========================================
 // EXPORT — Sauvegarde de fichier via dialogue système
 // ========================================
+// Taille maximale (octets, UTF-8) d'un fichier d'export / d'import : MÊME plafond à l'écriture
+// (export-save-file) et à la lecture (import-open-file). Les exports embarquent les pièces jointes
+// en base64 : tout export accepté doit pouvoir être réimporté tel quel.
+const MAX_EXPORT_IMPORT_FILE_BYTES = 100 * 1024 * 1024;
+
 ipcMain.handle('export-save-file', async (event, { defaultName, filters, content }) => {
   if (!validateIpcSender(event)) return { success: false, error: 'Unauthorized' };
-  // Validation des entrées
-  if (typeof content !== 'string' || content.length > 100 * 1024 * 1024) {
+  // Validation des entrées : plafond mesuré en OCTETS écrits (UTF-8), comme stats.size à l'import
+  // (content.length compte des unités UTF-16 : un export non ASCII pouvait dépasser le plafond de lecture).
+  // content.length ≤ octets UTF-8 : le premier test écarte un contenu démesuré sans le parcourir.
+  if (typeof content !== 'string' || content.length > MAX_EXPORT_IMPORT_FILE_BYTES ||
+      Buffer.byteLength(content, 'utf8') > MAX_EXPORT_IMPORT_FILE_BYTES) {
     return { success: false, error: 'Invalid or oversized content' };
   }
   if (typeof defaultName !== 'string' || defaultName.length > 256) {
@@ -2115,8 +2379,9 @@ ipcMain.handle('export-save-file', async (event, { defaultName, filters, content
   }
   try {
     const result = await dialog.showSaveDialog(mainWindow, {
-      defaultPath: defaultName,
-      filters: filters || [{ name: 'All Files', extensions: ['*'] }]
+      // eslint-disable-next-line no-control-regex -- volontaire : caractères de contrôle interdits dans un nom de fichier Windows
+      defaultPath: path.basename(defaultName.replace(/[\x00-\x1F<>:"|?*]/g, '_')),
+      filters: sanitizeDialogFilters(filters)
     });
     if (result.canceled || !result.filePath) return { success: false, canceled: true };
     fs.writeFileSync(result.filePath, content, { encoding: 'utf8', mode: 0o600 });
@@ -2131,12 +2396,12 @@ ipcMain.handle('import-open-file', async (event, { filters }) => {
   try {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openFile'],
-      filters: filters || [{ name: 'All Files', extensions: ['*'] }]
+      filters: sanitizeDialogFilters(filters)
     });
     if (result.canceled || !result.filePaths.length) return { success: false, canceled: true };
     const stats = fs.statSync(result.filePaths[0]);
-    if (stats.size > 50 * 1024 * 1024) {
-      return { success: false, error: 'File too large (max 50 MB)' };
+    if (stats.size > MAX_EXPORT_IMPORT_FILE_BYTES) { // même plafond que l'export : un export se réimporte toujours
+      return { success: false, error: `File too large (max ${MAX_EXPORT_IMPORT_FILE_BYTES / (1024 * 1024)} MB)` };
     }
     const content = fs.readFileSync(result.filePaths[0], 'utf8');
     return { success: true, content, filePath: result.filePaths[0] };
@@ -2166,7 +2431,9 @@ function cliReadSecret(engine, secretPath) {
     const requestId = crypto.randomBytes(8).toString('hex');
     let responded = false;
 
-    const handler = (_event, result) => {
+    const handler = (event, result) => {
+      // SÉCURITÉ: la réponse doit provenir de la fenêtre principale
+      if (!validateIpcSender(event)) return;
       if (responded) return;
       responded = true;
       clearTimeout(timeout);
@@ -2200,7 +2467,9 @@ function cliListEngines() {
     const requestId = crypto.randomBytes(8).toString('hex');
     let responded = false;
 
-    const handler = (_event, result) => {
+    const handler = (event, result) => {
+      // SÉCURITÉ: la réponse doit provenir de la fenêtre principale
+      if (!validateIpcSender(event)) return;
       if (responded) return;
       responded = true;
       clearTimeout(timeout);
@@ -2234,7 +2503,9 @@ function cliListSecrets(engine, folderPath) {
     const requestId = crypto.randomBytes(8).toString('hex');
     let responded = false;
 
-    const handler = (_event, result) => {
+    const handler = (event, result) => {
+      // SÉCURITÉ: la réponse doit provenir de la fenêtre principale
+      if (!validateIpcSender(event)) return;
       if (responded) return;
       responded = true;
       clearTimeout(timeout);
@@ -2292,7 +2563,7 @@ ipcMain.handle('cli-revoke-session', (event) => {
   cliServer.stopCLIServer();
   // Redémarrer avec un nouveau token
   cliServer.startCLIServer(mainWindow, cliReadSecret, cliListEngines, cliListSecrets).then(({ port }) => {
-    console.log(`[CLI] Token CLI régénéré, nouveau port ${port}`);
+    log.info(`[CLI] Token CLI régénéré, nouveau port ${port}`);
   }).catch(() => {});
   return { success: true };
 });
@@ -2301,33 +2572,21 @@ ipcMain.handle('cli-revoke-session', (event) => {
 // NETTOYAGE ET HEARTBEAT
 // ========================================
 
-/**
- * Nettoyage des fichiers de sync au démarrage
- *
- * Actions :
- * 1. Supprimer l'ancien fichier vault-sync.json (version non chiffrée, migration)
- * 2. Supprimer le fichier vault-sync.enc actuel (réinitialisation à chaque démarrage)
- *
- * Pourquoi réinitialiser à chaque démarrage ?
- * - Évite les états obsolètes (token expiré, secrets périmés)
- * - Force une nouvelle connexion à Vault à chaque lancement
- * - Réduit la fenêtre d'exposition des données sensibles
- */
-try {
-  // Supprimer l'ancien fichier JSON non chiffré s'il existe
-  const OLD_SYNC_FILE = path.join(app.getPath('userData'), 'vault-sync.json');
-  if (fs.existsSync(OLD_SYNC_FILE)) {
-    fs.unlinkSync(OLD_SYNC_FILE);
-    console.log('✅ Ancien fichier vault-sync.json supprimé (migration vers version chiffrée)');
+// Migration : les anciennes versions écrivaient l'état de sync (mots de passe inclus) et le
+// token sur disque. Ces fichiers sont écrasés puis supprimés ; tout est en mémoire désormais.
+// (Instance qui détient le verrou uniquement : une seconde instance ne touche pas au userData.)
+for (const legacyFile of gotTheLock ? ['vault-sync.json', 'vault-sync.enc', 'sync-auth-token.txt'] : []) {
+  try {
+    const legacyPath = path.join(app.getPath('userData'), legacyFile);
+    if (fs.existsSync(legacyPath)) {
+      const size = fs.statSync(legacyPath).size;
+      if (size > 0) fs.writeFileSync(legacyPath, Buffer.alloc(size, 0));
+      fs.unlinkSync(legacyPath);
+      log.info('[Migration] Ancien fichier ' + legacyFile + ' supprimé');
+    }
+  } catch {
+    log.warn('[Migration] Impossible de supprimer ' + legacyFile);
   }
-
-  // Supprimer le fichier chiffré actuel pour repartir à zéro à chaque démarrage
-  if (fs.existsSync(SYNC_FILE)) {
-    fs.unlinkSync(SYNC_FILE);
-    console.log('✅ Fichier sync chiffré nettoyé au démarrage');
-  }
-} catch (err) {
-  console.error('⚠️ Erreur nettoyage fichiers sync:', err);
 }
 
 /**
@@ -2356,22 +2615,12 @@ function startHeartbeat() {
   if (heartbeatInterval) return;
 
   heartbeatInterval = setInterval(() => {
-    try {
-      // Lire le fichier chiffré
-      const syncData = readEncryptedSyncFile();
-
-      if (!syncData) return;
-
-      // Vérifier si connecté
-      if (!syncData.connected) return;
-
-      // Réécrire avec un nouveau timestamp
-      syncData.timestamp = Date.now();
-      writeEncryptedSyncFile(syncData);
-    } catch (err) {
-      // Erreur silencieuse
-    }
-  }, CONFIG.HEARTBEAT_INTERVAL_MS); // Intervalle configurable
+    if (!syncState || !syncState.connected) return;
+    // SÉCURITÉ (SYNC-28) : l'état n'est prolongé que si l'interface qui l'a écrit est vivante ; sinon il est
+    // purgé (renderer planté sans évènement reçu, fenêtre détruite)
+    if (rendererAlive()) syncState.timestamp = Date.now();
+    else purgeSyncState('interface indisponible');
+  }, CONFIG.HEARTBEAT_INTERVAL_MS);
 }
 
 function stopHeartbeat() {
@@ -2387,13 +2636,13 @@ function stopHeartbeat() {
 // Permet de recevoir des liens rdvault://share/TOKEN pour le partage RBI
 // Le token est un Vault Response Wrapping token (usage unique)
 
-// Enregistrer le protocole rdvault:// pour les deep links
-if (process.defaultApp) {
+// Enregistrer le protocole rdvault:// pour les deep links (seconde instance : déjà fait par la première)
+if (gotTheLock && process.defaultApp) {
   // En dev, enregistrer avec le chemin vers electron
   if (process.argv.length >= 2) {
     app.setAsDefaultProtocolClient('rdvault', process.execPath, [path.resolve(process.argv[1])]);
   }
-} else {
+} else if (gotTheLock) {
   // En production, enregistrer normalement
   app.setAsDefaultProtocolClient('rdvault');
 }
@@ -2410,9 +2659,9 @@ function extractShareToken(url) {
   if (!url || typeof url !== 'string') return null;
   const match = url.match(/^rdvault:\/\/share\/(.+)$/);
   if (!match) return null;
-  const token = match[1];
-  // Valider le format du token (alphanumérique, tirets, points, max 512 chars)
-  if (!/^[a-zA-Z0-9._\-]{1,128}$/.test(token.trim())) return null;
+  const token = match[1].trim();
+  // Valider le format du token (alphanumérique, tirets, points, max 128 chars)
+  if (!/^[a-zA-Z0-9._-]{1,128}$/.test(token)) return null;
   return token;
 }
 
@@ -2422,24 +2671,19 @@ function extractShareToken(url) {
  */
 function sendShareTokenToRenderer(shareToken) {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    console.log('[DEEP-LINK] Envoi du token de partage au renderer');
+    log.info('[DEEP-LINK] Envoi du token de partage au renderer');
     mainWindow.webContents.send('rdvault-share-received', shareToken);
     mainWindow.show();
     mainWindow.focus();
   } else {
-    console.log('[DEEP-LINK] Fenêtre non prête, mise en attente du token');
+    log.info('[DEEP-LINK] Fenêtre non prête, mise en attente du token');
     pendingDeepLink = shareToken;
   }
 }
 
-// Single instance lock - empêche l'ouverture de multiples instances
-// La seconde instance transmet son deep link à la première
-const gotTheLock = app.requestSingleInstanceLock();
-
-if (!gotTheLock) {
-  // Une autre instance est déjà en cours d'exécution
-  app.quit();
-} else {
+// Instance unique (verrou demandé en tête de fichier, gotTheLock) : la seconde instance transmet son deep
+// link à la première, qui seule écoute 'second-instance'
+if (gotTheLock) {
   // Quand une seconde instance est lancée (avec un deep link)
   app.on('second-instance', (event, commandLine) => {
     // Sur Windows, le deep link est dans les arguments de la ligne de commande
@@ -2461,13 +2705,9 @@ if (!gotTheLock) {
 }
 
 app.whenReady().then(async () => {
-  // SÉCURITÉ: Nettoyer le fichier de token d'authentification au démarrage
-  // pour éviter qu'un ancien token reste accessible
-  try {
-    if (fs.existsSync(AUTH_TOKEN_FILE)) {
-      fs.unlinkSync(AUTH_TOKEN_FILE);
-    }
-  } catch { /* ignore */ }
+  // Seconde instance (STARTUP-23) : sa fermeture est déjà demandée, rien n'est démarré (ni coffre local, ni
+  // fenêtre, ni serveurs de synchronisation et CLI) : les ressources appartiennent à la première instance.
+  if (!gotTheLock) return;
 
   // En mode local : démarrer le serveur Vault local AVANT la fenêtre
   // pour que React ait le port quand il demande la config
@@ -2475,9 +2715,9 @@ app.whenReady().then(async () => {
     try {
       const localVault = require('./localVault/localVaultServer');
       const port = await localVault.start(0);
-      console.log(`[LocalVault] Mode local actif sur le port ${port}`);
+      log.info(`[LocalVault] Mode local actif sur le port ${port}`);
     } catch (err) {
-      console.error('[LocalVault] Erreur démarrage:', err.message);
+      log.error('[LocalVault] Erreur démarrage:', err.message);
     }
   }
 
@@ -2510,9 +2750,9 @@ app.whenReady().then(async () => {
     startHeartbeat();
     // Démarrer le serveur CLI pour accès secrets via ligne de commande (mvault)
     cliServer.startCLIServer(mainWindow, cliReadSecret, cliListEngines, cliListSecrets).then(({ port }) => {
-      console.log(`[CLI] Serveur CLI prêt sur le port ${port}`);
+      log.info(`[CLI] Serveur CLI prêt sur le port ${port}`);
     }).catch(err => {
-      console.error('[CLI] Impossible de démarrer le serveur CLI:', err.message);
+      log.error('[CLI] Impossible de démarrer le serveur CLI:', err.message);
     });
   });
 
@@ -2523,21 +2763,31 @@ app.whenReady().then(async () => {
   // - Session active: 15 minutes d'inactivité avant déconnexion
   // - Session verrouillée: 3 heures avant déconnexion
   powerMonitor.on('lock-screen', () => {
-    console.log('🔒 [SÉCURITÉ] Système verrouillé');
+    log.info('🔒 [SÉCURITÉ] Système verrouillé');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('system-lock-screen');
     }
   });
 
   powerMonitor.on('unlock-screen', () => {
-    console.log('🔓 [SÉCURITÉ] Système déverrouillé');
+    log.info('🔓 [SÉCURITÉ] Système déverrouillé');
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('system-unlock-screen');
     }
   });
 });
 app.on('browser-window-focus', () => { try { globalShortcut.unregisterAll(); } catch {} });
-app.on('will-quit', async () => {
+
+// Délai maximal accordé à la fermeture des sessions RBI à la sortie (fermeture de Chromium puis suppression
+// du profil, réessais bornés) : au-delà, l'application se termine quand même ; un profil resté verrouillé
+// est supprimé au démarrage suivant (cleanupStaleProfiles).
+const RBI_QUIT_TIMEOUT_MS = 20000;
+
+app.on('will-quit', (event) => {
+  // Seconde instance (STARTUP-23) : 'will-quit' est émis avant 'ready' ; rien ne lui appartient (le serveur
+  // CLI, sa session userData/cli/session.json, le coffre local et les sessions RBI sont ceux de la PREMIÈRE
+  // instance) : aucun nettoyage, aucune attente.
+  if (!gotTheLock) return;
   try {
     globalShortcut.unregisterAll();
     if (syncServer) syncServer.close();
@@ -2547,12 +2797,22 @@ app.on('will-quit', async () => {
       try { require('./localVault/localVaultServer').stop(); } catch { /* ignore */ }
     }
     stopHeartbeat();
-    // Fermer toutes les sessions RBI actives
-    await secureSession.closeAllSessions();
-    // Nettoyer le fichier de token d'authentification
-    if (fs.existsSync(AUTH_TOKEN_FILE)) {
-      fs.unlinkSync(AUTH_TOKEN_FILE);
-    }
+    syncState = null;
+    syncAuthToken = null;
+    // Presse-papiers : effacer un mot de passe encore présent
+    try { if (activeClipboardTimers.has('current')) activeClipboardTimers.get('current').clearNow(); } catch {}
   } catch {}
+  // Sessions RBI : Electron n'attend pas un gestionnaire asynchrone. La sortie est donc suspendue
+  // (preventDefault) jusqu'à la fermeture des navigateurs isolés et la suppression de leurs profils
+  // (cookies de session), bornée par RBI_QUIT_TIMEOUT_MS, puis l'application se termine (app.exit, qui
+  // n'émet plus 'will-quit' mais émet toujours 'quit').
+  try { event.preventDefault(); } catch { /* ignore */ }
+  let timer = null;
+  const bounded = new Promise((resolve) => { timer = setTimeout(resolve, RBI_QUIT_TIMEOUT_MS); });
+  Promise.race([Promise.resolve().then(() => secureSession.closeAllSessions()).catch(() => {}), bounded])
+    .then(() => {
+      clearTimeout(timer);
+      try { app.exit(0); } catch { /* ignore */ }
+    });
 });
-app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+app.on('activate', () => { if (gotTheLock && BrowserWindow.getAllWindows().length === 0) createWindow(); });

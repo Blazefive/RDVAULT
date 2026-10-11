@@ -2,5 +2,6 @@
   "VAULT_URL": "https://vault.example.com:8200",
   "LDAP_AUTH_PATH": "auth/ldap",
   "TRUSTED_DOMAINS": "",
+  "TRUSTED_CERT_FINGERPRINTS": "",
   "RBI_PROXY_URL": ""
 }

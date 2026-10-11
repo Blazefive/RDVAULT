@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Espace client</title></head>
+<body>
+<h1>Espace client</h1>
+<!-- SITES-24 : formulaire de CONNEXION dont l'action porte, dans sa CHAÎNE DE REQUÊTE et son
+     fragment, des mots d'inscription (motif relevé sur fr.accounts.ikea.com, Auth0 :
+     « …/login?state=…&registration=%7B%7D… », name="passwordless-primary-login-form").
+     Paramètres techniques : jeton contenant « Join », « registration= », retour vers « /nouveautes »,
+     fragment « #inscription ». Seuls l'hôte et le chemin de l'action (/submit) comptent : le
+     formulaire doit être reconnu (icône) et rempli. -->
+<form name="primary-login-form" id="f" method="post" action="/submit?state=aZ9JoinQx7&amp;registration=%7B%7D&amp;return_to=%2Fnouveautes#inscription" onsubmit="return false">
+  <label>E-mail <input type="email" id="qu" name="email" autocomplete="username"></label><br>
+  <label>Mot de passe <input type="password" id="qp" name="password" autocomplete="current-password"></label><br>
+  <button type="button" id="go">Se connecter</button>
+</form>
+<script>
+go.addEventListener('click', () => {
+  fetch('/submit', { method: 'POST', body: JSON.stringify({ page: 'login-action-query', user: qu.value, password: qp.value }) });
+});
+</script>
+</body></html>

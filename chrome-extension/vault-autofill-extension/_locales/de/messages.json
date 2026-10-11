@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "Automatisches Ausfüllen von Formularen und Passkeys mit RDVAULT (erfordert die Desktop-App)"
+  },
+  "popupStatusChecking": {
+    "message": "Wird überprüft..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "Diese Erweiterung setzt voraus, dass die Vault-Desktop-App gestartet und verbunden ist."
+  },
+  "popupDesktopUnavailable": {
+    "message": "Desktop-App nicht verfügbar"
+  },
+  "popupDesktopNotConnected": {
+    "message": "Desktop-App gestartet, aber nicht verbunden"
+  },
+  "popupDesktopConnected": {
+    "message": "Desktop-App verbunden"
+  },
+  "popupUserLabel": {
+    "message": "Benutzer:"
+  },
+  "popupServerLabel": {
+    "message": "Server:"
+  },
+  "popupUnknown": {
+    "message": "Unbekannt"
+  },
+  "popupAutofillActive": {
+    "message": "✓ Automatisches Ausfüllen aktiv"
+  },
+  "popupPairingPendingTitle": {
+    "message": "Bestätigen Sie den Zugriff in der RDVAULT-App"
+  },
+  "popupPairingPendingDetail": {
+    "message": "Eine Kopplungsanfrage wurde an RDVAULT gesendet. Nehmen Sie sie in der App an (innerhalb von 60 Sekunden), um das automatische Ausfüllen zu aktivieren."
+  },
+  "popupPairingDeniedTitle": {
+    "message": "Zugriff in RDVAULT verweigert"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "Die Kopplung dieser Erweiterung wurde in der App abgelehnt. Eine neue Anfrage ist in einer Minute möglich."
+  },
+  "popupDisconnectedDetail": {
+    "message": "Starten Sie die Desktop-App und melden Sie sich an, um das automatische Ausfüllen zu nutzen."
+  },
+  "autofillIconTitle": {
+    "message": "Mit RDVAULT automatisch ausfüllen"
+  },
+  "autofillHeader": {
+    "message": "RDVAULT-Zugangsdaten"
+  },
+  "autofillNoResults": {
+    "message": "Keine Zugangsdaten für diese Website gefunden"
+  },
+  "autofillUnnamed": {
+    "message": "Ohne Namen"
+  },
+  "autofillNoUsername": {
+    "message": "(kein Benutzername)"
+  },
+  "autofillLoading": {
+    "message": "Zugangsdaten werden abgerufen..."
+  },
+  "autofillFetchFailed": {
+    "message": "Zugangsdaten konnten nicht abgerufen werden"
+  },
+  "pkCreateTitle": {
+    "message": "Passkey für $HOST$ erstellen",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "In RDVAULT erstellen"
+  },
+  "pkGetTitle": {
+    "message": "Ihren Passkey für $HOST$ verwenden",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "Meinen RDVAULT-Passkey verwenden"
+  },
+  "pkChooseAccount": {
+    "message": "Konto auswählen"
+  },
+  "pkUseAnotherDevice": {
+    "message": "Anderes Gerät verwenden"
+  },
+  "pkCancel": {
+    "message": "Abbrechen"
+  },
+  "pkBlockedWarning": {
+    "message": "Aktion blockiert: Das RDVAULT-Fenster wird von der Seite verborgen oder überdeckt. Verwenden Sie „$OTHER$“ oder „$CANCEL$“.",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "Konto ohne Namen"
+  },
+  "pkCreatedOn": {
+    "message": "erstellt am $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "Zugangsdaten für diese Website nicht gefunden"
+  },
+  "bgErrHttp": {
+    "message": "HTTP-Fehler $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "Ungültige Antwort"
+  },
+  "bgErrCommunication": {
+    "message": "Fehler bei der Kommunikation mit RDVAULT"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "Ungültiger Schlüsselname"
+  },
+  "bgErrInvalidCode": {
+    "message": "Ungültiger Code"
+  },
+  "bgErrTotp": {
+    "message": "TOTP-Fehler"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "ungültiger Passkey"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId nicht zulässig"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "Tresor nicht verfügbar"
+  },
+  "bgErrInsecureSender": {
+    "message": "Von einer unsicheren Seite aus nicht zulässig"
+  },
+  "bgErrInternal": {
+    "message": "Interner Fehler"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "Tab-URL erforderlich"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "Nicht unterstützter Nachrichtentyp"
+  },
+  "bgErrInsecurePage": {
+    "message": "Unsichere Seite"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT nicht verfügbar oder gesperrt"
+  },
+  "bgErrNameRequired": {
+    "message": "Name des Geheimnisses erforderlich"
+  },
+  "bgErrInvalidCredential": {
+    "message": "Ungültige Zugangsdaten"
+  },
+  "bgErrSaveCredential": {
+    "message": "Fehler beim Speichern der Zugangsdaten"
+  },
+  "bgErrReadCredential": {
+    "message": "Fehler beim Lesen der Zugangsdaten"
+  },
+  "bgErrClearCredential": {
+    "message": "Fehler beim Löschen der Zugangsdaten"
+  }
+}

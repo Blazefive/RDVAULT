@@ -1,6 +1,7 @@
 // src/ClipboardTimer.jsx
 // Composant isolé pour éviter que les re-renders du countdown n'affectent les modaux
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useTranslation } from './i18n';
 
 export default function ClipboardTimer({
   fieldName,
@@ -9,6 +10,7 @@ export default function ClipboardTimer({
   onClear,
   onExpire
 }) {
+  const { t } = useTranslation();
   const [remaining, setRemaining] = useState(() => {
     // Calculer le temps restant initial basé sur startTime
     const elapsed = Date.now() - startTime;
@@ -71,9 +73,9 @@ export default function ClipboardTimer({
   return (
     <div className={`clipboard-timer${isEntering ? ' entering' : ''}`}>
       <div className="clipboard-timer-header">
-        <span>{fieldName} copié</span>
+        <span>{t('toast.copiedField', { field: fieldName })}</span>
         <span className="clipboard-timer-countdown">
-          {Math.ceil(remaining / 1000)}s
+          {Math.ceil(remaining / 1000)}{t('totp.seconds')}
         </span>
       </div>
       <div className="clipboard-progress">
@@ -87,7 +89,7 @@ export default function ClipboardTimer({
         className="btn btn-sm btn-secondary"
         type="button"
       >
-        Effacer maintenant
+        {t('clipboard.clearNow')}
       </button>
     </div>
   );

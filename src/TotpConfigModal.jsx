@@ -1,15 +1,43 @@
 // src/TotpConfigModal.jsx
-import React, { useState, useEffect, useRef } from 'react';
+// Modale de configuration d'une clé TOTP pour un secret.
+//
+// Props :
+// - secretName, totpKeyName, engineName
+// - onClose, onSave(config)
+// - showToast : affichage des erreurs de validation (remplace alert(), non supporté par Electron)
+//
+// Accessibilité (hook useDialogA11y du squelette commun Modal) : role="dialog" + aria-modal +
+// aria-labelledby (titre), focus initial (champ de la clé), piège de focus, retour du focus,
+// Échap réservé à la modale du dessus. Fermeture sur le fond seulement si mousedown ET mouseup
+// y tombent (une sélection de texte qui déborde du panneau ne ferme plus la modale).
+import React, { useState, useEffect, useId, useRef } from 'react';
+import { useTranslation } from './i18n';
+import { useDialogA11y } from './components/common/Modal';
 
-export default function TotpConfigModal({ secretName, totpKeyName, engineName, onClose, onSave }) {
-  const [accountName, setAccountName] = useState(secretName || '');
+// Tolérance de déplacement (px) d'un clic sur le fond (même valeur que components/common/Modal)
+const CLICK_TOLERANCE_PX = 5;
+
+export default function TotpConfigModal({ secretName, totpKeyName, engineName, onClose, onSave, showToast }) {
+  const { t } = useTranslation();
+  const [accountName] = useState(secretName || '');
   const [totpKey, setTotpKey] = useState('');
-  const [algorithm, setAlgorithm] = useState('SHA1');
+  const [algorithm] = useState('SHA1');
   const [digits, setDigits] = useState(6);
   const [period, setPeriod] = useState(30);
   const [generating, setGenerating] = useState(false);
 
   const totpKeyRef = useRef(null);
+  const panelRef = useRef(null);
+  const overlayDownRef = useRef(null);
+  const titleId = useId();
+  // Libellés associés aux champs (nom accessible des champs au lecteur d'écran)
+  const keyFieldId = useId();
+  const digitsFieldId = useId();
+  const periodFieldId = useId();
+
+  const notifyError = (message) => {
+    if (typeof showToast === 'function') showToast(message, 'error');
+  };
 
   useEffect(() => {
     if (totpKeyRef.current) {
@@ -17,30 +45,33 @@ export default function TotpConfigModal({ secretName, totpKeyName, engineName, o
     }
   }, []);
 
-  const handleBackdropClick = (e) => {
-    if (e.target === e.currentTarget) onClose();
-  };
+  // Focus initial, piège de focus, Échap (modale du dessus uniquement), retour du focus
+  useDialogA11y(panelRef, { onEscape: onClose });
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Escape') onClose();
+  // BUG CORRIGÉ : fermeture au « click » sur le fond, déclenché aussi par une sélection de texte
+  // commencée dans le panneau et relâchée sur le fond. Il faut désormais mousedown ET mouseup
+  // sur le fond, à moins de 5 px l'un de l'autre.
+  const handleOverlayMouseDown = (e) => {
+    overlayDownRef.current = e.target === e.currentTarget ? { x: e.clientX, y: e.clientY } : null;
   };
-
-  useEffect(() => {
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  const handleOverlayMouseUp = (e) => {
+    const start = overlayDownRef.current;
+    overlayDownRef.current = null;
+    if (!start || e.target !== e.currentTarget) return;
+    if (Math.abs(e.clientX - start.x) < CLICK_TOLERANCE_PX && Math.abs(e.clientY - start.y) < CLICK_TOLERANCE_PX) onClose();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (!totpKey.trim()) {
-      alert('La clé TOTP est obligatoire');
+      notifyError(t('error.totpRequired'));
       return;
     }
 
     // Validation du format base32
     if (!/^[A-Z2-7]+=*$/i.test(totpKey.trim())) {
-      alert('La clé TOTP n\'est pas au format base32 valide (caractères autorisés : A-Z, 2-7, =)');
+      notifyError(t('error.totpInvalidFormat'));
       return;
     }
 
@@ -55,26 +86,35 @@ export default function TotpConfigModal({ secretName, totpKeyName, engineName, o
       };
       await onSave(config);
     } catch (err) {
-      // Pas de log du secret TOTP
+      // Pas de log du secret TOTP (l'erreur est déjà affichée par onSave via toast)
     } finally {
       setGenerating(false);
     }
   };
 
   return (
-    <div className="modal-overlay" onClick={handleBackdropClick}>
-      <div className="modal-panel" style={{ maxWidth: '500px', maxHeight: '80vh' }}>
+    <div className="modal-overlay" onMouseDown={handleOverlayMouseDown} onMouseUp={handleOverlayMouseUp}>
+      <div
+        ref={panelRef}
+        className="modal-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        style={{ maxWidth: '500px', maxHeight: '80vh' }}
+      >
         <div className="modal-header" style={{ padding: 'var(--sp-6)' }}>
-          <h2>Configurer TOTP</h2>
+          <h2 id={titleId}>{t('totp.configure')}</h2>
         </div>
 
         <form onSubmit={handleSubmit}>
           <div className="modal-body" style={{ padding: 'var(--sp-6)' }}>
             <div className="form-group-vertical">
-              <label className="modal-label">
-                Clé TOTP (Secret) <span style={{ color: 'var(--error)' }}>*</span>
+              <label className="modal-label" htmlFor={keyFieldId}>
+                {t('editSecret.totpKey')}
               </label>
               <textarea
+                id={keyFieldId}
                 ref={totpKeyRef}
                 value={totpKey}
                 onChange={(e) => {
@@ -83,21 +123,22 @@ export default function TotpConfigModal({ secretName, totpKeyName, engineName, o
                   setTotpKey(cleaned);
                 }}
                 className="modal-textarea"
-                placeholder="Entrez la clé secrète TOTP (base32)"
+                placeholder={t('editSecret.totpPlaceholder')}
                 rows="3"
                 required
               />
               <div className="form-hint">
-                Format base32 sans espaces (ex: JBSWY3DPEHPK3PXP)
+                {t('editSecret.totpHint')}
               </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--sp-4)', marginBottom: 'var(--sp-4)' }}>
               <div className="form-group-vertical">
-                <label className="modal-label">
-                  Chiffres
+                <label className="modal-label" htmlFor={digitsFieldId}>
+                  {t('editSecret.totpDigits')}
                 </label>
                 <select
+                  id={digitsFieldId}
                   value={digits}
                   onChange={(e) => setDigits(e.target.value)}
                   className="modal-input"
@@ -108,10 +149,11 @@ export default function TotpConfigModal({ secretName, totpKeyName, engineName, o
               </div>
 
               <div className="form-group-vertical">
-                <label className="modal-label">
-                  Période (s)
+                <label className="modal-label" htmlFor={periodFieldId}>
+                  {t('editSecret.totpPeriod')}
                 </label>
                 <input
+                  id={periodFieldId}
                   type="number"
                   value={period}
                   onChange={(e) => setPeriod(e.target.value)}
@@ -123,13 +165,13 @@ export default function TotpConfigModal({ secretName, totpKeyName, engineName, o
             </div>
 
             <div className="info-box">
-              <div className="info-box-title">Nom de la clé TOTP</div>
+              <div className="info-box-title">{t('totp.keyName')}</div>
               <div className="info-box-content">
                 <code style={{ background: 'var(--bg-surface)', padding: '4px var(--sp-3)', borderRadius: 'var(--radius-sm)' }}>
                   {totpKeyName || secretName}
                 </code>
                 <div style={{ marginTop: 'var(--sp-3)' }}>
-                  Cette clé sera créée dans <strong>totp/</strong> avec le préfixe du coffre <strong>{engineName}</strong>
+                  {t('totp.keyCreatedIn')} <strong>totp/</strong> {t('totp.withPrefix')} <strong>{engineName}</strong>
                 </div>
               </div>
             </div>
@@ -141,14 +183,14 @@ export default function TotpConfigModal({ secretName, totpKeyName, engineName, o
               onClick={onClose}
               className="btn btn-secondary"
             >
-              Annuler
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
               disabled={generating}
               className="btn btn-success"
             >
-              {generating ? 'Configuration...' : 'Configurer'}
+              {generating ? t('totp.configuring') : t('totp.configureBtn')}
             </button>
           </div>
         </form>

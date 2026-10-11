@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "RDVAULT ile form otomatik doldurma ve passkey'ler (masaüstü uygulaması gerekir)"
+  },
+  "popupStatusChecking": {
+    "message": "Kontrol ediliyor..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "Bu uzantı, Vault masaüstü uygulamasının çalışıyor ve bağlı olmasını gerektirir."
+  },
+  "popupDesktopUnavailable": {
+    "message": "Masaüstü uygulaması kullanılamıyor"
+  },
+  "popupDesktopNotConnected": {
+    "message": "Masaüstü uygulaması açık ancak bağlı değil"
+  },
+  "popupDesktopConnected": {
+    "message": "Masaüstü uygulaması bağlı"
+  },
+  "popupUserLabel": {
+    "message": "Kullanıcı:"
+  },
+  "popupServerLabel": {
+    "message": "Sunucu:"
+  },
+  "popupUnknown": {
+    "message": "Bilinmiyor"
+  },
+  "popupAutofillActive": {
+    "message": "✓ Otomatik doldurma etkin"
+  },
+  "popupPairingPendingTitle": {
+    "message": "RDVAULT uygulamasında erişimi onaylayın"
+  },
+  "popupPairingPendingDetail": {
+    "message": "RDVAULT'a bir eşleştirme isteği gönderildi. Otomatik doldurmayı etkinleştirmek için isteği uygulamada kabul edin (süre: 60 saniye)."
+  },
+  "popupPairingDeniedTitle": {
+    "message": "RDVAULT'ta erişim reddedildi"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "Bu uzantının eşleştirilmesi uygulamada reddedildi. Bir dakika sonra yeni bir istek gönderebilirsiniz."
+  },
+  "popupDisconnectedDetail": {
+    "message": "Otomatik doldurmayı kullanmak için masaüstü uygulamasını başlatıp oturum açın."
+  },
+  "autofillIconTitle": {
+    "message": "RDVAULT ile otomatik doldur"
+  },
+  "autofillHeader": {
+    "message": "RDVAULT kimlik bilgileri"
+  },
+  "autofillNoResults": {
+    "message": "Bu site için kimlik bilgisi bulunamadı"
+  },
+  "autofillUnnamed": {
+    "message": "Adsız"
+  },
+  "autofillNoUsername": {
+    "message": "(kullanıcı adı yok)"
+  },
+  "autofillLoading": {
+    "message": "Kimlik bilgisi alınıyor..."
+  },
+  "autofillFetchFailed": {
+    "message": "Kimlik bilgisi alınamadı"
+  },
+  "pkCreateTitle": {
+    "message": "$HOST$ için passkey oluştur",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "RDVAULT'ta oluştur"
+  },
+  "pkGetTitle": {
+    "message": "$HOST$ için passkey'inizi kullanın",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "RDVAULT passkey'imi kullan"
+  },
+  "pkChooseAccount": {
+    "message": "hesabı seçin"
+  },
+  "pkUseAnotherDevice": {
+    "message": "Başka bir cihaz kullan"
+  },
+  "pkCancel": {
+    "message": "İptal"
+  },
+  "pkBlockedWarning": {
+    "message": "İşlem engellendi: RDVAULT penceresi sayfa tarafından gizleniyor veya örtülüyor. “$OTHER$” ya da “$CANCEL$” seçeneğini kullanın.",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "Adsız hesap"
+  },
+  "pkCreatedOn": {
+    "message": "$DATE$ tarihinde oluşturuldu",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "Bu site için kimlik bilgisi bulunamadı"
+  },
+  "bgErrHttp": {
+    "message": "HTTP hatası $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "Geçersiz yanıt"
+  },
+  "bgErrCommunication": {
+    "message": "RDVAULT ile iletişim hatası"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "Geçersiz anahtar adı"
+  },
+  "bgErrInvalidCode": {
+    "message": "Geçersiz kod"
+  },
+  "bgErrTotp": {
+    "message": "TOTP hatası"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "geçersiz passkey"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId'ye izin verilmiyor"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "Kasa kullanılamıyor"
+  },
+  "bgErrInsecureSender": {
+    "message": "Güvenli olmayan bir sayfadan izin verilmiyor"
+  },
+  "bgErrInternal": {
+    "message": "Dahili hata"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "Sekme URL'si gerekli"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "Desteklenmeyen ileti türü"
+  },
+  "bgErrInsecurePage": {
+    "message": "Güvenli olmayan sayfa"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT kullanılamıyor veya kilitli"
+  },
+  "bgErrNameRequired": {
+    "message": "Gizli bilgi adı gerekli"
+  },
+  "bgErrInvalidCredential": {
+    "message": "Geçersiz kimlik bilgisi"
+  },
+  "bgErrSaveCredential": {
+    "message": "Kimlik bilgisi kaydedilirken hata oluştu"
+  },
+  "bgErrReadCredential": {
+    "message": "Kimlik bilgisi okunurken hata oluştu"
+  },
+  "bgErrClearCredential": {
+    "message": "Kimlik bilgisi silinirken hata oluştu"
+  }
+}

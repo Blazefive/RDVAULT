@@ -14,6 +14,35 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Callbacks IPC enregistrés (un seul listener actif par canal, stockés dans le module — pas sur contextBridge)
+const _listeners = { totp: null, share: null, cliReady: null, cliSecret: null, cliEngines: null, cliList: null, passkey: null, resync: null };
+
+// ========================================
+// LANGUE DE L'INTERFACE → processus principal
+// ========================================
+// Les boîtes de dialogue natives (appairage de l'extension, approbations CLI, clé d'hôte SSH) et les erreurs
+// IPC affichées en toast sont produites par le processus principal : il doit connaître la langue courante de
+// l'interface. I18nProvider (src/i18n.js) reflète cette langue dans l'attribut lang de <html> ; le preload
+// l'observe (MutationObserver, attaché avant tout script de la page) et la transmet par IPC à sens unique.
+// Le lang="en" statique d'index.html n'est pas une mutation : il n'est jamais transmis (le processus
+// principal garde alors LANG de config.cfg). Aucune API supplémentaire n'est exposée à la page ; le
+// processus principal valide l'expéditeur et la valeur (liste blanche des 12 langues).
+const UI_LANGS = ['ar', 'de', 'en', 'es', 'fr', 'it', 'ja', 'ko', 'pt', 'ru', 'tr', 'zh'];
+let _lastUiLang = null;
+function reportUiLanguage(value) {
+  const lang = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!UI_LANGS.includes(lang) || lang === _lastUiLang) return;
+  _lastUiLang = lang;
+  ipcRenderer.send('set-ui-language', lang);
+}
+try {
+  new MutationObserver((records) => {
+    for (const record of records) {
+      if (record.target === document.documentElement) reportUiLanguage(document.documentElement.getAttribute('lang'));
+    }
+  }).observe(document, { subtree: true, attributes: true, attributeFilter: ['lang'] });
+} catch { /* DOM indisponible : le processus principal garde LANG de config.cfg */ }
+
 // ========================================
 // API INFO - Vérification de disponibilité
 // ========================================
@@ -65,28 +94,43 @@ contextBridge.exposeInMainWorld('electronSync', {
   // Lit l'état de synchronisation depuis le fichier chiffré
   readState: () => ipcRenderer.invoke('sync-read-state'),
 
-  // Retourne le chemin du fichier de synchronisation (pour debug)
+  // Conservé pour compatibilité : l'état de sync n'est plus écrit sur disque (toujours en échec)
   getPath: () => ipcRenderer.invoke('sync-get-path'),
 
-  // Retourne le token d'authentification déchiffré (pour l'extension Chrome)
+  // Retourne le token du serveur sync (en mémoire) pour affichage dans les paramètres
   getAuthToken: () => ipcRenderer.invoke('sync-get-auth-token'),
+
+  // Demande de republication de l'état (processus principal : fenêtre de nouveau réactive après un gel,
+  // l'état servi à l'extension ayant été purgé pendant le gel). Aucune donnée transmise ; un seul
+  // écouteur actif ; renvoie la fonction de désabonnement.
+  onResyncRequest: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    if (_listeners.resync) ipcRenderer.removeListener('sync-resync-request', _listeners.resync);
+    const wrappedCallback = () => callback();
+    _listeners.resync = wrappedCallback;
+    ipcRenderer.on('sync-resync-request', wrappedCallback);
+    return () => {
+      ipcRenderer.removeListener('sync-resync-request', wrappedCallback);
+      if (_listeners.resync === wrappedCallback) _listeners.resync = null;
+    };
+  },
 
   // Écoute les demandes de code TOTP depuis l'extension Chrome
   // L'extension envoie le nom d'une clé TOTP + requestId, React génère le code et le renvoie
   onTotpRequest: (callback) => {
     // SÉCURITÉ: Ne pas exposer l'objet event IPC à React
     // Retirer le listener précédent si existant pour éviter les doublons
-    if (contextBridge._totpRequestCallback) {
-      ipcRenderer.removeListener('get-totp-code', contextBridge._totpRequestCallback);
+    if (_listeners.totp) {
+      ipcRenderer.removeListener('get-totp-code', _listeners.totp);
     }
     const wrappedCallback = (_event, keyName, requestId) => callback(keyName, requestId);
-    contextBridge._totpRequestCallback = wrappedCallback;
+    _listeners.totp = wrappedCallback;
     ipcRenderer.on('get-totp-code', wrappedCallback);
     // Retourne une fonction de cleanup pour éviter les fuites mémoire
     return () => {
       ipcRenderer.removeListener('get-totp-code', wrappedCallback);
-      if (contextBridge._totpRequestCallback === wrappedCallback) {
-        contextBridge._totpRequestCallback = null;
+      if (_listeners.totp === wrappedCallback) {
+        _listeners.totp = null;
       }
     };
   },
@@ -110,6 +154,38 @@ contextBridge.exposeInMainWorld('electronSync', {
       error: typeof result.error === 'string' ? result.error.slice(0, 200) : undefined
     };
     ipcRenderer.send(`totp-code-response-${requestId}`, safeResult);
+  }
+});
+
+// ========================================
+// API PASSKEY - Stockage des passkeys dans le coffre (via le renderer)
+// ========================================
+// Le serveur sync envoie des requêtes (passkey-list / passkey-store / passkey-update-count)
+// que React traite en lisant/écrivant dans le coffre, puis renvoie la réponse corrélée
+// par requestId. La clé privée reste dans le coffre chiffré ; elle n'est transmise à
+// l'extension qu'au moment de signer (même modèle que les mots de passe).
+const PASSKEY_CHANNELS = ['passkey-list', 'passkey-store', 'passkey-update-count'];
+contextBridge.exposeInMainWorld('electronPasskey', {
+  onRequest: (callback) => {
+    if (_listeners.passkey) {
+      for (const ch of PASSKEY_CHANNELS) ipcRenderer.removeListener(ch, _listeners.passkey[ch]);
+    }
+    const map = {};
+    for (const ch of PASSKEY_CHANNELS) {
+      const wrapped = (_event, req) => callback(ch, req || {});
+      map[ch] = wrapped;
+      ipcRenderer.on(ch, wrapped);
+    }
+    _listeners.passkey = map;
+    return () => {
+      for (const ch of PASSKEY_CHANNELS) ipcRenderer.removeListener(ch, map[ch]);
+      if (_listeners.passkey === map) _listeners.passkey = null;
+    };
+  },
+  sendResponse: (channel, result, requestId) => {
+    if (!PASSKEY_CHANNELS.includes(channel)) return;
+    if (!requestId || typeof requestId !== 'string' || !/^[a-f0-9]{16}$/.test(requestId)) return;
+    ipcRenderer.send(channel + '-response-' + requestId, (result && typeof result === 'object') ? result : { success: false });
   }
 });
 
@@ -232,6 +308,8 @@ contextBridge.exposeInMainWorld('electronAudit', {
       if (typeof sshConfig.username === 'string') safeSshConfig.username = sshConfig.username.slice(0, 128);
       if (typeof sshConfig.password === 'string') safeSshConfig.password = sshConfig.password.slice(0, 1024);
       if (sshConfig.port !== undefined) safeSshConfig.port = Number(sshConfig.port);
+      // Empreinte de clé d'hôte épinglée (« SHA256:… »), facultative : validée côté main
+      if (typeof sshConfig.hostFingerprint === 'string') safeSshConfig.hostFingerprint = sshConfig.hostFingerprint.slice(0, 64);
     }
     return ipcRenderer.invoke('audit-tail-log-file', filePath, safeLines, safeSshConfig);
   }
@@ -289,7 +367,9 @@ contextBridge.exposeInMainWorld('electronPowerMonitor', {
 // où les credentials sont injectés automatiquement (l'utilisateur ne voit jamais le mdp)
 contextBridge.exposeInMainWorld('electronRBI', {
   // Lance une session sécurisée
-  // options: { url, username, password, selectors?, policies? }
+  // options: { url, username, password, website?, totp?, selectors?, policies? }
+  // website (champ de l'entrée, facultatif) : seconde adresse de référence pour la saisie, comme l'extension
+  // (validé par le processus principal ; l'URL ouverte reste url)
   launchSession: (options) => {
     if (!options || typeof options !== 'object') return Promise.reject(new Error('Options invalides'));
     // SÉCURITÉ: Valider le schéma de l'URL
@@ -322,18 +402,18 @@ contextBridge.exposeInMainWorld('electronRBI', {
   // Écoute la réception d'un lien de partage RBI (deep link rdvault://share/TOKEN)
   onShareReceived: (callback) => {
     // Retirer le listener précédent si existant pour éviter les doublons
-    if (contextBridge._shareReceivedCallback) {
-      ipcRenderer.removeListener('rdvault-share-received', contextBridge._shareReceivedCallback);
+    if (_listeners.share) {
+      ipcRenderer.removeListener('rdvault-share-received', _listeners.share);
     }
     const wrappedCallback = (_event, shareToken) => {
       if (typeof shareToken === 'string' && shareToken.length > 0 && shareToken.length < 1024) callback(shareToken);
     };
-    contextBridge._shareReceivedCallback = wrappedCallback;
+    _listeners.share = wrappedCallback;
     ipcRenderer.on('rdvault-share-received', wrappedCallback);
     return () => {
       ipcRenderer.removeListener('rdvault-share-received', wrappedCallback);
-      if (contextBridge._shareReceivedCallback === wrappedCallback) {
-        contextBridge._shareReceivedCallback = null;
+      if (_listeners.share === wrappedCallback) {
+        _listeners.share = null;
       }
     };
   }
@@ -348,12 +428,20 @@ contextBridge.exposeInMainWorld('electronRBI', {
 contextBridge.exposeInMainWorld('electronCLI', {
   // Écoute la notification de démarrage du serveur CLI (port + token)
   onServerReady: (callback) => {
+    // Retirer le listener précédent pour éviter les doublons
+    if (_listeners.cliReady) {
+      ipcRenderer.removeListener('cli-server-ready', _listeners.cliReady);
+    }
     const wrappedCallback = (_event, data) => {
       const safeData = { port: Number(data?.port) || 0, token: String(data?.token || '') };
       callback(safeData);
     };
+    _listeners.cliReady = wrappedCallback;
     ipcRenderer.on('cli-server-ready', wrappedCallback);
-    return () => ipcRenderer.removeListener('cli-server-ready', wrappedCallback);
+    return () => {
+      ipcRenderer.removeListener('cli-server-ready', wrappedCallback);
+      if (_listeners.cliReady === wrappedCallback) _listeners.cliReady = null;
+    };
   },
 
   // Récupère les infos de session CLI (appel actif, pas d'écoute passive)
@@ -361,35 +449,36 @@ contextBridge.exposeInMainWorld('electronCLI', {
 
   // Écoute les demandes de secrets provenant de la CLI
   onSecretRequest: (callback) => {
-    if (contextBridge._cliSecretCallback) {
-      ipcRenderer.removeListener('cli-read-secret', contextBridge._cliSecretCallback);
+    if (_listeners.cliSecret) {
+      ipcRenderer.removeListener('cli-read-secret', _listeners.cliSecret);
     }
     const wrappedCallback = (_event, request) => {
       const safe = { engine: String(request?.engine || ''), path: String(request?.path || ''), requestId: String(request?.requestId || '') };
       callback(safe);
     };
-    contextBridge._cliSecretCallback = wrappedCallback;
+    _listeners.cliSecret = wrappedCallback;
     ipcRenderer.on('cli-read-secret', wrappedCallback);
     return () => {
       ipcRenderer.removeListener('cli-read-secret', wrappedCallback);
-      if (contextBridge._cliSecretCallback === wrappedCallback) {
-        contextBridge._cliSecretCallback = null;
+      if (_listeners.cliSecret === wrappedCallback) {
+        _listeners.cliSecret = null;
       }
     };
   },
 
   // Écoute les demandes de listage des engines provenant de la CLI
   onEnginesRequest: (callback) => {
-    if (contextBridge._cliEnginesCallback) {
-      ipcRenderer.removeListener('cli-list-engines', contextBridge._cliEnginesCallback);
+    if (_listeners.cliEngines) {
+      ipcRenderer.removeListener('cli-list-engines', _listeners.cliEngines);
     }
-    const wrappedCallback = (_event, request) => callback(request);
-    contextBridge._cliEnginesCallback = wrappedCallback;
+    // SÉCURITÉ: Ne transmettre qu'un objet propre (pas l'objet IPC brut)
+    const wrappedCallback = (_event, request) => callback({ requestId: String(request?.requestId || '') });
+    _listeners.cliEngines = wrappedCallback;
     ipcRenderer.on('cli-list-engines', wrappedCallback);
     return () => {
       ipcRenderer.removeListener('cli-list-engines', wrappedCallback);
-      if (contextBridge._cliEnginesCallback === wrappedCallback) {
-        contextBridge._cliEnginesCallback = null;
+      if (_listeners.cliEngines === wrappedCallback) {
+        _listeners.cliEngines = null;
       }
     };
   },
@@ -402,16 +491,21 @@ contextBridge.exposeInMainWorld('electronCLI', {
 
   // Écoute les demandes de listage des secrets d'un engine
   onListSecretsRequest: (callback) => {
-    if (contextBridge._cliListSecretsCallback) {
-      ipcRenderer.removeListener('cli-list-secrets', contextBridge._cliListSecretsCallback);
+    if (_listeners.cliList) {
+      ipcRenderer.removeListener('cli-list-secrets', _listeners.cliList);
     }
-    const wrappedCallback = (_event, request) => callback(request);
-    contextBridge._cliListSecretsCallback = wrappedCallback;
+    // SÉCURITÉ: Ne transmettre qu'un objet propre (pas l'objet IPC brut)
+    const wrappedCallback = (_event, request) => callback({
+      engine: String(request?.engine || ''),
+      path: String(request?.path || ''),
+      requestId: String(request?.requestId || '')
+    });
+    _listeners.cliList = wrappedCallback;
     ipcRenderer.on('cli-list-secrets', wrappedCallback);
     return () => {
       ipcRenderer.removeListener('cli-list-secrets', wrappedCallback);
-      if (contextBridge._cliListSecretsCallback === wrappedCallback) {
-        contextBridge._cliListSecretsCallback = null;
+      if (_listeners.cliList === wrappedCallback) {
+        _listeners.cliList = null;
       }
     };
   },
@@ -489,10 +583,27 @@ contextBridge.exposeInMainWorld('electronWindow', {
   minimize: () => ipcRenderer.invoke('window-minimize'),
   maximize: () => ipcRenderer.invoke('window-maximize-toggle'),
   isMaximized: () => ipcRenderer.invoke('window-is-maximized'),
+  // Renvoie une fonction de désabonnement (le wrapper interne n'est pas exposé au renderer)
   onMaximizeChange: (callback) => {
-    const wrapped = (_event, isMaximized) => callback(isMaximized);
+    const wrapped = (_e, maximized) => callback(!!maximized);
     ipcRenderer.on('window-maximize-changed', wrapped);
-    return wrapped;
+    return () => ipcRenderer.removeListener('window-maximize-changed', wrapped);
   },
-  removeMaximizeListener: (wrapped) => ipcRenderer.removeListener('window-maximize-changed', wrapped),
+});
+
+// ── Mise à jour automatique (electron-updater) ──
+// onStatus reçoit { state: 'checking'|'available'|'downloading'|'downloaded'|'none'|'error', version?, percent? }
+let _updateStatusCb = null;
+contextBridge.exposeInMainWorld('electronUpdater', {
+  onStatus: (callback) => {
+    if (_updateStatusCb) ipcRenderer.removeListener('update-status', _updateStatusCb);
+    _updateStatusCb = (_event, payload) => { try { callback(payload); } catch {} };
+    ipcRenderer.on('update-status', _updateStatusCb);
+  },
+  removeStatusListener: () => {
+    if (_updateStatusCb) ipcRenderer.removeListener('update-status', _updateStatusCb);
+    _updateStatusCb = null;
+  },
+  check: () => ipcRenderer.invoke('update:check'),
+  install: () => ipcRenderer.invoke('update:install'),
 });

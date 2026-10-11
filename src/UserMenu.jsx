@@ -1,11 +1,74 @@
 // src/UserMenu.jsx
-import React, { useState, useEffect, useRef } from 'react';
+// Menu utilisateur (bouton de menu, WAI-ARIA APG « Menu Button ») :
+// - déclencheur : aria-haspopup="menu" + aria-expanded, nom accessible « Connecté en tant que … » ;
+// - à l'ouverture, focus sur le premier élément ; flèches haut/bas, Début/Fin pour naviguer ;
+// - Échap ferme et rend le focus au déclencheur ; le menu se ferme aussi quand le focus le quitte
+//   (Tab) ou sur un clic extérieur ;
+// - une action rend d'abord le focus au déclencheur : la modale ouverte le lui rendra à sa fermeture.
+import React, { useState, useEffect, useId, useRef } from 'react';
 import { useTranslation } from './i18n';
 
-export default function UserMenu({ username, onLogout, darkMode, onToggleDarkMode, isAdmin, isModerator, currentView, onToggleAdminView, onOpenSettings }) {
+export default function UserMenu({ username, onLogout, darkMode, onToggleDarkMode, isAdmin, isModerator, currentView, onToggleAdminView, onOpenSettings, onOpenPasswordHealth, onOpenPasskeys }) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef(null);
+  const triggerRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const menuId = useId();
+
+  const menuItems = () => Array.from(dropdownRef.current?.querySelectorAll('[role="menuitem"]') || []);
+
+  // Ouverture : focus sur le premier élément du menu
+  useEffect(() => {
+    if (isOpen) dropdownRef.current?.querySelector('[role="menuitem"]')?.focus();
+  }, [isOpen]);
+
+  const closeAndFocusTrigger = () => {
+    setIsOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  // Action d'un élément : focus rendu au déclencheur AVANT l'action (élément du menu démonté ensuite)
+  const runItem = (action) => {
+    triggerRef.current?.focus();
+    setIsOpen(false);
+    action && action();
+  };
+
+  const handleMenuKeyDown = (e) => {
+    if (!isOpen) return;
+    const items = menuItems();
+    const index = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeAndFocusTrigger();
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!items.length) return;
+      const delta = e.key === 'ArrowDown' ? 1 : -1;
+      const next = index < 0 ? (delta > 0 ? 0 : items.length - 1) : (index + delta + items.length) % items.length;
+      items[next].focus();
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      (e.key === 'Home' ? items[0] : items[items.length - 1])?.focus();
+    }
+  };
+
+  // Ouverture au clavier depuis le déclencheur (flèche bas / haut)
+  const handleTriggerKeyDown = (e) => {
+    if (!isOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      setIsOpen(true);
+    }
+  };
+
+  // Fermeture quand le focus quitte le menu (Tab, clic ailleurs)
+  const handleBlur = (e) => {
+    if (isOpen && menuRef.current && !menuRef.current.contains(e.relatedTarget)) {
+      setIsOpen(false);
+    }
+  };
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -33,14 +96,20 @@ export default function UserMenu({ username, onLogout, darkMode, onToggleDarkMod
   };
 
   return (
-    <div className="user-menu" ref={menuRef}>
+    <div className="user-menu" ref={menuRef} onKeyDown={handleMenuKeyDown} onBlur={handleBlur}>
       <button
+        ref={triggerRef}
         className="user-menu-trigger"
         onClick={() => setIsOpen(!isOpen)}
+        onKeyDown={handleTriggerKeyDown}
         type="button"
         title={t('user.connectedAs', { name: username })}
+        aria-label={t('user.connectedAs', { name: username })}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? menuId : undefined}
       >
-        <div className="user-avatar">
+        <div className="user-avatar" aria-hidden="true">
           {getInitials(username)}
         </div>
         <span className="user-menu-name">{username}</span>
@@ -50,6 +119,7 @@ export default function UserMenu({ username, onLogout, darkMode, onToggleDarkMod
           height="16"
           viewBox="0 0 16 16"
           fill="none"
+          aria-hidden="true"
         >
           <path
             d="M4 6L8 10L12 6"
@@ -62,9 +132,10 @@ export default function UserMenu({ username, onLogout, darkMode, onToggleDarkMod
       </button>
 
       {isOpen && (
-        <div className="user-menu-dropdown">
-          <div className="user-menu-header">
-            <div className="user-avatar-large">
+        // tabIndex -1 : un clic sur une zone non interactive du menu y garde le focus (pas de fermeture)
+        <div className="user-menu-dropdown" id={menuId} role="menu" aria-label={username} ref={dropdownRef} tabIndex={-1}>
+          <div className="user-menu-header" role="none">
+            <div className="user-avatar-large" aria-hidden="true">
               {getInitials(username)}
             </div>
             <div className="user-menu-info">
@@ -73,16 +144,15 @@ export default function UserMenu({ username, onLogout, darkMode, onToggleDarkMod
             </div>
           </div>
 
-          <div className="user-menu-separator" />
+          <div className="user-menu-separator" role="separator" />
 
           {(isAdmin || isModerator) && (
             <>
               <button
                 className="user-menu-item user-menu-item-admin"
-                onClick={() => {
-                  onToggleAdminView();
-                  setIsOpen(false);
-                }}
+                role="menuitem"
+                tabIndex={-1}
+                onClick={() => runItem(onToggleAdminView)}
                 type="button"
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -110,16 +180,15 @@ export default function UserMenu({ username, onLogout, darkMode, onToggleDarkMod
                 </svg>
                 {currentView === 'admin' ? t('toolbar.vaultView') : t('toolbar.adminView')}
               </button>
-              <div className="user-menu-separator" />
+              <div className="user-menu-separator" role="separator" />
             </>
           )}
 
           <button
             className="user-menu-item"
-            onClick={() => {
-              setIsOpen(false);
-              onOpenSettings();
-            }}
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => runItem(onOpenSettings)}
             type="button"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -129,14 +198,47 @@ export default function UserMenu({ username, onLogout, darkMode, onToggleDarkMod
             {t('toolbar.settings')}
           </button>
 
-          <div className="user-menu-separator" />
+          {onOpenPasswordHealth && (
+            <button
+              className="user-menu-item"
+              role="menuitem"
+              tabIndex={-1}
+              onClick={() => runItem(onOpenPasswordHealth)}
+              type="button"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <path d="M9 12l2 2 4-4" />
+              </svg>
+              {t('user.passwordHealth')}
+            </button>
+          )}
+
+          {onOpenPasskeys && (
+            <button
+              className="user-menu-item"
+              role="menuitem"
+              tabIndex={-1}
+              onClick={() => runItem(onOpenPasskeys)}
+              type="button"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="8" cy="12" r="4" />
+                <path d="M12 12h9" />
+                <path d="M18 12v3" />
+                <path d="M15 12v2" />
+              </svg>
+              {t('user.passkeys')}
+            </button>
+          )}
+
+          <div className="user-menu-separator" role="separator" />
 
           <button
             className="user-menu-item user-menu-item-logout"
-            onClick={() => {
-              setIsOpen(false);
-              onLogout();
-            }}
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => runItem(onLogout)}
             type="button"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">

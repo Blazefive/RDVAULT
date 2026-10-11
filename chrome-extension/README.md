@@ -1,172 +1,135 @@
-# Vault Autofill - Extension Chrome
+# Vault Autofill - Extension Chrome (version simple)
 
-Extension Chrome pour auto-remplir les formulaires web avec vos identifiants stockés dans HashiCorp Vault.
+Extension Chrome (Manifest V3) pour auto-remplir les formulaires web avec vos identifiants stockés dans
+HashiCorp Vault. Cette version parle **directement** à Vault (authentification LDAP) ; la version enrichie,
+qui passe par l'application Desktop RDVAULT, se trouve dans `vault-autofill-extension/`.
 
 ## Fonctionnalités
 
-- Authentification LDAP avec votre serveur Vault
-- Détection automatique des champs login/password sur les pages web
-- Auto-remplissage des identifiants basé sur l'URL du site
-- Cache local des secrets (TTL: 5 minutes)
+- Authentification LDAP auprès de votre serveur Vault (**https obligatoire**)
+- Détection des champs identifiant / mot de passe (scoring, formulaires dynamiques, shadow DOM ouvert)
+- Liste des identifiants du site **sans mot de passe** ; le mot de passe n'est transmis qu'à la sélection
+- Cache des secrets en mémoire du service worker (TTL : 5 minutes)
 - Support KV v1 et KV v2
-- Interface popup pour gérer la connexion
+- Interface popup pour gérer la connexion et actualiser le cache
+- Interface dans la langue du navigateur (`chrome.i18n`, `_locales/`) : les 12 langues de l'application
+  (ar, de, en, es, fr, it, ja, ko, pt, ru, tr, zh_CN), anglais par défaut, de droite à gauche en arabe.
+  Les libellés cités ci-dessous en français s'affichent traduits
 
 ## Installation
 
-### 1. Activer le mode développeur dans Chrome
-
-1. Ouvrez Chrome et allez dans `chrome://extensions/`
-2. Activez le "Mode développeur" (Developer mode) en haut à droite
-3. Cliquez sur "Charger l'extension non empaquetée" (Load unpacked)
+1. Ouvrez `chrome://extensions/`
+2. Activez le **Mode développeur** (en haut à droite)
+3. Cliquez sur **Charger l'extension non empaquetée**
 4. Sélectionnez le dossier `chrome-extension` de ce projet
 
-### 2. Configurer les icônes (optionnel)
+Les icônes attendues dans `icons/` : `icon16.png`, `icon48.png`, `icon128.png`.
 
-L'extension nécessite des icônes dans le dossier `icons/`:
-- `icon16.png` (16x16 pixels)
-- `icon48.png` (48x48 pixels)
-- `icon128.png` (128x128 pixels)
+### Serveur Vault
 
-Pour créer des icônes rapidement, vous pouvez :
-1. Créer des images simples avec la lettre "V" (pour Vault)
-2. Ou utiliser des générateurs d'icônes en ligne
-
-### 3. Configurer CORS sur votre serveur Vault (si nécessaire)
-
-Si votre serveur Vault n'accepte pas les requêtes de l'extension, ajoutez cette configuration :
-
-```hcl
-# config.hcl
-ui = true
-
-listener "tcp" {
-  address = "0.0.0.0:8200"
-  tls_disable = true
-
-  # Ajouter les en-têtes CORS
-  cors_enabled = true
-  cors_allowed_origins = ["chrome-extension://*"]
-}
-```
+Le serveur Vault doit être exposé en **https** avec un certificat reconnu par Chrome : l'extension refuse
+toute URL `http://`. Les requêtes sont émises depuis le service worker (couvert par `host_permissions`)
+avec l'en-tête `X-Vault-Request: true` ; aucune configuration particulière du serveur Vault n'est requise.
 
 ## Utilisation
 
 ### 1. Connexion à Vault
 
-1. Cliquez sur l'icône de l'extension dans la barre d'outils Chrome
-2. Entrez vos identifiants :
-   - **URL Vault** : `http://192.168.1.15:8200` (ou votre serveur)
-   - **Namespace** : Laisser vide si non utilisé
-   - **Utilisateur LDAP** : Votre nom d'utilisateur
-   - **Mot de passe** : Votre mot de passe
-3. Cliquez sur "Se connecter"
+1. Cliquez sur l'icône de l'extension dans la barre d'outils
+2. Renseignez :
+   - **URL Vault** : `https://vault.example.com:8200`
+   - **Namespace** : laisser vide si non utilisé
+   - **Utilisateur LDAP** / **Mot de passe**
+3. Cliquez sur **Se connecter**
 
-### 2. Ajouter le champ "Website" à vos secrets
+Le token Vault est conservé dans `chrome.storage.session` : il disparaît à la fermeture du navigateur.
 
-Pour que l'extension puisse matcher vos secrets avec les sites web, vous devez ajouter un champ `Website` à vos entrées Vault :
+### 2. Renseigner le champ « Website » de vos secrets
 
-1. Ouvrez votre client Vault Desktop
-2. Créez ou modifiez un secret
-3. Remplissez le champ **Website** avec le domaine du site (ex: `github.com`, `google.com`)
-4. Sauvegardez
-
-**Exemple :**
-- **Nom** : github-perso
-- **Username** : mon-utilisateur
-- **Password** : mon-mot-de-passe
-- **URL** : https://github.com/login
-- **Website** : `github.com` ← Important pour le matching
-- **Notes** : Mon compte GitHub personnel
+Pour que l'extension associe un secret à un site, ajoutez un champ `Website` (ou `URL`) à vos entrées Vault
+avec le domaine du site, par exemple `github.com`.
 
 ### 3. Auto-remplissage
 
-1. Visitez un site web avec un formulaire de connexion (ex: https://github.com/login)
-2. Si des identifiants matchent le domaine du site, une icône bleue "V" apparaît sur les champs de formulaire
-3. Cliquez sur l'icône pour voir la liste des identifiants disponibles
-4. Sélectionnez l'identifiant à utiliser
-5. Les champs sont automatiquement remplis
+1. Visitez une page de connexion **https** (ex. `https://github.com/login`)
+2. Si des identifiants correspondent au domaine, une icône bleue « V » apparaît sur le champ mot de passe
+   (ou sur le champ identifiant si la page ne contient que celui-ci) ; le menu s'ouvre aussi au focus du champ identifiant
+3. Sélectionnez l'identifiant : le mot de passe est alors demandé au service worker et les champs sont remplis
 
 ### 4. Actualiser le cache
 
-Si vous avez modifié vos secrets dans Vault :
-1. Cliquez sur l'icône de l'extension
-2. Cliquez sur "Actualiser le cache"
+Après modification de vos secrets dans Vault : popup → **Actualiser le cache**.
 
-## Matching URL → Secrets
+## Matching site ↔ secrets
 
-L'extension utilise le champ `Website` pour matcher les secrets avec les sites web :
+Réalisé dans le service worker, à partir du **hostname de l'onglet** (fourni par Chrome, jamais par la page) :
 
-- **Match exact** : `github.com` matche `github.com`
-- **Sous-domaines** : `github.com` matche `login.github.com`
-- **Flexible** : Supporte les URLs avec et sans protocole
+- **Match exact** : `github.com` ↔ `github.com`
+- **Sous-domaines** : `github.com` ↔ `login.github.com`
+- Le champ peut contenir une URL complète ou un simple domaine
+- Le hostname du secret doit comporter **au moins deux labels** et ne doit pas être un **suffixe public**
+  (`com`, `co.uk`, `github.io`, `herokuapp.com`, `vercel.app`, …) : un secret enregistré sur `github.io`
+  ne matche jamais `autre-projet.github.io`
+- Seules les pages **https** sont prises en compte
 
-**Ordre de priorité :**
-1. Champ `Website` (recommandé pour l'extension)
-2. Champ `URL` (utilisé en fallback)
+Ordre de priorité : champ `Website`, puis champ `URL`.
+
+### Formulaires pris en charge par le content script
+
+| Type de formulaire | Prise en charge |
+|---|---|
+| Identifiant + mot de passe classique | Oui |
+| Connexion en deux étapes (identifiant, puis mot de passe sur une autre vue) | Oui |
+| SPA React / Angular / Vue | Oui (setter natif + événements `input` / `change`) |
+| Champs dans un shadow DOM **ouvert** | Oui |
+| Formulaire dans une **iframe** (même same-origin) | **Non** : injection dans le document principal uniquement (`all_frames: false`) |
+| Champ TOTP | **Non** dans cette version (voir la version enrichie) |
 
 ## Architecture
 
 ```
 chrome-extension/
-├── manifest.json          # Configuration de l'extension
-├── background.js          # Service Worker (gestion Vault API)
-├── content.js             # Script injecté dans les pages web
-├── popup.html/js          # Interface d'authentification
-├── vault-client.js        # Client API Vault réutilisable
-└── icons/                 # Icônes de l'extension
+├── manifest.json          # Configuration MV3 (permissions : storage, alarms ; hôtes : https://*/*)
+├── background.js          # Service worker : session Vault, cache, matching, SELECT_CREDENTIAL
+├── vault-client.js        # Client API Vault (LDAP, KV v1/v2) utilisé par background.js
+├── content.js             # Détection des champs, UI en shadow root fermé, remplissage
+├── popup.html / popup.js  # Connexion / déconnexion / actualisation du cache
+├── _locales/              # Textes de l'interface, 12 langues (chrome.i18n, repli « en »)
+└── icons/
 ```
 
 ## Sécurité
 
-- **Token** : Stocké dans `chrome.storage.local` (persistant mais sécurisé)
-- **Cache** : TTL de 5 minutes pour limiter l'exposition
-- **HTTPS recommandé** : Configurez votre serveur Vault en HTTPS en production
-- **Permissions minimales** : L'extension demande uniquement les permissions nécessaires
+- **Token** : `chrome.storage.session` uniquement (non persisté sur disque, effacé à la fermeture du navigateur)
+- **https obligatoire** pour l'URL Vault et pour les pages où l'auto-remplissage est proposé
+- **Mots de passe** : jamais présents dans la liste envoyée au content script ; renvoyés uniquement pour
+  l'entrée sélectionnée (`SELECT_CREDENTIAL`), depuis le cache, pour le hostname de l'onglet
+- **UI isolée** dans un shadow root fermé ; les clics et focus synthétiques (`isTrusted === false`) sont ignorés
+- **Permissions minimales** : `storage`, `alarms`, `host_permissions: https://*/*` ; pas de `scripting`, `activeTab` ni `update_url`
 
 ## Dépannage
 
-### L'icône "V" n'apparaît pas
+**L'icône « V » n'apparaît pas**
+1. Vérifiez que vous êtes connecté (popup)
+2. Vérifiez que le secret a un champ `Website` / `URL` correspondant au domaine (deux labels minimum)
+3. La page doit être en https et contenir un champ mot de passe (ou identifiant) visible
+4. Actualisez le cache, puis rechargez la page
 
-1. Vérifiez que vous êtes connecté (cliquez sur l'icône de l'extension)
-2. Vérifiez que vos secrets ont un champ `Website` rempli
-3. Actualisez le cache depuis la popup
-4. Rechargez la page web
-
-### Erreur de connexion
-
-1. Vérifiez que votre serveur Vault est accessible
+**Erreur de connexion**
+1. L'URL doit commencer par `https://` et le certificat doit être valide pour Chrome
 2. Vérifiez les identifiants LDAP
-3. Consultez la console du navigateur (`F12` → Console) pour les erreurs
-
-### Erreur CORS
-
-Si vous voyez des erreurs CORS dans la console :
-1. Configurez CORS sur votre serveur Vault (voir section "Configurer CORS")
-2. Redémarrez Vault
-3. Rechargez l'extension
+3. Consultez la console du service worker (`chrome://extensions/` → « Inspecter les vues »)
 
 ## Développement
 
-Pour modifier l'extension :
 1. Éditez les fichiers dans `chrome-extension/`
-2. Retournez dans `chrome://extensions/`
-3. Cliquez sur le bouton "Recharger" (icône circulaire) pour l'extension
+2. Dans `chrome://extensions/`, cliquez sur **Recharger** pour l'extension
 
-Pour voir les logs :
-- **Background script** : `chrome://extensions/` → "Inspecter les vues : service worker"
-- **Content script** : `F12` dans la page web → Console
-- **Popup** : Clic droit sur l'icône de l'extension → Inspecter
+Logs : service worker via `chrome://extensions/` → « Inspecter les vues » ; content script via `F12` sur la page ;
+popup via clic droit sur l'icône → Inspecter.
 
-## Limitations actuelles
+## Limitations
 
-- Détection des formulaires basée sur les attributs HTML courants (peut ne pas fonctionner sur tous les sites)
-- Cache limité à 5 minutes (rechargez manuellement si nécessaire)
-- Pas de synchronisation en temps réel avec Vault
-
-## Améliorations futures
-
-- [ ] Support des formulaires avec TOTP
-- [ ] Génération de mots de passe
-- [ ] Sauvegarde automatique de nouveaux identifiants
-- [ ] Synchronisation temps réel
-- [ ] Support des identifiants multiples par domaine avec sélection intelligente
+- Détection heuristique des formulaires (peut échouer sur certains sites)
+- Cache de 5 minutes (actualisation manuelle possible)
+- Pas de TOTP ni de synchronisation temps réel avec Vault

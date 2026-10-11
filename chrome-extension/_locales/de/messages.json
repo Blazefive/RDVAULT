@@ -1,0 +1,119 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "Automatisches Ausfüllen von Formularen mit HashiCorp Vault"
+  },
+  "popupLoading": {
+    "message": "Wird geladen..."
+  },
+  "popupVaultUrlLabel": {
+    "message": "Vault-URL"
+  },
+  "popupNamespaceLabel": {
+    "message": "Namespace (optional)"
+  },
+  "popupNamespacePlaceholder": {
+    "message": "Leer lassen, falls nicht verwendet"
+  },
+  "popupUsernameLabel": {
+    "message": "LDAP-Benutzer"
+  },
+  "popupUsernamePlaceholder": {
+    "message": "Benutzername"
+  },
+  "popupPassword": {
+    "message": "Passwort"
+  },
+  "popupLoginButton": {
+    "message": "Anmelden"
+  },
+  "popupConnectedAs": {
+    "message": "Angemeldet als"
+  },
+  "popupRefreshButton": {
+    "message": "Cache aktualisieren"
+  },
+  "popupLogoutButton": {
+    "message": "Abmelden"
+  },
+  "popupDefaultUser": {
+    "message": "Benutzer"
+  },
+  "popupFillRequired": {
+    "message": "Bitte füllen Sie alle Pflichtfelder aus"
+  },
+  "popupLoggingIn": {
+    "message": "Anmeldung..."
+  },
+  "popupLoginSuccess": {
+    "message": "Anmeldung erfolgreich"
+  },
+  "popupLogoutSuccess": {
+    "message": "Abmeldung erfolgreich"
+  },
+  "popupRefreshing": {
+    "message": "Wird aktualisiert..."
+  },
+  "popupCacheRefreshed": {
+    "message": "Cache aktualisiert ($COUNT$ Geheimnisse)",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "42"
+      }
+    }
+  },
+  "popupError": {
+    "message": "Fehler: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Authentication failed"
+      }
+    }
+  },
+  "autofillIconTitle": {
+    "message": "Mit Vault automatisch ausfüllen"
+  },
+  "autofillHeader": {
+    "message": "Vault-Zugangsdaten"
+  },
+  "autofillNoResults": {
+    "message": "Keine Zugangsdaten für diese Website gefunden"
+  },
+  "autofillUnnamed": {
+    "message": "Ohne Namen"
+  },
+  "autofillNoUsername": {
+    "message": "(kein Benutzername)"
+  },
+  "autofillLoading": {
+    "message": "Zugangsdaten werden abgerufen..."
+  },
+  "autofillFetchFailed": {
+    "message": "Zugangsdaten konnten nicht abgerufen werden"
+  },
+  "bgErrUnauthorizedSource": {
+    "message": "Nicht autorisierte Quelle"
+  },
+  "bgErrInsecurePage": {
+    "message": "Unsichere Seite"
+  },
+  "bgErrNameRequired": {
+    "message": "Name des Geheimnisses erforderlich"
+  },
+  "bgErrNotFound": {
+    "message": "Zugangsdaten für diese Website nicht gefunden"
+  },
+  "bgErrInvalidVaultUrl": {
+    "message": "Ungültige Vault-URL (https erforderlich)"
+  },
+  "bgErrAuthFailed": {
+    "message": "Authentifizierung fehlgeschlagen"
+  },
+  "bgErrInternal": {
+    "message": "Interner Fehler"
+  }
+}

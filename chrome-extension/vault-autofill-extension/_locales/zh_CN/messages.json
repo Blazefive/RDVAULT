@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "使用 RDVAULT 自动填写表单和通行密钥（需要桌面应用）"
+  },
+  "popupStatusChecking": {
+    "message": "正在检查..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "此扩展需要 Vault 桌面应用正在运行并已连接。"
+  },
+  "popupDesktopUnavailable": {
+    "message": "桌面应用不可用"
+  },
+  "popupDesktopNotConnected": {
+    "message": "桌面应用已启动但未连接"
+  },
+  "popupDesktopConnected": {
+    "message": "桌面应用已连接"
+  },
+  "popupUserLabel": {
+    "message": "用户:"
+  },
+  "popupServerLabel": {
+    "message": "服务器:"
+  },
+  "popupUnknown": {
+    "message": "未知"
+  },
+  "popupAutofillActive": {
+    "message": "✓ 自动填充已启用"
+  },
+  "popupPairingPendingTitle": {
+    "message": "请在 RDVAULT 应用中确认访问"
+  },
+  "popupPairingPendingDetail": {
+    "message": "已向 RDVAULT 发送配对请求。请在应用中接受该请求（限时 60 秒）以启用自动填充。"
+  },
+  "popupPairingDeniedTitle": {
+    "message": "已在 RDVAULT 中拒绝访问"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "此扩展的配对已在应用中被拒绝。一分钟后可以再次发送请求。"
+  },
+  "popupDisconnectedDetail": {
+    "message": "请启动桌面应用并登录以使用自动填充。"
+  },
+  "autofillIconTitle": {
+    "message": "使用 RDVAULT 自动填充"
+  },
+  "autofillHeader": {
+    "message": "RDVAULT 登录凭据"
+  },
+  "autofillNoResults": {
+    "message": "未找到此网站的登录凭据"
+  },
+  "autofillUnnamed": {
+    "message": "未命名"
+  },
+  "autofillNoUsername": {
+    "message": "（无用户名）"
+  },
+  "autofillLoading": {
+    "message": "正在获取登录凭据..."
+  },
+  "autofillFetchFailed": {
+    "message": "无法获取登录凭据"
+  },
+  "pkCreateTitle": {
+    "message": "为 $HOST$ 创建通行密钥",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "在 RDVAULT 中创建"
+  },
+  "pkGetTitle": {
+    "message": "为 $HOST$ 使用您的通行密钥",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "使用我的 RDVAULT 通行密钥"
+  },
+  "pkChooseAccount": {
+    "message": "请选择账户"
+  },
+  "pkUseAnotherDevice": {
+    "message": "使用其他设备"
+  },
+  "pkCancel": {
+    "message": "取消"
+  },
+  "pkBlockedWarning": {
+    "message": "操作已阻止：RDVAULT 窗口被页面隐藏或遮挡。请使用“$OTHER$”或“$CANCEL$”。",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "未命名账户"
+  },
+  "pkCreatedOn": {
+    "message": "创建于 $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "找不到此网站的登录凭据"
+  },
+  "bgErrHttp": {
+    "message": "HTTP 错误 $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "响应无效"
+  },
+  "bgErrCommunication": {
+    "message": "与 RDVAULT 通信时出错"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "密钥名称无效"
+  },
+  "bgErrInvalidCode": {
+    "message": "代码无效"
+  },
+  "bgErrTotp": {
+    "message": "TOTP 错误"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "通行密钥无效"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId 不被允许"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "保险库不可用"
+  },
+  "bgErrInsecureSender": {
+    "message": "不允许从不安全的页面执行此操作"
+  },
+  "bgErrInternal": {
+    "message": "内部错误"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "需要标签页 URL"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "不支持的消息类型"
+  },
+  "bgErrInsecurePage": {
+    "message": "页面不安全"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT 不可用或已锁定"
+  },
+  "bgErrNameRequired": {
+    "message": "需要机密名称"
+  },
+  "bgErrInvalidCredential": {
+    "message": "凭据无效"
+  },
+  "bgErrSaveCredential": {
+    "message": "保存凭据时出错"
+  },
+  "bgErrReadCredential": {
+    "message": "读取凭据时出错"
+  },
+  "bgErrClearCredential": {
+    "message": "删除凭据时出错"
+  }
+}

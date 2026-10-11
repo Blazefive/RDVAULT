@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Shadow DOM login</title></head>
+<body>
+<h1>Shadow DOM login</h1>
+<login-box></login-box>
+<pre id="out"></pre>
+<script>
+class LoginBox extends HTMLElement {
+  connectedCallback() {
+    const sr = this.attachShadow({ mode: 'open' });
+    sr.innerHTML = '<label>User <input id="su" type="text" autocomplete="username"></label><br>' +
+      '<label>Pass <input id="sp" type="password" autocomplete="current-password"></label><br>' +
+      '<button id="sb" type="button">Login</button>';
+    sr.getElementById('sb').addEventListener('click', () => {
+      fetch('/submit', { method: 'POST', body: JSON.stringify({ page: 'shadow', user: sr.getElementById('su').value, password: sr.getElementById('sp').value }) })
+        .then(() => { document.getElementById('out').textContent = 'submitted'; });
+    });
+  }
+}
+customElements.define('login-box', LoginBox);
+</script>
+</body></html>

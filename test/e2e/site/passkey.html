@@ -1,0 +1,57 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Passkey test</title></head>
+<body>
+<h1>Test passkey WebAuthn (via RDVAULT)</h1>
+<button id="reg" type="button">Créer une passkey</button>
+<button id="auth" type="button">S'authentifier</button>
+<pre id="result">prêt</pre>
+<script>
+const enc = new TextEncoder();
+function b64uToBuf(s){const t=String(s).replace(/-/g,'+').replace(/_/g,'/').padEnd(Math.ceil(s.length/4)*4,'=');const b=atob(t);const u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u;}
+function bufToB64u(a){const u=new Uint8Array(a);let s='';for(let i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+// CBOR minimal (decode)
+function cbor(bytes){let i=0;function r(){const b=bytes[i++];const M=b>>5;let n=b&0x1f;if(n===24)n=bytes[i++];else if(n===25){n=(bytes[i++]<<8)|bytes[i++];}else if(n===26){n=((bytes[i++]<<24)|(bytes[i++]<<16)|(bytes[i++]<<8)|bytes[i++])>>>0;}if(M===0)return n;if(M===1)return -1-n;if(M===2){const v=bytes.slice(i,i+n);i+=n;return v;}if(M===3){const v=bytes.slice(i,i+n);i+=n;return new TextDecoder().decode(v);}if(M===5){const m=new Map();for(let k=0;k<n;k++){const key=r();m.set(key,r());}return m;}throw new Error('cbor');}return r();}
+// DER (r,s) -> raw 64
+function derToRaw(der){let i=0;if(der[i++]!==0x30)throw 0;i++;/*seqlen*/ if(der[i++]!==0x02)throw 0;let rl=der[i++];let r=der.slice(i,i+rl);i+=rl;if(der[i++]!==0x02)throw 0;let sl=der[i++];let s=der.slice(i,i+sl);const norm=(x)=>{x=x.slice();while(x.length>32&&x[0]===0)x=x.slice(1);const o=new Uint8Array(32);o.set(x,32-x.length);return o;};const out=new Uint8Array(64);out.set(norm(r),0);out.set(norm(s),32);return out;}
+
+const RP={id:location.hostname,name:'Test RDVAULT'};
+let pubKey=null, rawId=null;
+
+document.getElementById('reg').addEventListener('click',async()=>{
+  try{
+    const challenge=crypto.getRandomValues(new Uint8Array(32));
+    const cred=await navigator.credentials.create({publicKey:{
+      challenge, rp:RP, user:{id:enc.encode('user-123'),name:'alice@test',displayName:'Alice'},
+      pubKeyCredParams:[{type:'public-key',alg:-7}], timeout:60000, attestation:'none'
+    }});
+    rawId=new Uint8Array(cred.rawId);
+    const att=cbor(new Uint8Array(cred.response.attestationObject));
+    const ad=att.get('authData');
+    const credIdLen=(ad[53]<<8)|ad[54];
+    const cose=cbor(ad.slice(55+credIdLen));
+    const x=bufToB64u(cose.get(-2)), y=bufToB64u(cose.get(-3));
+    pubKey=await crypto.subtle.importKey('jwk',{kty:'EC',crv:'P-256',x,y},{name:'ECDSA',namedCurve:'P-256'},false,['verify']);
+    document.getElementById('result').textContent='REG_OK fmt='+att.get('fmt')+' id='+cred.id.slice(0,12);
+  }catch(e){document.getElementById('result').textContent='REG_FAIL '+(e.message||e);}
+});
+
+document.getElementById('auth').addEventListener('click',async()=>{
+  try{
+    if(!pubKey){document.getElementById('result').textContent='AUTH_FAIL pas de clé (créez d\'abord)';return;}
+    const challenge=crypto.getRandomValues(new Uint8Array(32));
+    const asrt=await navigator.credentials.get({publicKey:{
+      challenge, rpId:RP.id, timeout:60000,
+      allowCredentials:[{type:'public-key',id:rawId}]
+    }});
+    const ad=new Uint8Array(asrt.response.authenticatorData);
+    const cdjHash=new Uint8Array(await crypto.subtle.digest('SHA-256',asrt.response.clientDataJSON));
+    const signed=new Uint8Array(ad.length+cdjHash.length);signed.set(ad);signed.set(cdjHash,ad.length);
+    const rawSig=derToRaw(new Uint8Array(asrt.response.signature));
+    const ok=await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},pubKey,rawSig,signed);
+    const msg='AUTH_'+(ok?'OK':'BADSIG')+' id='+asrt.id.slice(0,12);
+    document.getElementById('result').textContent=msg;
+    fetch('/submit',{method:'POST',body:JSON.stringify({page:'passkey',verified:ok})});
+  }catch(e){document.getElementById('result').textContent='AUTH_FAIL '+(e.message||e);}
+});
+</script>
+</body></html>

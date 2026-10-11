@@ -1,8 +1,63 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import axios from 'axios';
-import * as tagManager from '../utils/tagManager';
 import secureLogger from '../secureLogger';
 import { sanitizeErrorMessage } from '../utils/security';
+import { readAllSecrets } from '../utils/readAllSecrets';
+
+// Écritures vers tags-shared (secret des tags ou création du montage), toutes origines confondues
+// (AdminPanel passe par tagManager) : observées via un intercepteur axios pour invalider le cache
+// d'absence ci-dessous dès la première écriture.
+let sharedTagsWriteSeq = 0;
+try {
+  axios.interceptors?.request?.use?.((config) => {
+    const method = String(config?.method || 'get').toLowerCase();
+    if (method !== 'get' && /\/v1\/(sys\/mounts\/)?tags-shared(\/|$)/.test(String(config?.url || ''))) {
+      sharedTagsWriteSeq++;
+    }
+    return config;
+  });
+} catch { /* axios simulé sans intercepteurs (tests) */ }
+
+/**
+ * Coffres listés PARTIELLEMENT par une lecture readAllSecrets (borne LIST_TOO_LARGE / LIST_TOO_DEEP,
+ * `partialEngines`) : messages traduits précis (borne et nombre d'entrées lues), sans doublon.
+ * @param {Object} result - Résultat de readAllSecrets
+ * @param {Function} t - Traduction
+ * @returns {string[]}
+ */
+export function partialListMessages(result, t) {
+  const partial = Array.isArray(result?.partialEngines) ? result.partialEngines : [];
+  return Array.from(new Set(partial.map(p => t(p?.code === 'LIST_TOO_DEEP' ? 'error.listTooDeepPartial' : 'error.listTooLargePartial', {
+    max: Number(p?.i18nVars?.max) || 0,
+    count: Number(p?.listed) || 0,
+  }))));
+}
+
+/**
+ * Entrées ou coffres illisibles (réseau, délai, 5xx après relances) d'une lecture readAllSecrets, hors
+ * coffres listés partiellement (présents aussi dans `failedEngines`, signalés par partialListMessages).
+ * @param {Object} result - Résultat de readAllSecrets
+ * @returns {number}
+ */
+export function unreadableCount(result) {
+  const partial = Array.isArray(result?.partialEngines) ? result.partialEngines.length : 0;
+  return (Number(result?.failed) || 0) + Math.max(0, (result?.failedEngines?.length || 0) - partial);
+}
+
+/**
+ * Lecture multi-coffres incomplète : message traduit, ou null si elle est complète. Liste tronquée par une
+ * borne : message précis (error.listTooLargePartial / error.listTooDeepPartial) au lieu de
+ * error.secretsUnreadable, qui attribue l'incomplétude à une erreur réseau ; autres échecs ajoutés à la suite.
+ * @param {Object} result - Résultat de readAllSecrets
+ * @param {Function} t - Traduction
+ * @returns {string|null}
+ */
+export function incompleteReadMessage(result, t) {
+  const parts = partialListMessages(result, t);
+  const unreadable = unreadableCount(result);
+  if (unreadable > 0) parts.push(t('error.secretsUnreadable', { count: unreadable }));
+  return parts.length ? parts.join(' ') : null;
+}
 
 /**
  * Hook de gestion des tags (decouverte, ajout, suppression, couleurs).
@@ -30,8 +85,45 @@ export function useTags({
   showToast, t
 }) {
   const [discoveredTags, setDiscoveredTags] = useState([]);
+  // Absence (404) ou refus (403) du secret tags-shared/data/tags, mémorisés pour la session courante
+  // (référence de baseHeaders, qui change avec le jeton / l'URL) et jusqu'à la prochaine écriture.
+  const sharedTagsMissingRef = useRef(null);
 
-  const { readSecretV2, writeSecretV2, listKeysV2, readSecretV1, writeSecretV1, listKeysV1 } = vaultApi;
+  const { writeSecretV2, writeSecretV1 } = vaultApi;
+
+  // Recharge tous les secrets de tous les coffres (mode recherche multi-coffre).
+  // Renvoie le message d'une lecture incomplète (liste tronquée par une borne, entrées ou coffres
+  // illisibles), ou null : l'appelant l'affiche au lieu du toast de succès.
+  const reloadAllVaultSecrets = async () => {
+    setLoadingAllSecrets(true);
+    try {
+      const result = await readAllSecrets(vaultApi, secretEngines);
+      setAllVaultSecrets(result.secrets);
+      return incompleteReadMessage(result, t);
+    } finally {
+      setLoadingAllSecrets(false);
+    }
+  };
+
+  // Rafraîchissement après l'écriture d'un tag. Recherche multi-coffre : tous les résultats sont relus ET,
+  // si l'entrée est celle du coffre sélectionné, sa liste aussi (APP-5 : restée périmée, elle faisait
+  // prendre « Modifier » depuis les résultats pour une création, refusée, et réécrivait l'ancien tag
+  // une fois la recherche vidée). Renvoie le message d'une lecture incomplète, ou null.
+  const refreshAfterTagWrite = async (targetEngine) => {
+    if (!multiVaultSearch) {
+      await fetchSecretsRef.current(targetEngine);
+      return null;
+    }
+    const incomplete = await reloadAllVaultSecrets();
+    if (selectedEngine && targetEngine.name === selectedEngine.name) await fetchSecretsRef.current(selectedEngine);
+    return incomplete;
+  };
+
+  // Toast de fin : succès, ou avertissement si le rechargement multi-coffre est incomplet
+  const toastAfterReload = (incomplete, successKey) => {
+    if (incomplete) showToast(incomplete, 'warning', 10000);
+    else showToast(t(successKey), 'success', 1500);
+  };
 
   const extractTagsFromSecrets = (secretsList) => {
     const allTags = new Set();
@@ -45,13 +137,23 @@ export function useTags({
     return Array.from(allTags).sort();
   };
 
-  // Charger les tags partages depuis le coffre tags-shared
+  // Charger les tags partages depuis le coffre tags-shared. Le secret est souvent absent : sans
+  // cache, chaque rafraichissement de liste refaisait la requete (et une 404 dans le journal).
   const loadSharedTags = async () => {
+    const missing = sharedTagsMissingRef.current;
+    if (missing && missing.headers === baseHeaders && missing.seq === sharedTagsWriteSeq) return [];
+    const seqAtRequest = sharedTagsWriteSeq;
     try {
-      const sharedTags = await tagManager.getSharedTags(vaultUrl, baseHeaders(), axiosConfig, axios);
-      return sharedTags;
+      const res = await axios.get(`${vaultUrl}/v1/tags-shared/data/tags`, axiosConfig({ headers: baseHeaders() }));
+      sharedTagsMissingRef.current = null;
+      return res.data?.data?.data?.tags || [];
     } catch (err) {
-      secureLogger.warn('[TAGS] Impossible de charger les tags partages');
+      const status = err?.response?.status;
+      if (status === 404 || status === 403) {
+        sharedTagsMissingRef.current = { headers: baseHeaders, seq: seqAtRequest };
+      } else {
+        secureLogger.warn('[TAGS] Impossible de charger les tags partages');
+      }
       return [];
     }
   };
@@ -97,31 +199,7 @@ export function useTags({
       }
 
       // Rafraichir la liste des secrets
-      if (multiVaultSearch) {
-        // En mode recherche multi-vault, recharger tous les secrets
-        setLoadingAllSecrets(true);
-        const allEngineSecrets = await Promise.all(
-          secretEngines.map(async (engine) => {
-            try {
-              const keys = engine.version === 2 ? await listKeysV2(engine) : await listKeysV1(engine);
-              const secretPromises = keys.map(async (key) => {
-                try {
-                  const s = engine.version === 2 ? await readSecretV2(engine, key) : await readSecretV1(engine, key);
-                  return { ...s, engineName: engine.name, engineVersion: engine.version };
-                } catch { return null; }
-              });
-              return (await Promise.all(secretPromises)).filter(s => s !== null);
-            } catch { return []; }
-          })
-        );
-        const allSecrets = allEngineSecrets.flat();
-        setAllVaultSecrets(allSecrets);
-        setLoadingAllSecrets(false);
-      } else {
-        await fetchSecretsRef.current(targetEngine);
-      }
-
-      showToast(t('toast.tagAdded'), 'success', 1500);
+      toastAfterReload(await refreshAfterTagWrite(targetEngine), 'toast.tagAdded');
     } catch (err) {
       const msg = sanitizeErrorMessage(err);
       showToast(`${t('error.tagAdd')} ${msg}`, 'error');
@@ -159,31 +237,7 @@ export function useTags({
       }
 
       // Rafraichir la liste des secrets
-      if (multiVaultSearch) {
-        // En mode recherche multi-vault, recharger tous les secrets
-        setLoadingAllSecrets(true);
-        const allEngineSecrets = await Promise.all(
-          secretEngines.map(async (engine) => {
-            try {
-              const keys = engine.version === 2 ? await listKeysV2(engine) : await listKeysV1(engine);
-              const secretPromises = keys.map(async (key) => {
-                try {
-                  const s = engine.version === 2 ? await readSecretV2(engine, key) : await readSecretV1(engine, key);
-                  return { ...s, engineName: engine.name, engineVersion: engine.version };
-                } catch { return null; }
-              });
-              return (await Promise.all(secretPromises)).filter(s => s !== null);
-            } catch { return []; }
-          })
-        );
-        const allSecrets = allEngineSecrets.flat();
-        setAllVaultSecrets(allSecrets);
-        setLoadingAllSecrets(false);
-      } else {
-        await fetchSecretsRef.current(targetEngine);
-      }
-
-      showToast(t('toast.tagRemoved'), 'success', 1500);
+      toastAfterReload(await refreshAfterTagWrite(targetEngine), 'toast.tagRemoved');
     } catch (err) {
       const msg = sanitizeErrorMessage(err);
       showToast(`${t('error.tagRemove')} ${msg}`, 'error');

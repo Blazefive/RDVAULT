@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>SPA login</title></head>
+<body>
+<h1>SPA login (controlled inputs)</h1>
+<div id="root"></div>
+<pre id="out"></pre>
+<script>
+// Simule un framework à inputs contrôlés : l'état interne n'est mis à jour QUE via l'événement input.
+const state = { user: '', pass: '' };
+const root = document.getElementById('root');
+function render() {
+  if (!root.firstChild) {
+    root.innerHTML = '<label>User <input id="u" type="text" autocomplete="username"></label><br>' +
+      '<label>Pass <input id="p" type="password" autocomplete="current-password"></label><br>' +
+      '<button id="b" type="button">Login</button>';
+    root.querySelector('#u').addEventListener('input', e => { state.user = e.target.value; });
+    root.querySelector('#p').addEventListener('input', e => { state.pass = e.target.value; });
+    root.querySelector('#b').addEventListener('click', () => {
+      fetch('/submit', { method: 'POST', body: JSON.stringify({ page: 'spa', user: state.user, password: state.pass }) })
+        .then(() => { out.textContent = 'submitted'; });
+    });
+  }
+}
+// Rendu différé pour simuler un chargement asynchrone (mutation DOM après le chargement)
+setTimeout(render, 400);
+</script>
+</body></html>

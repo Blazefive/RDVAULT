@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "التعبئة التلقائية للنماذج ومفاتيح المرور مع RDVAULT (يتطلب تطبيق سطح المكتب)"
+  },
+  "popupStatusChecking": {
+    "message": "جارٍ التحقق..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "تتطلب هذه الإضافة أن يكون تطبيق Vault لسطح المكتب قيد التشغيل ومتصلاً."
+  },
+  "popupDesktopUnavailable": {
+    "message": "تطبيق سطح المكتب غير متاح"
+  },
+  "popupDesktopNotConnected": {
+    "message": "تطبيق سطح المكتب قيد التشغيل لكنه غير متصل"
+  },
+  "popupDesktopConnected": {
+    "message": "تطبيق سطح المكتب متصل"
+  },
+  "popupUserLabel": {
+    "message": "المستخدم:"
+  },
+  "popupServerLabel": {
+    "message": "الخادم:"
+  },
+  "popupUnknown": {
+    "message": "غير معروف"
+  },
+  "popupAutofillActive": {
+    "message": "✓ التعبئة التلقائية مفعّلة"
+  },
+  "popupPairingPendingTitle": {
+    "message": "أكّد الوصول في تطبيق RDVAULT"
+  },
+  "popupPairingPendingDetail": {
+    "message": "أُرسل طلب اقتران إلى RDVAULT. اقبله في التطبيق (خلال 60 ثانية) لتفعيل التعبئة التلقائية."
+  },
+  "popupPairingDeniedTitle": {
+    "message": "تم رفض الوصول في RDVAULT"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "تم رفض اقتران هذه الإضافة في التطبيق. يمكنك إرسال طلب جديد بعد دقيقة."
+  },
+  "popupDisconnectedDetail": {
+    "message": "شغّل تطبيق سطح المكتب وسجّل الدخول لاستخدام التعبئة التلقائية."
+  },
+  "autofillIconTitle": {
+    "message": "التعبئة التلقائية باستخدام RDVAULT"
+  },
+  "autofillHeader": {
+    "message": "بيانات اعتماد RDVAULT"
+  },
+  "autofillNoResults": {
+    "message": "لم يتم العثور على بيانات اعتماد لهذا الموقع"
+  },
+  "autofillUnnamed": {
+    "message": "بلا اسم"
+  },
+  "autofillNoUsername": {
+    "message": "(لا يوجد اسم مستخدم)"
+  },
+  "autofillLoading": {
+    "message": "جارٍ استرداد بيانات الاعتماد..."
+  },
+  "autofillFetchFailed": {
+    "message": "تعذّر استرداد بيانات الاعتماد"
+  },
+  "pkCreateTitle": {
+    "message": "إنشاء مفتاح مرور لـ $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "إنشاء في RDVAULT"
+  },
+  "pkGetTitle": {
+    "message": "استخدام مفتاح المرور الخاص بك لـ $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "استخدام مفتاح مرور RDVAULT الخاص بي"
+  },
+  "pkChooseAccount": {
+    "message": "اختر الحساب"
+  },
+  "pkUseAnotherDevice": {
+    "message": "استخدام جهاز آخر"
+  },
+  "pkCancel": {
+    "message": "إلغاء"
+  },
+  "pkBlockedWarning": {
+    "message": "تم حظر الإجراء: نافذة RDVAULT مخفية أو مغطاة بواسطة الصفحة. استخدم «$OTHER$» أو «$CANCEL$».",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "حساب بلا اسم"
+  },
+  "pkCreatedOn": {
+    "message": "أُنشئ في $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "لم يتم العثور على بيانات الاعتماد لهذا الموقع"
+  },
+  "bgErrHttp": {
+    "message": "خطأ HTTP $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "استجابة غير صالحة"
+  },
+  "bgErrCommunication": {
+    "message": "خطأ في الاتصال بـ RDVAULT"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "اسم المفتاح غير صالح"
+  },
+  "bgErrInvalidCode": {
+    "message": "رمز غير صالح"
+  },
+  "bgErrTotp": {
+    "message": "خطأ في TOTP"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "مفتاح مرور غير صالح"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId غير مسموح به"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "الخزنة غير متاحة"
+  },
+  "bgErrInsecureSender": {
+    "message": "غير مسموح به من صفحة غير آمنة"
+  },
+  "bgErrInternal": {
+    "message": "خطأ داخلي"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "عنوان URL لعلامة التبويب مطلوب"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "نوع رسالة غير مدعوم"
+  },
+  "bgErrInsecurePage": {
+    "message": "صفحة غير آمنة"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT غير متاح أو مقفل"
+  },
+  "bgErrNameRequired": {
+    "message": "اسم السر مطلوب"
+  },
+  "bgErrInvalidCredential": {
+    "message": "بيانات اعتماد غير صالحة"
+  },
+  "bgErrSaveCredential": {
+    "message": "خطأ في حفظ بيانات الاعتماد"
+  },
+  "bgErrReadCredential": {
+    "message": "خطأ في قراءة بيانات الاعتماد"
+  },
+  "bgErrClearCredential": {
+    "message": "خطأ في حذف بيانات الاعتماد"
+  }
+}

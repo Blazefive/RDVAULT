@@ -206,55 +206,8 @@ class VaultClient {
     }
   }
 
-  // Match les secrets par URL/Website
-  async findSecretsByUrl(targetUrl) {
-    try {
-      const url = new URL(targetUrl);
-      const hostname = url.hostname.toLowerCase();
-
-      const allSecrets = await this.getAllSecrets();
-
-      return allSecrets.filter(secret => {
-        // Vérifier le champ Website
-        if (secret.website) {
-          try {
-            const secretUrl = new URL(secret.website.startsWith('http')
-              ? secret.website
-              : `https://${secret.website}`);
-            const secretHostname = secretUrl.hostname.toLowerCase();
-
-            // Match exact ou sous-domaine
-            if (secretHostname === hostname || hostname.endsWith(`.${secretHostname}`)) {
-              return true;
-            }
-          } catch {
-            // SÉCURITÉ: Ne pas utiliser .includes() — risque de faux positifs (ex: "evil-example.com".includes("example.com"))
-          }
-        }
-
-        // Vérifier le champ URL (fallback)
-        if (secret.url) {
-          try {
-            const secretUrl = new URL(secret.url.startsWith('http')
-              ? secret.url
-              : `https://${secret.url}`);
-            const secretHostname = secretUrl.hostname.toLowerCase();
-
-            if (secretHostname === hostname || hostname.endsWith(`.${secretHostname}`)) {
-              return true;
-            }
-          } catch {
-            // SÉCURITÉ: Ne pas utiliser .includes() — risque de faux positifs
-          }
-        }
-
-        return false;
-      });
-    } catch (err) {
-      console.error('Error finding secrets by URL');
-      return [];
-    }
-  }
+  // Le matching site ↔ secrets (suffixes publics exclus) est réalisé dans background.js
+  // (filterSecretsByHostname) : aucune logique de comparaison de domaines ici.
 }
 
 // Export pour utilisation dans background.js

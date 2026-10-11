@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "RDVAULT를 이용한 양식 자동 완성 및 패스키(데스크톱 앱 필요)"
+  },
+  "popupStatusChecking": {
+    "message": "확인 중..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "이 확장 프로그램을 사용하려면 Vault 데스크톱 앱이 실행 중이고 연결되어 있어야 합니다."
+  },
+  "popupDesktopUnavailable": {
+    "message": "데스크톱 앱을 사용할 수 없음"
+  },
+  "popupDesktopNotConnected": {
+    "message": "데스크톱 앱이 실행 중이지만 연결되지 않음"
+  },
+  "popupDesktopConnected": {
+    "message": "데스크톱 앱 연결됨"
+  },
+  "popupUserLabel": {
+    "message": "사용자:"
+  },
+  "popupServerLabel": {
+    "message": "서버:"
+  },
+  "popupUnknown": {
+    "message": "알 수 없음"
+  },
+  "popupAutofillActive": {
+    "message": "✓ 자동 완성 활성화됨"
+  },
+  "popupPairingPendingTitle": {
+    "message": "RDVAULT 앱에서 액세스를 승인하세요"
+  },
+  "popupPairingPendingDetail": {
+    "message": "RDVAULT에 페어링 요청을 보냈습니다. 자동 완성을 사용하려면 앱에서 요청을 수락하세요(제한 시간: 60초)."
+  },
+  "popupPairingDeniedTitle": {
+    "message": "RDVAULT에서 액세스가 거부됨"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "앱에서 이 확장 프로그램의 페어링이 거부되었습니다. 1분 후에 다시 요청할 수 있습니다."
+  },
+  "popupDisconnectedDetail": {
+    "message": "자동 완성을 사용하려면 데스크톱 앱을 실행하고 로그인하세요."
+  },
+  "autofillIconTitle": {
+    "message": "RDVAULT로 자동 완성"
+  },
+  "autofillHeader": {
+    "message": "RDVAULT 로그인 정보"
+  },
+  "autofillNoResults": {
+    "message": "이 사이트의 로그인 정보를 찾을 수 없습니다"
+  },
+  "autofillUnnamed": {
+    "message": "이름 없음"
+  },
+  "autofillNoUsername": {
+    "message": "(사용자 이름 없음)"
+  },
+  "autofillLoading": {
+    "message": "로그인 정보를 가져오는 중..."
+  },
+  "autofillFetchFailed": {
+    "message": "로그인 정보를 가져올 수 없습니다"
+  },
+  "pkCreateTitle": {
+    "message": "$HOST$용 패스키 만들기",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "RDVAULT에 만들기"
+  },
+  "pkGetTitle": {
+    "message": "$HOST$에 패스키 사용",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "내 RDVAULT 패스키 사용"
+  },
+  "pkChooseAccount": {
+    "message": "계정을 선택하세요"
+  },
+  "pkUseAnotherDevice": {
+    "message": "다른 기기 사용"
+  },
+  "pkCancel": {
+    "message": "취소"
+  },
+  "pkBlockedWarning": {
+    "message": "작업이 차단됨: 페이지가 RDVAULT 창을 숨기거나 가리고 있습니다. “$OTHER$” 또는 “$CANCEL$”을(를) 사용하세요.",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "이름 없는 계정"
+  },
+  "pkCreatedOn": {
+    "message": "$DATE$에 생성됨",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "이 사이트의 로그인 정보를 찾을 수 없습니다"
+  },
+  "bgErrHttp": {
+    "message": "HTTP 오류 $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "잘못된 응답"
+  },
+  "bgErrCommunication": {
+    "message": "RDVAULT와 통신하는 중 오류 발생"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "잘못된 키 이름"
+  },
+  "bgErrInvalidCode": {
+    "message": "잘못된 코드"
+  },
+  "bgErrTotp": {
+    "message": "TOTP 오류"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "잘못된 패스키"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "허용되지 않은 rpId"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "금고를 사용할 수 없음"
+  },
+  "bgErrInsecureSender": {
+    "message": "안전하지 않은 페이지에서는 허용되지 않습니다"
+  },
+  "bgErrInternal": {
+    "message": "내부 오류"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "탭 URL이 필요합니다"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "지원되지 않는 메시지 유형"
+  },
+  "bgErrInsecurePage": {
+    "message": "안전하지 않은 페이지"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT를 사용할 수 없거나 잠겨 있습니다"
+  },
+  "bgErrNameRequired": {
+    "message": "시크릿 이름이 필요합니다"
+  },
+  "bgErrInvalidCredential": {
+    "message": "잘못된 로그인 정보"
+  },
+  "bgErrSaveCredential": {
+    "message": "로그인 정보 저장 오류"
+  },
+  "bgErrReadCredential": {
+    "message": "로그인 정보 읽기 오류"
+  },
+  "bgErrClearCredential": {
+    "message": "로그인 정보 삭제 오류"
+  }
+}

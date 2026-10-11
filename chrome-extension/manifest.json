@@ -1,17 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Vault Autofill",
+  "name": "__MSG_extName__",
   "version": "1.1.0",
-  "description": "Auto-remplissage de formulaires avec HashiCorp Vault",
-  "update_url": "",
+  "description": "__MSG_extDescription__",
+  "default_locale": "en",
   "permissions": [
     "storage",
-    "activeTab",
-    "scripting",
     "alarms"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -20,7 +18,7 @@
     "extension_pages": "script-src 'self'; object-src 'none'"
   },
   "content_scripts": [{
-    "matches": ["https://*/*", "http://*/*"],
+    "matches": ["https://*/*"],
     "js": ["content.js"],
     "run_at": "document_idle",
     "all_frames": false

@@ -1,8 +1,140 @@
 // src/SettingsModal.jsx
-import React, { useState, useEffect } from 'react';
+// Accessibilité de la modale (hook useDialogA11y du squelette commun Modal) : role="dialog" +
+// aria-modal + aria-labelledby (titre), focus initial, piège de focus, retour du focus,
+// Échap réservé à la modale du dessus.
+import React, { useState, useEffect, useId, useLayoutEffect, useRef } from 'react';
 import { useTranslation, LANGUAGES } from './i18n';
+import { useDialogA11y } from './components/common/Modal';
 import axios from 'axios';
-import { encodeEnginePath } from './utils/security';
+import { encodeEnginePath, encodeSecretPath } from './utils/security';
+import { escapeCsvField, parseCsv } from './utils/csv';
+import { escapeXml, readXmlTag, hasXmlTag } from './utils/xml';
+import { validateSecretName } from './validation';
+import { isInternalSecretKey } from './utils/passkeyEngine';
+import { engineDisplayName } from './components/layout/Sidebar';
+
+// Texte technique dans un <option> (qui n'accepte pas d'élément <bdi>) : isolé et lu de gauche à
+// droite par les caractères LRI (U+2066) … PDI (U+2069). En arabe, « Comptabilite/ (KV v2) »
+// s'affichait « (Comptabilite/ (KV v2 » ; invisibles et sans effet dans les langues LTR.
+const ltrIsolate = (text) => `\u2066${text}\u2069`;
+
+// Libellé traduit suivi d'une liste de commandes entre parenthèses (« Lecture auto (get, ssh, winrm) ») :
+// la parenthèse (commandes mvault) est isolée en ltr. En arabe, l'en-tête étroit passait à la ligne
+// au milieu des parenthèses, mal appariées (« (WINRM »). Texte rendu identique à la traduction.
+const withLtrParenthetical = (text) => {
+  const m = /^(.*\S)(\s+)(\([^()]*\))$/.exec(String(text));
+  return m ? <>{m[1]}{m[2]}<bdi dir="ltr" className="bidi-ltr">{m[3]}</bdi></> : text;
+};
+
+// ========================================
+// EXPORT / IMPORT : règles communes
+// ========================================
+
+// Secrets internes RDVAULT (« .rdvault-passkeys », qui contient les clés privées des passkeys, et le
+// témoin « .rdvault-keycheck ») : masqués de l'interface (useSecrets, readAllSecrets), jamais exportés et
+// jamais écrasés par un import. COMPAT-2 : noms EXACTS à la racine du coffre (isInternalSecretKey) ; une
+// entrée utilisateur « .rdvault-notes » ou « .rdvault » (permise en 1.5.0) est exportée et importée.
+const isInternalSecretName = (name) => isInternalSecretKey(name);
+
+// Nom importable : règles de l'éditeur (validateSecretName : longueur, « .. », « \ », contrôle),
+// aucun segment vide ou « . » (« . », « /x », « x/ », « a//b » donnent des entrées illisibles),
+// et jamais un nom réservé.
+const isImportableName = (name) => validateSecretName(name).valid
+  && !name.split('/').some(s => s === '' || s === '.' || s === '..')
+  && !isInternalSecretName(name);
+
+// SÉCURITÉ : champs non-password nettoyés (caractères de contrôle retirés, sauf tabulation et
+// sauts de ligne, légitimes dans les notes ; longueur limitée)
+// eslint-disable-next-line no-control-regex -- caractères de contrôle volontairement ciblés
+const sanitizeField = (v) => typeof v === 'string' ? v.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, 10000) : '';
+
+// Types d'entrée acceptés à l'import (« folder » n'est jamais stocké : c'est une action de l'éditeur)
+const IMPORTABLE_ENTRY_TYPES = ['secret', 'ssh', 'placeholder'];
+const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+
+// Colonne « CustomFields » (JSON [{ key, value, protected? }]) → tableau nettoyé, ou null si invalide
+const parseCustomFieldsCell = (raw) => {
+  let list;
+  try { list = JSON.parse(raw); } catch { return null; }
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const f of list) {
+    if (!f || typeof f !== 'object' || Array.isArray(f) || typeof f.key !== 'string') return null;
+    if (f.value != null && !['string', 'number', 'boolean'].includes(typeof f.value)) return null;
+    const field = { key: sanitizeField(f.key).slice(0, 256), value: sanitizeField(f.value == null ? '' : String(f.value)) };
+    if (typeof f.protected === 'boolean') field.protected = f.protected;
+    out.push(field);
+  }
+  return out;
+};
+
+// Colonne « Attachments » (JSON [{ name, size?, type?, data (base64) }]) → tableau nettoyé, ou null si invalide
+const parseAttachmentsCell = (raw) => {
+  let list;
+  try { list = JSON.parse(raw); } catch { return null; }
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  for (const a of list) {
+    if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
+    if (typeof a.name !== 'string' || typeof a.data !== 'string' || !BASE64_RE.test(a.data)) return null;
+    const att = { name: sanitizeField(a.name).slice(0, 255) };
+    if (typeof a.size === 'number' && Number.isFinite(a.size) && a.size >= 0) att.size = a.size;
+    if (typeof a.type === 'string') att.type = sanitizeField(a.type).slice(0, 255);
+    att.data = a.data;
+    out.push(att);
+  }
+  return out;
+};
+
+/**
+ * Construit les données à écrire pour une ligne importée.
+ * - `existing` : données actuelles du secret (mode « écraser les doublons ») ou null (nouveau secret).
+ *   Les données existantes sont FUSIONNÉES : seules les colonnes présentes dans le fichier les
+ *   remplacent (pièces jointes, champs personnalisés, etc. absents du fichier sont conservés).
+ * - Colonnes étendues (Website, EntryType, CustomFields, Attachments) : une cellule vide ne change rien.
+ * - La colonne Port met à jour (ou ajoute) le champ personnalisé « Port ».
+ * @returns {Object|null} null si une colonne JSON est invalide (ligne refusée)
+ */
+const buildImportData = (rec, existing) => {
+  let customFields;
+  let attachments;
+  if (rec.CustomFields !== undefined) {
+    customFields = parseCustomFieldsCell(rec.CustomFields);
+    if (!customFields) return null;
+  }
+  if (rec.Attachments !== undefined) {
+    attachments = parseAttachmentsCell(rec.Attachments);
+    if (!attachments) return null;
+  }
+
+  const data = existing
+    ? { ...existing }
+    : { Username: '', Password: '', URL: '', Notes: '', Tags: '' };
+  for (const [k, v] of Object.entries(rec.fields)) {
+    data[k] = k === 'Password' ? v : sanitizeField(v);
+  }
+  if (rec.Website !== undefined) data.Website = sanitizeField(rec.Website);
+  if (rec.EntryType !== undefined && IMPORTABLE_ENTRY_TYPES.includes(rec.EntryType)) data.EntryType = rec.EntryType;
+
+  let fields = customFields !== undefined
+    ? customFields
+    : (Array.isArray(data.CustomFields) ? data.CustomFields : undefined);
+  if (rec.Port) {
+    fields = Array.isArray(fields) ? fields.map(f => ({ ...f })) : [];
+    const i = fields.findIndex(f => f && (f.key === 'Port' || f.key === 'port'));
+    if (i >= 0) fields[i] = { ...fields[i], value: rec.Port };
+    else fields.push({ key: 'Port', value: rec.Port });
+  }
+  if (fields !== undefined) {
+    if (fields.length > 0) data.CustomFields = fields;
+    else delete data.CustomFields;
+  }
+  if (attachments !== undefined) {
+    if (attachments.length > 0) data.Attachments = attachments;
+    else delete data.Attachments;
+  }
+  return data;
+};
 
 export default function SettingsModal({
   darkMode,
@@ -13,7 +145,7 @@ export default function SettingsModal({
   isAdmin = false,
   isModerator = false,
   onClose,
-  appVersion = '1.1.0',
+  appVersion = '1.7.0',
   secretEngines = [],
   appMode = 'enterprise',
   vaultUrl = '',
@@ -102,10 +234,14 @@ export default function SettingsModal({
           const res = await axios.get(url, axiosConfig({ headers: baseHeaders() }));
           const keys = res.data?.data?.keys || [];
           for (const key of keys) {
+            const full = prefix ? `${prefix}${key}` : key;
+            // Secrets internes (stockage des passkeys) : jamais exportés. Un réimport de l'export
+            // en mode « écraser les doublons » remplaçait sinon les passkeys par une entrée vide.
+            if (isInternalSecretName(full)) continue;
             if (key.endsWith('/')) {
-              await listKeys(prefix ? `${prefix}${key}` : key);
+              await listKeys(full);
             } else {
-              allKeys.push(prefix ? `${prefix}${key}` : key);
+              allKeys.push(full);
             }
           }
         } catch { /* ignore 404 */ }
@@ -117,8 +253,10 @@ export default function SettingsModal({
         return;
       }
 
-      // Lire tous les secrets
+      // Lire tous les secrets — les échecs de lecture individuels sont comptés
+      // et signalés (export partiel) au lieu d'être silencieusement ignorés.
       const secrets = [];
+      let failedReads = 0;
       for (const key of allKeys) {
         try {
           const url = engine.version === 2
@@ -126,7 +264,9 @@ export default function SettingsModal({
             : `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/${encodeURIComponent(key)}`;
           const res = await axios.get(url, axiosConfig({ headers: baseHeaders() }));
           const data = engine.version === 2 ? (res.data?.data?.data || {}) : (res.data?.data || {});
-          const portField = (data.CustomFields || []).find(f => f.key === 'Port' || f.key === 'port');
+          const customFields = Array.isArray(data.CustomFields) ? data.CustomFields : [];
+          const attachments = Array.isArray(data.Attachments) ? data.Attachments : [];
+          const portField = customFields.find(f => f && (f.key === 'Port' || f.key === 'port'));
           secrets.push({
             name: key,
             username: data.Username || '',
@@ -134,28 +274,46 @@ export default function SettingsModal({
             url: data.URL || '',
             notes: data.Notes || '',
             tags: data.Tags || '',
-            port: portField ? portField.value : ''
+            port: portField ? portField.value : '',
+            // Colonnes étendues : l'export est une sauvegarde complète, réimportable sans perte
+            website: data.Website || '',
+            entryType: data.EntryType || '',
+            customFields: customFields.length > 0 ? JSON.stringify(customFields) : '',
+            attachments: attachments.length > 0 ? JSON.stringify(attachments) : ''
           });
-        } catch { /* skip unreadable secrets */ }
+        } catch (err) {
+          // KV v2 : une entrée supprimée (suppression douce, dossier supprimé, source d'un
+          // déplacement) reste listée mais sa lecture renvoie 404 avec metadata.deletion_time
+          // (ou destroyed). Rien à exporter : ce n'est pas un échec de lecture.
+          const meta = err?.response?.data?.data?.metadata;
+          if (err?.response?.status === 404 && meta && (meta.deletion_time || meta.destroyed)) continue;
+          failedReads++;
+        }
+      }
+
+      if (secrets.length === 0) {
+        if (failedReads > 0) showToast(t('export.error'), 'error');
+        else showToast(t('export.noSecrets'), 'warning');
+        return;
       }
 
       // Générer le contenu
       let content = '';
       let extension = exportFormat;
       if (exportFormat === 'csv') {
-        const escCsv = (v) => {
-          let s = String(v);
-          // Neutraliser l'injection de formules Excel (=, +, -, @, |)
-          if (/^[=+\-@|\t\r]/.test(s)) s = "'" + s;
-          return `"${s.replace(/"/g, '""')}"`;
-        };
-        content = 'Name,Username,Password,URL,Notes,Tags,Port\n';
+        // SÉCURITÉ : escapeCsvField neutralise l'injection de formules tableur
+        // (=, +, -, @, |, tab, CR) — utilitaire partagé avec l'export admin.
+        const escCsv = (v) => escapeCsvField(v, { separator: ',', alwaysQuote: true });
+        // Les 7 premières colonnes gardent leur ordre historique (outils tiers, anciens imports) ;
+        // CustomFields et Attachments sont du JSON.
+        content = 'Name,Username,Password,URL,Notes,Tags,Port,Website,EntryType,CustomFields,Attachments\n';
         content += secrets.map(s =>
-          [s.name, s.username, s.password, s.url, s.notes, s.tags, s.port].map(escCsv).join(',')
+          [s.name, s.username, s.password, s.url, s.notes, s.tags, s.port,
+            s.website, s.entryType, s.customFields, s.attachments].map(escCsv).join(',')
         ).join('\n');
       } else {
         content = '<?xml version="1.0" encoding="UTF-8"?>\n<vault>\n';
-        const escXml = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const escXml = escapeXml;
         for (const s of secrets) {
           content += `  <secret>\n`;
           content += `    <name>${escXml(s.name)}</name>\n`;
@@ -165,6 +323,10 @@ export default function SettingsModal({
           content += `    <notes>${escXml(s.notes)}</notes>\n`;
           content += `    <tags>${escXml(s.tags)}</tags>\n`;
           content += `    <port>${escXml(s.port)}</port>\n`;
+          content += `    <website>${escXml(s.website)}</website>\n`;
+          content += `    <entryType>${escXml(s.entryType)}</entryType>\n`;
+          content += `    <customFields>${escXml(s.customFields)}</customFields>\n`;
+          content += `    <attachments>${escXml(s.attachments)}</attachments>\n`;
           content += `  </secret>\n`;
         }
         content += '</vault>';
@@ -180,7 +342,11 @@ export default function SettingsModal({
           content
         });
         if (result.success) {
-          showToast(t('export.success', { count: secrets.length }), 'success');
+          if (failedReads > 0) {
+            showToast(t('export.partialSuccess', { count: secrets.length, failed: failedReads }), 'warning', 5000);
+          } else {
+            showToast(t('export.success', { count: secrets.length }), 'success');
+          }
         } else if (!result.canceled) {
           showToast(t('export.error'), 'error');
         }
@@ -200,7 +366,7 @@ export default function SettingsModal({
     const result = await window.electronExport.openFile({
       filters: [
         { name: 'CSV / XML', extensions: ['csv', 'xml'] },
-        { name: 'All Files', extensions: ['*'] }
+        { name: t('export.allFiles'), extensions: ['*'] }
       ]
     });
     if (result.success) {
@@ -209,72 +375,73 @@ export default function SettingsModal({
     }
   };
 
+  // Format commun des lignes analysées :
+  // { name, fields: { Username?, Password?, URL?, Notes?, Tags? } (colonnes PRÉSENTES dans le fichier),
+  //   Port, Website?, EntryType?, CustomFields? (JSON brut), Attachments? (JSON brut) }
+  // Une colonne étendue absente ou vide vaut undefined (aucun changement).
   const parseCSV = (content) => {
-    // Split lines respecting quoted fields with newlines
-    const lines = [];
-    let currentLine = '';
-    let inQuotes = false;
-    for (let i = 0; i < content.length; i++) {
-      const char = content[i];
-      if (char === '"') { inQuotes = !inQuotes; currentLine += char; }
-      else if ((char === '\n' || char === '\r') && !inQuotes) {
-        if (currentLine.trim()) lines.push(currentLine);
-        currentLine = '';
-        if (char === '\r' && content[i + 1] === '\n') i++;
-      } else { currentLine += char; }
-    }
-    if (currentLine.trim()) lines.push(currentLine);
-
-    if (lines.length < 2) return [];
-    // Détecter le séparateur (virgule ou point-virgule)
-    const sep = lines[0].includes(';') ? ';' : ',';
-    const header = lines[0].split(sep).map(h => h.replace(/^"|"$/g, '').trim().toLowerCase());
-    const secrets = [];
-    for (let i = 1; i < lines.length; i++) {
-      const values = [];
-      let current = '';
-      let inFieldQuotes = false;
-      for (const char of lines[i]) {
-        if (char === '"') { inFieldQuotes = !inFieldQuotes; continue; }
-        if (char === sep && !inFieldQuotes) { values.push(current.trim()); current = ''; continue; }
-        current += char;
+    // Parseur RFC 4180 partagé (src/utils/csv.js) : guillemets doublés, champs multi-lignes,
+    // BOM Excel, séparateur détecté. Les valeurs ne sont pas tronquées : seuls les champs
+    // « identifiants » (nom, utilisateur, URL, tags, port) sont nettoyés de leurs espaces.
+    const { header, rows } = parseCsv(content);
+    const has = (k) => header.includes(k);
+    const pick = (row, keys) => {
+      for (const k of keys) {
+        if (typeof row[k] === 'string' && row[k] !== '') return row[k];
       }
-      values.push(current.trim());
-      const row = {};
-      header.forEach((h, idx) => { row[h] = values[idx] || ''; });
-      if (row.name || row.nom) {
-        secrets.push({
-          name: row.name || row.nom || '',
-          Username: row.username || row.identifiant || row.user || '',
-          Password: row.password || row['mot de passe'] || row.mdp || '',
-          URL: row.url || '',
-          Notes: row.notes || row.note || '',
-          Tags: row.tags || row.tag || '',
-          Port: row.port || ''
-        });
-      }
-    }
-    return secrets;
+      return '';
+    };
+    const optional = (row, key) => (has(key) && row[key] && row[key].trim() ? row[key].trim() : undefined);
+    // Colonnes « url » ET « website » (export RDVAULT) : deux champs distincts. Une colonne
+    // « website » sans colonne « url » (fichiers tiers) reste l'URL, comme avant.
+    const websiteSeparate = has('url') && has('website');
+    const columns = {
+      Username: { keys: ['username', 'identifiant', 'user', 'login'], trim: true },
+      Password: { keys: ['password', 'mot de passe', 'mdp', 'pass'], trim: false },
+      URL: { keys: websiteSeparate ? ['url', 'site'] : ['url', 'website', 'site'], trim: true },
+      Notes: { keys: ['notes', 'note', 'commentaire'], trim: false },
+      Tags: { keys: ['tags', 'tag'], trim: true }
+    };
+    return rows
+      .filter(row => pick(row, ['name', 'nom']).trim())
+      .map(row => {
+        const fields = {};
+        for (const [field, { keys, trim }] of Object.entries(columns)) {
+          if (!keys.some(has)) continue;
+          const v = pick(row, keys);
+          fields[field] = trim ? v.trim() : v;
+        }
+        return {
+          name: pick(row, ['name', 'nom']).trim(),
+          fields,
+          Port: pick(row, ['port']).trim(),
+          Website: websiteSeparate ? optional(row, 'website') : undefined,
+          EntryType: optional(row, 'entrytype'),
+          CustomFields: optional(row, 'customfields'),
+          Attachments: optional(row, 'attachments')
+        };
+      });
   };
 
   const parseXML = (content) => {
     const secrets = [];
-    const secretRegex = /<secret>([\s\S]*?)<\/secret>/gi;
+    const secretRegex = /<secret(?:\s[^>]*)?>([\s\S]*?)<\/secret>/gi;
     let match;
     while ((match = secretRegex.exec(content)) !== null) {
       const block = match[1];
-      const get = (tag) => {
-        const m = block.match(new RegExp(`<${tag}>(.*?)</${tag}>`, 's'));
-        return m ? m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"') : '';
-      };
+      const fields = {};
+      for (const [field, tag] of [['Username', 'username'], ['Password', 'password'], ['URL', 'url'], ['Notes', 'notes'], ['Tags', 'tags']]) {
+        if (hasXmlTag(block, tag)) fields[field] = readXmlTag(block, tag);
+      }
+      const optional = (tag) => readXmlTag(block, tag).trim() || undefined;
       secrets.push({
-        name: get('name'),
-        Username: get('username'),
-        Password: get('password'),
-        URL: get('url'),
-        Notes: get('notes'),
-        Tags: get('tags'),
-        Port: get('port')
+        name: readXmlTag(block, 'name').trim(),
+        fields,
+        Port: readXmlTag(block, 'port'),
+        Website: optional('website'),
+        EntryType: optional('entryType'),
+        CustomFields: optional('customFields'),
+        Attachments: optional('attachments')
       });
     }
     return secrets;
@@ -297,61 +464,93 @@ export default function SettingsModal({
         return;
       }
 
-      let imported = 0;
-      for (const secret of parsed) {
-        if (!secret.name) continue;
-        // Validation du nom : pas de path traversal, pas de caractères de contrôle
-        if (secret.name.includes('..') || /[\x00-\x1F]/.test(secret.name) || secret.name.length > 512) continue;
+      const engineBase = `${vaultUrl}/v1/${encodeEnginePath(engine.name)}`;
+      const dataUrl = (name) => engine.version === 2
+        ? `${engineBase}/data/${encodeURIComponent(name)}`
+        : `${engineBase}/${encodeURIComponent(name)}`;
 
-        // SÉCURITÉ: Sanitiser les champs non-password (retirer caractères de contrôle, limiter longueur)
-        const sanitizeField = (v) => typeof v === 'string' ? v.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 10000) : '';
-        secret.Username = sanitizeField(secret.Username);
-        secret.URL = sanitizeField(secret.URL);
-        secret.Notes = sanitizeField(secret.Notes);
-        secret.Tags = sanitizeField(secret.Tags);
+      // Test d'existence : un LIST par dossier (mis en cache) au lieu d'un GET par clé.
+      // - nom absent du listing, ou dossier inexistant (404) → absent : aucun GET ;
+      // - nom listé → GET, comme avant (une entrée supprimée en KV v2 reste listée mais
+      //   sa lecture renvoie 404 : elle est considérée absente, comme avant) ;
+      // - LIST impossible (403, réseau…) → repli sur le GET par clé, comme avant.
+      const folderListings = new Map(); // dossier → Set des noms listés, ou null (listing indisponible)
+      const splitName = (name) => {
+        const i = name.lastIndexOf('/');
+        return { folder: name.slice(0, i + 1), leaf: name.slice(i + 1) };
+      };
+      const listFolder = async (folder) => {
+        if (folderListings.has(folder)) return folderListings.get(folder);
+        let names = null;
+        try {
+          const url = engine.version === 2
+            ? `${engineBase}/metadata/${encodeSecretPath(folder)}?list=true`
+            : `${engineBase}${folder ? '/' + encodeSecretPath(folder) : ''}?list=true`;
+          const res = await axios.get(url, axiosConfig({ headers: baseHeaders() }));
+          const keys = res.data?.data?.keys;
+          names = Array.isArray(keys) ? new Set(keys) : null;
+        } catch (err) {
+          names = err?.response?.status === 404 ? new Set() : null;
+        }
+        folderListings.set(folder, names);
+        return names;
+      };
+      // → { exists, data } : data = contenu actuel du secret quand il existe.
+      // Seule une 404 signifie « absente » (KV v2 : aussi une entrée supprimée en douceur). Toute autre
+      // erreur (500 « decryption failed », réseau, 403…) est levée : l'entrée existe peut-être et ne
+      // doit être ni écrasée (mode « ignorer ») ni remplacée sans fusion (mode « écraser ») ; la ligne
+      // est alors comptée en échec par l'appelant.
+      const readExisting = async (name) => {
+        const { folder, leaf } = splitName(name);
+        const names = await listFolder(folder);
+        if (names && !names.has(leaf)) return { exists: false, data: null };
+        try {
+          const res = await axios.get(dataUrl(name), axiosConfig({ headers: baseHeaders() }));
+          const current = engine.version === 2 ? res.data?.data?.data : res.data?.data;
+          return { exists: true, data: current && typeof current === 'object' && !Array.isArray(current) ? current : {} };
+        } catch (err) {
+          if (err?.response?.status === 404) return { exists: false, data: null };
+          throw err;
+        }
+      };
+
+      // Import partiel : les entrées invalides ou en échec d'écriture sont comptées
+      // et signalées à l'utilisateur (doublons ignorés volontairement non comptés).
+      let imported = 0;
+      let failed = 0;
+      for (const secret of parsed) {
+        // Nom vide, invalide (« .. », « \ », contrôle, segment vide ou « . ») ou réservé (nom exact
+        // « .rdvault-passkeys » : stockage des passkeys, jamais écrasé ; « .rdvault-keycheck ») → refusé et compté
+        if (!secret.name || !isImportableName(secret.name)) { failed++; continue; }
 
         try {
-          // Si mode skip, vérifier si le secret existe déjà
-          if (importDuplicateMode === 'skip') {
-            try {
-              const checkUrl = engine.version === 2
-                ? `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/data/${encodeURIComponent(secret.name)}`
-                : `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/${encodeURIComponent(secret.name)}`;
-              await axios.get(checkUrl, axiosConfig({ headers: baseHeaders() }));
-              continue; // Existe déjà, skip
-            } catch { /* N'existe pas, on continue */ }
-          }
+          const existing = await readExisting(secret.name);
+          // Mode « ignorer » : un secret existant n'est pas touché
+          if (existing.exists && importDuplicateMode === 'skip') continue;
 
-          // Écrire le secret
-          const data = {
-            Username: secret.Username,
-            Password: secret.Password,
-            URL: secret.URL,
-            Notes: secret.Notes,
-            Tags: secret.Tags
-          };
-          if (secret.Port) {
-            data.CustomFields = [{ key: 'Port', value: secret.Port }];
-          }
+          // Mode « écraser » : fusion avec les données existantes (rien n'est perdu)
+          const data = buildImportData(secret, existing.exists ? existing.data : null);
+          if (!data) { failed++; continue; } // colonne JSON invalide
 
-          if (engine.version === 2) {
-            await axios.post(
-              `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/data/${encodeURIComponent(secret.name)}`,
-              { data },
-              axiosConfig({ headers: baseHeaders() })
-            );
-          } else {
-            await axios.post(
-              `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/${encodeURIComponent(secret.name)}`,
-              data,
-              axiosConfig({ headers: baseHeaders() })
-            );
-          }
+          await axios.post(
+            dataUrl(secret.name),
+            engine.version === 2 ? { data } : data,
+            axiosConfig({ headers: baseHeaders() })
+          );
+          // Le nom existe désormais : un doublon plus loin dans le fichier sera détecté
+          const { folder, leaf } = splitName(secret.name);
+          folderListings.get(folder)?.add(leaf);
           imported++;
-        } catch { /* skip erreur individuelle */ }
+        } catch {
+          failed++;
+        }
       }
 
-      showToast(t('export.importSuccess', { count: imported }), 'success');
+      if (failed > 0) {
+        showToast(t('export.importPartial', { count: imported, failed }), imported > 0 ? 'warning' : 'error', 5000);
+      } else {
+        showToast(t('export.importSuccess', { count: imported }), 'success');
+      }
       setImportFile(null);
     } catch (err) {
       showToast(t('export.importError'), 'error');
@@ -360,13 +559,20 @@ export default function SettingsModal({
     }
   };
 
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+  // Focus initial, piège de focus, Échap (modale du dessus uniquement), retour du focus.
+  // Auparavant : écouteur Échap global sans condition (fermait aussi sous une sous-modale),
+  // ni focus initial ni piège de focus (Tab sortait vers l'application en arrière-plan).
+  const panelRef = useRef(null);
+  const titleId = useId();
+  useDialogA11y(panelRef, { onEscape: onClose });
+
+  // SETTINGS-13 : tous les onglets partagent le même corps défilant ; sans remise à zéro, l'onglet
+  // ouvert héritait de la position du précédent (Export s'affichait défilé, titre caché)
+  // (avant l'affichage : pas d'image intermédiaire défilée)
+  const bodyRef = useRef(null);
+  useLayoutEffect(() => {
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+  }, [activeTab]);
 
   const allColumns = [
     { key: 'name', label: t('table.name'), locked: true },
@@ -379,26 +585,64 @@ export default function SettingsModal({
     { key: 'actions', label: t('table.actions'), locked: true }
   ];
 
+  // Fermeture au clic sur le fond : mousedown ET mouseup sur le fond, à moins de 5 px
+  // (même logique que components/common/Modal). Une sélection de texte commencée dans le
+  // panneau et relâchée sur le fond produit un « click » sur le fond : elle ne ferme plus.
+  const overlayDownRef = useRef(null);
+  const handleOverlayMouseDown = (e) => {
+    overlayDownRef.current = e.target === e.currentTarget ? { x: e.clientX, y: e.clientY } : null;
+  };
+  const handleOverlayMouseUp = (e) => {
+    const start = overlayDownRef.current;
+    overlayDownRef.current = null;
+    if (!start || e.target !== e.currentTarget) return;
+    if (Math.abs(e.clientX - start.x) < 5 && Math.abs(e.clientY - start.y) < 5) onClose();
+  };
+
+  // Radios de thème : visuellement masqués mais focalisables (flèches / Espace). La carte
+  // affiche un anneau de focus quand le radio a le focus clavier (:focus-visible).
+  const [themeFocus, setThemeFocus] = useState(null); // 'light' | 'dark' | null
+  const onThemeFocus = (which) => (e) => {
+    let visible = true;
+    try { visible = e.target.matches(':focus-visible'); } catch { /* sélecteur non supporté */ }
+    setThemeFocus(visible ? which : null);
+  };
+  const onThemeBlur = () => setThemeFocus(null);
+  const visuallyHidden = {
+    position: 'absolute', width: '1px', height: '1px', margin: 0, padding: 0,
+    opacity: 0, overflow: 'hidden', pointerEvents: 'none'
+  };
+  const themeFocusRing = (which) => (themeFocus === which
+    ? { outline: '2px solid var(--border-focus, var(--accent))', outlineOffset: '2px' }
+    : {});
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onMouseDown={handleOverlayMouseDown} onMouseUp={handleOverlayMouseUp}>
       <div
+        ref={panelRef}
         className="modal-panel"
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         style={{ maxWidth: '750px', maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
       >
         <div className="modal-header" style={{ borderBottom: '2px solid var(--border-color)' }}>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', margin: 0 }}>
-            <span style={{ fontSize: '24px' }}>⚙️</span>
+          <h2 id={titleId} style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)', margin: 0 }}>
+            <span aria-hidden="true" style={{ fontSize: '24px' }}>⚙️</span>
             <span>{t('settings.title')}</span>
           </h2>
         </div>
 
-        {/* Onglets — en dehors du scroll */}
+        {/* Onglets — en dehors du scroll. SETTINGS-12 : onglets compacts (.tab-button), sur une
+            ligne dans les 12 langues à la taille par défaut ; sur une fenêtre étroite, retour à la
+            ligne propre (libellés jamais coupés) au lieu d'une barre de défilement horizontale. */}
         <div style={{
           display: 'flex',
-          gap: 'var(--sp-1)',
+          flexWrap: 'wrap',
+          columnGap: 'var(--sp-1)',
+          rowGap: 'var(--sp-1)',
           borderBottom: '2px solid var(--border-color)',
           background: 'var(--bg-primary)',
           padding: 'var(--sp-2) var(--sp-6) 0 var(--sp-6)',
@@ -477,8 +721,8 @@ export default function SettingsModal({
           </button>
         </div>
 
-        {/* Contenu scrollable */}
-        <div className="modal-body" style={{ overflowY: 'auto', maxHeight: 'calc(85vh - 200px)' }}>
+        {/* Contenu scrollable (repart du haut à chaque changement d'onglet : SETTINGS-13) */}
+        <div ref={bodyRef} className="modal-body" style={{ overflowY: 'auto', maxHeight: 'calc(85vh - 200px)' }}>
           {/* Onglet Apparence */}
           {activeTab === 'appearance' && (
             <div>
@@ -502,14 +746,18 @@ export default function SettingsModal({
                   flexDirection: 'column',
                   alignItems: 'center',
                   gap: 'var(--sp-3)',
-                  boxShadow: !darkMode ? '0 4px 12px rgba(0,0,0,0.1)' : 'none'
+                  boxShadow: !darkMode ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
+                  position: 'relative',
+                  ...themeFocusRing('light')
                 }}>
                   <input
                     type="radio"
                     name="theme"
                     checked={!darkMode}
                     onChange={() => !darkMode ? null : onToggleDarkMode()}
-                    style={{ display: 'none' }}
+                    onFocus={onThemeFocus('light')}
+                    onBlur={onThemeBlur}
+                    style={visuallyHidden}
                   />
                   <div style={{ fontSize: '48px', lineHeight: 1 }}>☀️</div>
                   <div style={{
@@ -538,14 +786,18 @@ export default function SettingsModal({
                   flexDirection: 'column',
                   alignItems: 'center',
                   gap: 'var(--sp-3)',
-                  boxShadow: darkMode ? '0 4px 12px rgba(0,0,0,0.1)' : 'none'
+                  boxShadow: darkMode ? '0 4px 12px rgba(0,0,0,0.1)' : 'none',
+                  position: 'relative',
+                  ...themeFocusRing('dark')
                 }}>
                   <input
                     type="radio"
                     name="theme"
                     checked={darkMode}
                     onChange={() => darkMode ? null : onToggleDarkMode()}
-                    style={{ display: 'none' }}
+                    onFocus={onThemeFocus('dark')}
+                    onBlur={onThemeBlur}
+                    style={visuallyHidden}
                   />
                   <div style={{ fontSize: '48px', lineHeight: 1 }}>🌙</div>
                   <div style={{
@@ -680,8 +932,8 @@ export default function SettingsModal({
                     <div style={{ width: '80px', textAlign: 'center', fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-bold)', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                       {t('cli.listing')}
                     </div>
-                    <div style={{ width: '80px', textAlign: 'center', fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-bold)', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      {t('cli.autoGet')}
+                    <div style={{ width: '120px', textAlign: 'center', fontSize: 'var(--text-xs)', fontWeight: 'var(--weight-bold)', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      {withLtrParenthetical(t('cli.autoGet'))}
                     </div>
                   </div>
                   {secretEngines.map(engine => {
@@ -713,7 +965,9 @@ export default function SettingsModal({
                             gap: 'var(--sp-2)',
                             overflow: 'hidden'
                           }}>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{engineKey}</span>
+                            {/* Chemin de coffre : isolé et lu de gauche à droite (en arabe, les barres
+                                obliques ne changent plus de côté) */}
+                            <bdi dir="ltr" className="bidi-ltr" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{engineKey}</bdi>
                             <span style={{
                               fontSize: 'var(--text-xs)',
                               color: 'var(--text-tertiary)',
@@ -739,26 +993,27 @@ export default function SettingsModal({
                               borderRadius: '11px',
                               border: 'none',
                               cursor: 'pointer',
-                              background: listApproved ? 'var(--accent)' : 'var(--border-color)',
+                              background: listApproved ? 'var(--accent-fill, var(--accent))' : 'var(--border-color)',
                               transition: 'background var(--duration-base)',
                               flexShrink: 0
                             }}
                           >
+                            {/* Pastille : position logique (interrupteur en miroir en arabe) */}
                             <span style={{
                               position: 'absolute',
                               top: '2px',
-                              left: listApproved ? '20px' : '2px',
+                              insetInlineStart: listApproved ? '20px' : '2px',
                               width: '18px',
                               height: '18px',
                               borderRadius: '50%',
                               background: '#fff',
-                              transition: 'left var(--duration-base)',
+                              transition: 'inset-inline-start var(--duration-base)',
                               boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
                             }} />
                           </button>
                         </div>
                         {/* Toggle Auto-get */}
-                        <div style={{ width: '80px', display: 'flex', justifyContent: 'center' }}>
+                        <div style={{ width: '120px', display: 'flex', justifyContent: 'center' }}>
                           <button
                             onClick={() => toggleCLIAutoApprove(engineKey)}
                             type="button"
@@ -770,7 +1025,7 @@ export default function SettingsModal({
                               borderRadius: '11px',
                               border: 'none',
                               cursor: 'pointer',
-                              background: autoApproved ? 'var(--accent)' : 'var(--border-color)',
+                              background: autoApproved ? 'var(--accent-fill, var(--accent))' : 'var(--border-color)',
                               transition: 'background var(--duration-base)',
                               flexShrink: 0
                             }}
@@ -778,12 +1033,12 @@ export default function SettingsModal({
                             <span style={{
                               position: 'absolute',
                               top: '2px',
-                              left: autoApproved ? '20px' : '2px',
+                              insetInlineStart: autoApproved ? '20px' : '2px',
                               width: '18px',
                               height: '18px',
                               borderRadius: '50%',
                               background: '#fff',
-                              transition: 'left var(--duration-base)',
+                              transition: 'inset-inline-start var(--duration-base)',
                               boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
                             }} />
                           </button>
@@ -809,15 +1064,27 @@ export default function SettingsModal({
                 }}>
                   {t('cli.quickUsage')}
                 </h4>
-                <div style={{
+                {/* Exemples de commandes : toujours de gauche à droite (dir="ltr"), y compris en
+                    arabe ; le commentaire traduit garde son propre sens (dir="auto") et la police
+                    du texte (seule la commande est en chasse fixe).
+                    SETTINGS-10 : l'espacement est porté par la commande, toujours en ltr (marge de
+                    fin = à droite). Sur le commentaire, une marge de début devenait une marge
+                    DROITE en arabe (commentaire en rtl) : commentaire collé à la commande. */}
+                <div dir="ltr" style={{
                   fontSize: 'var(--text-xs)',
                   color: 'var(--text-secondary)',
-                  fontFamily: 'monospace',
                   lineHeight: 1.8
                 }}>
-                  <div>mvault engines<span style={{ color: 'var(--text-tertiary)', marginLeft: '16px' }}>{t('cli.listEngines')}</span></div>
-                  <div>mvault get engine/secret<span style={{ color: 'var(--text-tertiary)', marginLeft: '16px' }}>{t('cli.readSecret')}</span></div>
-                  <div>mvault get engine/secret -k password<span style={{ color: 'var(--text-tertiary)', marginLeft: '16px' }}>{t('cli.extractField')}</span></div>
+                  {[
+                    ['mvault engines', t('cli.listEngines')],
+                    ['mvault get engine/secret', t('cli.readSecret')],
+                    ['mvault get engine/secret -k password', t('cli.extractField')],
+                  ].map(([command, comment]) => (
+                    <div key={command}>
+                      <code style={{ fontFamily: 'var(--font-mono, monospace)', marginInlineEnd: '16px' }}>{command}</code>
+                      <span dir="auto" style={{ color: 'var(--text-tertiary)' }}>{comment}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -859,7 +1126,8 @@ export default function SettingsModal({
                         cursor: 'pointer',
                         background: isSelected ? 'var(--bg-surface-hover)' : 'var(--bg-surface)',
                         transition: 'all var(--duration-base)',
-                        textAlign: 'left',
+                        // SETTINGS-14 : alignement logique (à droite en arabe)
+                        textAlign: 'start',
                         width: '100%'
                       }}
                     >
@@ -880,7 +1148,8 @@ export default function SettingsModal({
                         </div>
                       </div>
                       {isSelected && (
-                        <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: '18px' }}>✓</span>
+                        // SETTINGS-14 : marge logique, la coche reste en bout de bouton en arabe
+                        <span style={{ marginInlineStart: 'auto', color: 'var(--accent)', fontSize: '18px' }}>✓</span>
                       )}
                     </button>
                   );
@@ -906,6 +1175,14 @@ export default function SettingsModal({
                 marginBottom: 'var(--sp-4)'
               }}>
                 {t('export.description')}
+              </p>
+              {/* Contenu du fichier : données en clair ; passkeys et clés TOTP non incluses */}
+              <p style={{
+                fontSize: 'var(--text-sm)',
+                color: 'var(--text-secondary)',
+                marginBottom: 'var(--sp-4)'
+              }}>
+                {t('export.contentNote')}
               </p>
 
               {/* Sélection du coffre */}
@@ -936,8 +1213,9 @@ export default function SettingsModal({
                 {secretEngines
                   .filter(e => appMode === 'local' || e.canWrite !== false)
                   .map(e => (
+                    // Libellé : nom d'un coffre 1.5.0 enregistré encodé affiché décodé ; valeur = nom technique
                     <option key={e.name} value={e.name}>
-                      {e.name} (KV v{e.version})
+                      {ltrIsolate(`${engineDisplayName(e.name)} (KV v${e.version})`)}
                     </option>
                   ))
                 }
@@ -1045,8 +1323,9 @@ export default function SettingsModal({
                   {secretEngines
                     .filter(e => appMode === 'local' || e.canWrite !== false)
                     .map(e => (
+                      // Libellé décodé (coffre 1.5.0), valeur = nom technique utilisé pour les requêtes
                       <option key={e.name} value={e.name}>
-                        {e.name} (KV v{e.version})
+                        {ltrIsolate(`${engineDisplayName(e.name)} (KV v${e.version})`)}
                       </option>
                     ))
                   }
@@ -1067,7 +1346,8 @@ export default function SettingsModal({
                   >
                     {t('export.importSelectFile')}
                   </button>
-                  <span style={{
+                  {/* Nom de fichier : sens selon son contenu (dir="auto"), ellipse du bon côté en arabe */}
+                  <span dir="auto" style={{
                     fontSize: 'var(--text-sm)',
                     color: importFile ? 'var(--text-primary)' : 'var(--text-tertiary)',
                     overflow: 'hidden',
@@ -1176,38 +1456,32 @@ export default function SettingsModal({
                   gap: 'var(--sp-2)'
                 }}>
                   <span>🆕</span>
-                  <span>{t('aboutPage.whatsNew', { version: '1.4.0' })}</span>
+                  <span>{t('aboutPage.whatsNew', { version: appVersion })}</span>
                 </h4>
                 <ul style={{
                   fontSize: 'var(--text-sm)',
                   color: 'var(--text-secondary)',
-                  paddingLeft: 'var(--sp-4)',
+                  paddingInlineStart: 'var(--sp-4)',
                   lineHeight: 1.8,
                   margin: 0
                 }}>
                   <li style={{ marginBottom: 'var(--sp-2)' }}>
-                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.framelessWindow')}</strong> - {t('aboutPage.framelessWindowDesc')}
+                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.v17Passkeys')}</strong> - {t('aboutPage.v17PasskeysDesc')}
                   </li>
                   <li style={{ marginBottom: 'var(--sp-2)' }}>
-                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.customButtons')}</strong> - {t('aboutPage.customButtonsDesc')}
+                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.v17Remote')}</strong> - {t('aboutPage.v17RemoteDesc')}
                   </li>
                   <li style={{ marginBottom: 'var(--sp-2)' }}>
-                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.improvedSearch')}</strong> - {t('aboutPage.improvedSearchDesc')}
+                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.v17Audit')}</strong> - {t('aboutPage.v17AuditDesc')}
                   </li>
                   <li style={{ marginBottom: 'var(--sp-2)' }}>
-                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.tagSearch')}</strong> - {t('aboutPage.tagSearchDesc')}
+                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.v17Crypto')}</strong> - {t('aboutPage.v17CryptoDesc')}
                   </li>
                   <li style={{ marginBottom: 'var(--sp-2)' }}>
-                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.tagCreation')}</strong> - {t('aboutPage.tagCreationDesc')}
-                  </li>
-                  <li style={{ marginBottom: 'var(--sp-2)' }}>
-                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.restoreDeleted')}</strong> - {t('aboutPage.restoreDeletedDesc')}
-                  </li>
-                  <li style={{ marginBottom: 'var(--sp-2)' }}>
-                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.shiftClick')}</strong> - {t('aboutPage.shiftClickDesc')}
+                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.v17Ui')}</strong> - {t('aboutPage.v17UiDesc')}
                   </li>
                   <li>
-                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.bugFixes')}</strong> - {t('aboutPage.bugFixesDesc')}
+                    <strong style={{ color: 'var(--text-primary)' }}>{t('aboutPage.bugFixes')}</strong> - {t('aboutPage.v17FixesDesc')}
                   </li>
                 </ul>
               </div>

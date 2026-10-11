@@ -33,6 +33,14 @@ export const LANGUAGES = [
   { code: 'tr', name: 'Türkçe', flag: '🇹🇷' },
 ];
 
+// Langues écrites de droite à gauche (seul l'arabe parmi les 12 proposées ; « ar-MA » etc. inclus)
+const RTL_LANGUAGES = ['ar'];
+
+/** true si la langue s'écrit de droite à gauche (sens du document : <html dir="rtl">) */
+export function isRtlLanguage(code) {
+  return typeof code === 'string' && RTL_LANGUAGES.includes(code.split('-')[0].toLowerCase());
+}
+
 const I18nContext = createContext();
 
 /**
@@ -53,12 +61,35 @@ function getTranslation(translations, key, vars = {}) {
 }
 
 export function I18nProvider({ children, defaultLang = 'en' }) {
-  const [lang, setLang] = useState(() => {
-    return localStorage.getItem('rdvault-lang') || defaultLang;
+  const [lang, setLangState] = useState(() => {
+    try {
+      return localStorage.getItem('rdvault-lang') || defaultLang;
+    } catch {
+      return defaultLang;
+    }
   });
 
+  // BUG CORRIGÉ : la langue par défaut était persistée dès le montage, AVANT que la
+  // configuration (LANG dans config.cfg) ne soit chargée ; useConfig ne l'appliquait
+  // ensuite jamais car « une préférence existait déjà ». On ne persiste désormais
+  // qu'un choix explicite (paramètres utilisateur ou configuration).
+  const setLang = useCallback((next) => {
+    setLangState(next);
+    try {
+      localStorage.setItem('rdvault-lang', next);
+    } catch { /* stockage indisponible */ }
+  }, []);
+
+  // Accessibilité : langue du document = langue de l'interface (prononciation des lecteurs
+  // d'écran, césure, guillemets). index.html déclare <html lang="en"> en dur.
+  // I18N-31 : sens d'écriture du document. Sans dir="rtl", l'arabe gardait une direction de base
+  // LTR : phrases mêlant arabe et termes latins réordonnées, mise en page non miroir.
+  // AppStyles.css utilise des propriétés logiques (inline-start/end) qui suivent ce sens.
   useEffect(() => {
-    localStorage.setItem('rdvault-lang', lang);
+    if (typeof document !== 'undefined' && document.documentElement) {
+      document.documentElement.lang = lang;
+      document.documentElement.dir = isRtlLanguage(lang) ? 'rtl' : 'ltr';
+    }
   }, [lang]);
 
   const t = useCallback((key, vars) => {
@@ -81,4 +112,9 @@ export function useTranslation() {
   const ctx = useContext(I18nContext);
   if (!ctx) throw new Error('useTranslation must be used within I18nProvider');
   return ctx;
+}
+
+/** Variante tolérante : null hors I18nProvider (composants génériques, ex. LoadingSpinner) */
+export function useOptionalTranslation() {
+  return useContext(I18nContext) || null;
 }

@@ -1,7 +1,11 @@
 // ========================================
 // COMPOSANT: ContextMenus — Column, Tag, Folder, Engine context menus
 // ========================================
-import React from 'react';
+// Accessibilité (WAI-ARIA APG « Menu ») : role="menu" nommé, éléments role="menuitem" (ou
+// "menuitemcheckbox" pour les colonnes), séparateurs role="separator". Focus à l'ouverture,
+// flèches, Début/Fin, Échap/Tab et retour du focus sont gérés par useContextMenus (un seul
+// menu ouvert à la fois).
+import React, { useId } from 'react';
 
 export default function ContextMenus({
   // Folder context menu
@@ -26,16 +30,19 @@ export default function ContextMenus({
       {folderContextMenu && (
         <div
           className="context-menu"
+          role="menu"
+          aria-label={folderContextMenu.folderPath}
           style={{ top: folderContextMenu.y, left: folderContextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
           <button
             onClick={() => handleDeleteFolder(folderContextMenu.folderPath)}
+            role="menuitem"
             className="context-menu-item"
             style={{ color: 'var(--error)' }}
             type="button"
           >
-            {'\uD83D\uDDD1\uFE0F'} {t('contextMenu.deleteFolder')}
+            <span aria-hidden="true">{'\uD83D\uDDD1\uFE0F'}</span> {t('contextMenu.deleteFolder')}
           </button>
         </div>
       )}
@@ -71,6 +78,8 @@ export default function ContextMenus({
       {engineContextMenu && (
         <div
           className="context-menu"
+          role="menu"
+          aria-label={engineContextMenu.engine?.name}
           style={{ top: engineContextMenu.y, left: engineContextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -79,10 +88,11 @@ export default function ContextMenus({
               setEngineToDelete(engineContextMenu.engine);
               setEngineContextMenu(null);
             }}
+            role="menuitem"
             className="context-menu-item danger"
             type="button"
           >
-            {'\uD83D\uDDD1\uFE0F'} {t('confirm.deleteEngine')}
+            <span aria-hidden="true">{'\uD83D\uDDD1\uFE0F'}</span> {t('confirm.deleteEngine')}
           </button>
         </div>
       )}
@@ -91,6 +101,7 @@ export default function ContextMenus({
 }
 
 function ColumnContextMenuContent({ columnContextMenu, visibleColumns, setVisibleColumns, t }) {
+  const labelId = useId();
   const columnKeys = ['name', 'username', 'password', 'url', 'notes', 'tags', 'customFields'];
   const columnLabels = {
     name: 'table.name',
@@ -105,15 +116,21 @@ function ColumnContextMenuContent({ columnContextMenu, visibleColumns, setVisibl
   return (
     <div
       className="context-menu"
+      role="menu"
+      aria-labelledby={labelId}
       style={{ top: columnContextMenu.y, left: columnContextMenu.x }}
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="context-menu-label">{t('settings.columnsTitle')}</div>
+      <div className="context-menu-label" id={labelId}>{t('settings.columnsTitle')}</div>
       {columnKeys.map((key) => (
-        <label key={key} className="context-menu-item" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
+        // Le <label> n'est qu'un conteneur (role="none") : l'élément de menu est la case à cocher
+        // elle-même (menuitemcheckbox, état coché natif), nommée par le texte du libellé.
+        <label key={key} role="none" className="context-menu-item" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}>
           <input
             type="checkbox"
-            checked={visibleColumns[key]}
+            role="menuitemcheckbox"
+            aria-checked={!!visibleColumns[key]}
+            checked={!!visibleColumns[key]}
             onChange={(e) => {
               const newVisibleColumns = { ...visibleColumns, [key]: e.target.checked };
               setVisibleColumns(newVisibleColumns);
@@ -133,6 +150,7 @@ function TagContextMenuContent({
   handleAddTagToSecret, handleRemoveTagFromSecret, getTagColor, t,
 }) {
   const handleCreateTag = (tagName) => {
+    // eslint-disable-next-line no-control-regex -- volontaire : tag avec caractère de contrôle refusé
     if (tagName && tagName.length <= 64 && !/[\x00-\x1F\x7F]/.test(tagName)) {
       handleAddTagToSecret(tagContextMenu.secret, tagName);
       setTagCreateMode(false);
@@ -145,6 +163,8 @@ function TagContextMenuContent({
     <div
       ref={tagContextMenuRef}
       className="context-menu tag-context-menu"
+      role="menu"
+      aria-label={t('table.tags')}
       style={{
         top: tagContextMenu.y,
         left: tagContextMenu.x,
@@ -160,17 +180,19 @@ function TagContextMenuContent({
             setTagCreateMode(true);
             setTagCreateValue('#');
           }}
+          role="menuitem"
           className="context-menu-item"
           type="button"
           style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}
         >
-          <span style={{ fontSize: '16px' }}>+</span>
+          <span aria-hidden="true" style={{ fontSize: '16px' }}>+</span>
           <span>{t('contextMenu.createTag')}</span>
         </button>
       ) : (
-        <div style={{ padding: 'var(--sp-2) var(--sp-3)', display: 'flex', gap: 'var(--sp-2)', alignItems: 'center' }}>
+        <div role="none" style={{ padding: 'var(--sp-2) var(--sp-3)', display: 'flex', gap: 'var(--sp-2)', alignItems: 'center' }}>
           <input
             type="text"
+            aria-label={t('contextMenu.createTag')}
             value={tagCreateValue}
             autoFocus
             onChange={(e) => {
@@ -187,7 +209,7 @@ function TagContextMenuContent({
               }
             }}
             onClick={(e) => e.stopPropagation()}
-            placeholder="#nouveau-tag"
+            placeholder={t('contextMenu.newTagPlaceholder')}
             style={{
               flex: 1,
               padding: 'var(--sp-2)',
@@ -209,11 +231,11 @@ function TagContextMenuContent({
             type="button"
             style={{ padding: 'var(--sp-2) var(--sp-3)', fontSize: 'var(--text-sm)', whiteSpace: 'nowrap' }}
           >
-            OK
+            {t('common.ok')}
           </button>
         </div>
       )}
-      <div className="context-menu-separator" />
+      <div className="context-menu-separator" role="separator" />
       <div className="context-menu-label">
         {t('table.tags')} ({tagContextMenu.availableTags.length})
       </div>
@@ -235,6 +257,7 @@ function TagContextMenuContent({
               handleAddTagToSecret(tagContextMenu.secret, tag);
               setTagContextMenu(null);
             }}
+            role="menuitem"
             className="context-menu-item"
             type="button"
             style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}
@@ -248,7 +271,7 @@ function TagContextMenuContent({
       )}
       {tagContextMenu.currentTags.length > 0 && (
         <>
-          <div className="context-menu-separator" />
+          <div className="context-menu-separator" role="separator" />
           <div className="context-menu-label">
             {t('table.tags')} ({tagContextMenu.currentTags.length}) - {t('contextMenu.removeTag')}
           </div>
@@ -259,6 +282,7 @@ function TagContextMenuContent({
                 handleRemoveTagFromSecret(tagContextMenu.secret, tag);
                 setTagContextMenu(null);
               }}
+              role="menuitem"
               className="context-menu-item"
               type="button"
               style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-2)' }}
@@ -267,13 +291,15 @@ function TagContextMenuContent({
                 {tag}
               </span>
               <span style={{ flex: 1 }}>{t('contextMenu.removeTag')} "{tag}"</span>
-              <span style={{ fontSize: '16px', opacity: 0.6 }}>{'\u2715'}</span>
+              <span aria-hidden="true" style={{ fontSize: '16px', opacity: 0.6 }}>{'\u2715'}</span>
             </button>
           ))}
         </>
       )}
+      {/* Indicateur de défilement : aide à la souris seulement (au clavier, les flèches défilent) */}
       <div
         className="tag-menu-scroll-indicator"
+        aria-hidden="true"
         onClick={(e) => {
           e.stopPropagation();
           const menu = tagContextMenuRef.current;

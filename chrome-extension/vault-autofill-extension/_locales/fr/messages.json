@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "Auto-remplissage de formulaires et passkeys avec RDVAULT (nécessite le Desktop app)"
+  },
+  "popupStatusChecking": {
+    "message": "Vérification..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "Cette extension nécessite que l'application Desktop Vault soit lancée et connectée."
+  },
+  "popupDesktopUnavailable": {
+    "message": "Desktop non disponible"
+  },
+  "popupDesktopNotConnected": {
+    "message": "Desktop démarré mais non connecté"
+  },
+  "popupDesktopConnected": {
+    "message": "Desktop connecté"
+  },
+  "popupUserLabel": {
+    "message": "Utilisateur:"
+  },
+  "popupServerLabel": {
+    "message": "Serveur:"
+  },
+  "popupUnknown": {
+    "message": "Inconnu"
+  },
+  "popupAutofillActive": {
+    "message": "✓ Auto-remplissage actif"
+  },
+  "popupPairingPendingTitle": {
+    "message": "Confirmez l'accès dans l'application RDVAULT"
+  },
+  "popupPairingPendingDetail": {
+    "message": "Une demande d'appairage a été envoyée à RDVAULT. Acceptez-la dans l'application (délai : 60 secondes) pour activer l'auto-remplissage."
+  },
+  "popupPairingDeniedTitle": {
+    "message": "Accès refusé dans RDVAULT"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "L'appairage de cette extension a été refusé dans l'application. Une nouvelle demande sera possible dans une minute."
+  },
+  "popupDisconnectedDetail": {
+    "message": "Lancez l'application Desktop et connectez-vous pour utiliser l'auto-remplissage."
+  },
+  "autofillIconTitle": {
+    "message": "Auto-remplir avec RDVAULT"
+  },
+  "autofillHeader": {
+    "message": "Identifiants RDVAULT"
+  },
+  "autofillNoResults": {
+    "message": "Aucun identifiant trouvé pour ce site"
+  },
+  "autofillUnnamed": {
+    "message": "Sans nom"
+  },
+  "autofillNoUsername": {
+    "message": "(pas de username)"
+  },
+  "autofillLoading": {
+    "message": "Récupération de l'identifiant..."
+  },
+  "autofillFetchFailed": {
+    "message": "Impossible de récupérer l'identifiant"
+  },
+  "pkCreateTitle": {
+    "message": "Créer une passkey pour $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "Créer dans RDVAULT"
+  },
+  "pkGetTitle": {
+    "message": "Utiliser votre passkey pour $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "Utiliser ma passkey RDVAULT"
+  },
+  "pkChooseAccount": {
+    "message": "choisissez le compte"
+  },
+  "pkUseAnotherDevice": {
+    "message": "Utiliser un autre appareil"
+  },
+  "pkCancel": {
+    "message": "Annuler"
+  },
+  "pkBlockedWarning": {
+    "message": "Action bloquée : la fenêtre RDVAULT est masquée ou recouverte par la page. Utilisez « $OTHER$ » ou « $CANCEL$ ».",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "Compte sans nom"
+  },
+  "pkCreatedOn": {
+    "message": "créée le $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "Identifiant introuvable pour ce site"
+  },
+  "bgErrHttp": {
+    "message": "Erreur HTTP $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "Réponse invalide"
+  },
+  "bgErrCommunication": {
+    "message": "Erreur de communication avec RDVAULT"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "Nom de clé invalide"
+  },
+  "bgErrInvalidCode": {
+    "message": "Code invalide"
+  },
+  "bgErrTotp": {
+    "message": "Erreur TOTP"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "passkey invalide"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId non autorisé"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "Coffre indisponible"
+  },
+  "bgErrInsecureSender": {
+    "message": "Non autorisé depuis une page non sécurisée"
+  },
+  "bgErrInternal": {
+    "message": "Erreur interne"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "URL d'onglet requise"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "Type de message non supporté"
+  },
+  "bgErrInsecurePage": {
+    "message": "Page non sécurisée"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT indisponible ou verrouillé"
+  },
+  "bgErrNameRequired": {
+    "message": "Nom de secret requis"
+  },
+  "bgErrInvalidCredential": {
+    "message": "Credential invalide"
+  },
+  "bgErrSaveCredential": {
+    "message": "Erreur sauvegarde credential"
+  },
+  "bgErrReadCredential": {
+    "message": "Erreur lecture credential"
+  },
+  "bgErrClearCredential": {
+    "message": "Erreur suppression credential"
+  }
+}

@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "Compilazione automatica dei moduli e passkey con RDVAULT (richiede l'app desktop)"
+  },
+  "popupStatusChecking": {
+    "message": "Verifica in corso..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "Questa estensione richiede che l'app desktop Vault sia avviata e connessa."
+  },
+  "popupDesktopUnavailable": {
+    "message": "App desktop non disponibile"
+  },
+  "popupDesktopNotConnected": {
+    "message": "App desktop avviata ma non connessa"
+  },
+  "popupDesktopConnected": {
+    "message": "App desktop connessa"
+  },
+  "popupUserLabel": {
+    "message": "Utente:"
+  },
+  "popupServerLabel": {
+    "message": "Server:"
+  },
+  "popupUnknown": {
+    "message": "Sconosciuto"
+  },
+  "popupAutofillActive": {
+    "message": "✓ Compilazione automatica attiva"
+  },
+  "popupPairingPendingTitle": {
+    "message": "Conferma l'accesso nell'app RDVAULT"
+  },
+  "popupPairingPendingDetail": {
+    "message": "È stata inviata una richiesta di associazione a RDVAULT. Accettala nell'app (entro 60 secondi) per attivare la compilazione automatica."
+  },
+  "popupPairingDeniedTitle": {
+    "message": "Accesso negato in RDVAULT"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "L'associazione di questa estensione è stata rifiutata nell'app. Potrai inviare una nuova richiesta tra un minuto."
+  },
+  "popupDisconnectedDetail": {
+    "message": "Avvia l'app desktop e accedi per usare la compilazione automatica."
+  },
+  "autofillIconTitle": {
+    "message": "Compila automaticamente con RDVAULT"
+  },
+  "autofillHeader": {
+    "message": "Credenziali RDVAULT"
+  },
+  "autofillNoResults": {
+    "message": "Nessuna credenziale trovata per questo sito"
+  },
+  "autofillUnnamed": {
+    "message": "Senza nome"
+  },
+  "autofillNoUsername": {
+    "message": "(nessun nome utente)"
+  },
+  "autofillLoading": {
+    "message": "Recupero della credenziale..."
+  },
+  "autofillFetchFailed": {
+    "message": "Impossibile recuperare la credenziale"
+  },
+  "pkCreateTitle": {
+    "message": "Crea una passkey per $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "Crea in RDVAULT"
+  },
+  "pkGetTitle": {
+    "message": "Usa la tua passkey per $HOST$",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "Usa la mia passkey RDVAULT"
+  },
+  "pkChooseAccount": {
+    "message": "scegli l'account"
+  },
+  "pkUseAnotherDevice": {
+    "message": "Usa un altro dispositivo"
+  },
+  "pkCancel": {
+    "message": "Annulla"
+  },
+  "pkBlockedWarning": {
+    "message": "Azione bloccata: la finestra di RDVAULT è nascosta o coperta dalla pagina. Usa «$OTHER$» o «$CANCEL$».",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "Account senza nome"
+  },
+  "pkCreatedOn": {
+    "message": "creata il $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "Credenziale non trovata per questo sito"
+  },
+  "bgErrHttp": {
+    "message": "Errore HTTP $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "Risposta non valida"
+  },
+  "bgErrCommunication": {
+    "message": "Errore di comunicazione con RDVAULT"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "Nome della chiave non valido"
+  },
+  "bgErrInvalidCode": {
+    "message": "Codice non valido"
+  },
+  "bgErrTotp": {
+    "message": "Errore TOTP"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "passkey non valida"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId non consentito"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "Vault non disponibile"
+  },
+  "bgErrInsecureSender": {
+    "message": "Non consentito da una pagina non sicura"
+  },
+  "bgErrInternal": {
+    "message": "Errore interno"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "URL della scheda obbligatorio"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "Tipo di messaggio non supportato"
+  },
+  "bgErrInsecurePage": {
+    "message": "Pagina non sicura"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT non disponibile o bloccato"
+  },
+  "bgErrNameRequired": {
+    "message": "Nome del segreto obbligatorio"
+  },
+  "bgErrInvalidCredential": {
+    "message": "Credenziale non valida"
+  },
+  "bgErrSaveCredential": {
+    "message": "Errore durante il salvataggio della credenziale"
+  },
+  "bgErrReadCredential": {
+    "message": "Errore durante la lettura della credenziale"
+  },
+  "bgErrClearCredential": {
+    "message": "Errore durante l'eliminazione della credenziale"
+  }
+}

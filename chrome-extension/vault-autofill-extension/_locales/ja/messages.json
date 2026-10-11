@@ -1,0 +1,198 @@
+{
+  "extName": {
+    "message": "Vault Autofill"
+  },
+  "extDescription": {
+    "message": "RDVAULT によるフォームの自動入力とパスキー（デスクトップアプリが必要）"
+  },
+  "popupStatusChecking": {
+    "message": "確認中..."
+  },
+  "popupInfoRequiresDesktop": {
+    "message": "この拡張機能を使うには、Vault デスクトップアプリが起動し、接続されている必要があります。"
+  },
+  "popupDesktopUnavailable": {
+    "message": "デスクトップアプリを利用できません"
+  },
+  "popupDesktopNotConnected": {
+    "message": "デスクトップアプリは起動していますが、接続されていません"
+  },
+  "popupDesktopConnected": {
+    "message": "デスクトップアプリに接続済み"
+  },
+  "popupUserLabel": {
+    "message": "ユーザー:"
+  },
+  "popupServerLabel": {
+    "message": "サーバー:"
+  },
+  "popupUnknown": {
+    "message": "不明"
+  },
+  "popupAutofillActive": {
+    "message": "✓ 自動入力が有効です"
+  },
+  "popupPairingPendingTitle": {
+    "message": "RDVAULT アプリでアクセスを承認してください"
+  },
+  "popupPairingPendingDetail": {
+    "message": "RDVAULT にペアリング要求を送信しました。自動入力を有効にするには、アプリで要求を承認してください（制限時間：60 秒）。"
+  },
+  "popupPairingDeniedTitle": {
+    "message": "RDVAULT でアクセスが拒否されました"
+  },
+  "popupPairingDeniedDetail": {
+    "message": "この拡張機能のペアリングはアプリで拒否されました。1 分後に再度要求できます。"
+  },
+  "popupDisconnectedDetail": {
+    "message": "自動入力を使うには、デスクトップアプリを起動してログインしてください。"
+  },
+  "autofillIconTitle": {
+    "message": "RDVAULT で自動入力"
+  },
+  "autofillHeader": {
+    "message": "RDVAULT のログイン情報"
+  },
+  "autofillNoResults": {
+    "message": "このサイトのログイン情報が見つかりません"
+  },
+  "autofillUnnamed": {
+    "message": "名前なし"
+  },
+  "autofillNoUsername": {
+    "message": "（ユーザー名なし）"
+  },
+  "autofillLoading": {
+    "message": "ログイン情報を取得しています..."
+  },
+  "autofillFetchFailed": {
+    "message": "ログイン情報を取得できませんでした"
+  },
+  "pkCreateTitle": {
+    "message": "$HOST$ のパスキーを作成",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkCreateOk": {
+    "message": "RDVAULT に作成"
+  },
+  "pkGetTitle": {
+    "message": "$HOST$ でパスキーを使用",
+    "placeholders": {
+      "host": {
+        "content": "$1",
+        "example": "example.com"
+      }
+    }
+  },
+  "pkGetOk": {
+    "message": "RDVAULT のパスキーを使用"
+  },
+  "pkChooseAccount": {
+    "message": "アカウントを選択してください"
+  },
+  "pkUseAnotherDevice": {
+    "message": "別のデバイスを使用"
+  },
+  "pkCancel": {
+    "message": "キャンセル"
+  },
+  "pkBlockedWarning": {
+    "message": "操作がブロックされました：RDVAULT のウィンドウがページによって隠されているか、覆われています。「$OTHER$」または「$CANCEL$」を使用してください。",
+    "placeholders": {
+      "other": {
+        "content": "$1",
+        "example": "Use another device"
+      },
+      "cancel": {
+        "content": "$2",
+        "example": "Cancel"
+      }
+    }
+  },
+  "pkUnnamedAccount": {
+    "message": "名前のないアカウント"
+  },
+  "pkCreatedOn": {
+    "message": "作成日：$DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1",
+        "example": "1/2/2026"
+      }
+    }
+  },
+  "bgErrNotFound": {
+    "message": "このサイトのログイン情報が見つかりません"
+  },
+  "bgErrHttp": {
+    "message": "HTTP エラー $STATUS$",
+    "placeholders": {
+      "status": {
+        "content": "$1",
+        "example": "500"
+      }
+    }
+  },
+  "bgErrInvalidResponse": {
+    "message": "無効な応答です"
+  },
+  "bgErrCommunication": {
+    "message": "RDVAULT との通信エラー"
+  },
+  "bgErrInvalidKeyName": {
+    "message": "無効なキー名です"
+  },
+  "bgErrInvalidCode": {
+    "message": "無効なコードです"
+  },
+  "bgErrTotp": {
+    "message": "TOTP エラー"
+  },
+  "bgErrInvalidPasskey": {
+    "message": "無効なパスキーです"
+  },
+  "bgErrRpIdNotAllowed": {
+    "message": "rpId は許可されていません"
+  },
+  "bgErrVaultUnavailable": {
+    "message": "保管庫を利用できません"
+  },
+  "bgErrInsecureSender": {
+    "message": "安全でないページからは許可されていません"
+  },
+  "bgErrInternal": {
+    "message": "内部エラー"
+  },
+  "bgErrTabUrlRequired": {
+    "message": "タブの URL が必要です"
+  },
+  "bgErrUnsupportedMessage": {
+    "message": "サポートされていないメッセージの種類です"
+  },
+  "bgErrInsecurePage": {
+    "message": "安全でないページです"
+  },
+  "bgErrUnavailableOrLocked": {
+    "message": "RDVAULT を利用できないか、ロックされています"
+  },
+  "bgErrNameRequired": {
+    "message": "シークレット名が必要です"
+  },
+  "bgErrInvalidCredential": {
+    "message": "無効なログイン情報です"
+  },
+  "bgErrSaveCredential": {
+    "message": "ログイン情報の保存エラー"
+  },
+  "bgErrReadCredential": {
+    "message": "ログイン情報の読み取りエラー"
+  },
+  "bgErrClearCredential": {
+    "message": "ログイン情報の削除エラー"
+  }
+}
