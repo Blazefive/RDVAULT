@@ -125,10 +125,14 @@ app.whenReady().then(async () => {
     await ipcHandlers.get('sync-write-state')(ev, { connected: false });
 
     // (MAIN-30) déconnexion / expiration : retour à la carte de connexion 540×820 non redimensionnable
+    // Taille principale 1280×800, bornée par la zone de travail de l'écran (les runners de CI ont un écran 1024×768)
+    const workArea = require('electron').screen.getPrimaryDisplay().workAreaSize;
+    const expW = Math.min(1280, workArea.width);
+    const expH = Math.min(800, workArea.height);
     await ipcHandlers.get('window-set-main-mode')(ev);
     await sleep(300);
     const mainSize = win.getSize();
-    check(mainSize[0] === 1280 && mainSize[1] === 800 && win.isResizable(), 'mode principal : 1280×800 redimensionnable (' + mainSize + ')');
+    check(mainSize[0] === expW && mainSize[1] === expH && win.isResizable(), 'mode principal : 1280×800 (borné à ' + expW + '×' + expH + ') redimensionnable (' + mainSize + ')');
     await ipcHandlers.get('window-set-login-mode')(ev);
     await sleep(300);
     const loginSize = win.getSize();
@@ -139,7 +143,7 @@ app.whenReady().then(async () => {
     await ipcHandlers.get('window-set-login-mode')(ev);
     await sleep(300);
     const loginSize2 = win.getSize();
-    check(mainSize2[0] === 1280 && loginSize2[0] === 540 && loginSize2[1] === 820, 'second cycle connexion / déconnexion : 1280 puis 540×820 (' + mainSize2 + ' / ' + loginSize2 + ')');
+    check(mainSize2[0] === expW && loginSize2[0] === 540 && loginSize2[1] === 820, 'second cycle connexion / déconnexion : ' + expW + ' puis 540×820 (' + mainSize2 + ' / ' + loginSize2 + ')');
 
     // (MAIN-26) boîte d'appairage dans la langue de l'interface : VRAIE chaîne renderer (I18nProvider → <html lang>)
     // → preload → IPC 'set-ui-language' → processus principal. Langue changée par localStorage + rechargement.
@@ -179,6 +183,10 @@ app.whenReady().then(async () => {
       { name: 'dossier/compte', engine: 'mes-secrets', username: 'nested-user', password: 'Nested-pass-1', url: 'https://localhost:8457', type: 'login' },
       { name: 'racine', engine: 'mes-secrets', username: 'racine-user', password: 'Racine-pass-1', url: 'https://localhost:8457', type: 'login' },
     ] };
+    // Le dernier rechargement de l'interface purge l'état (did-navigate) : attendre la fin du chargement
+    // avant de publier l'état, sinon une purge tardive (machine lente, CI) le vide entre deux requêtes.
+    await waitFor(() => !win.webContents.isLoading());
+    await sleep(300);
     await ipcHandlers.get('sync-write-state')(ev, state);
     r = await get('/api/totp/' + encodeURIComponent('MES-SECRETS-dossier/compte'), authHdr);
     check(r.status !== 400 && r.status !== 401, '/api/totp : clé TOTP d\'une entrée en dossier acceptée (' + r.status + ' ' + JSON.stringify(r.json) + ')');

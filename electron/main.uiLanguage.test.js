@@ -17,7 +17,13 @@ const mainI18n = require('./mainI18n');
 
 // Aucun client externe réel : PuTTY / FileZilla / WinSCP « absents », aucun processus lancé
 const origExistsSync = fs.existsSync;
-fs.existsSync = (p) => (/(putty|filezilla|winscp)\.exe$/i.test(String(p)) ? false : origExistsSync(p));
+// build/index.html « présent » : le chemin loadFile (production) est celui testé, même sans build React
+// (la CI Linux lance ces tests sans construire l'interface).
+fs.existsSync = (p) => {
+  if (/(putty|filezilla|winscp)\.exe$/i.test(String(p))) return false;
+  if (/[\\/]build[\\/]index\.html$/i.test(String(p))) return true;
+  return origExistsSync(p);
+};
 const origSpawn = child_process.spawn;
 child_process.spawn = () => ({ unref() {}, on() {} });
 

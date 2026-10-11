@@ -21,6 +21,7 @@ const tempDir = path.join(scratch, 'tmp');
 fs.mkdirSync(userData, { recursive: true });
 fs.mkdirSync(tempDir, { recursive: true });
 process.env.RDVAULT_LOG_LEVEL = 'error';
+const IS_WINDOWS = process.platform === 'win32';
 
 // ---------- Module electron simulé ----------
 const appEvents = new EventEmitter();
@@ -133,7 +134,8 @@ test('deux copies rapprochées : la fermeture efface encore la seconde (et l\'hi
   await sleep(800); // t = 1,3 s : le nettoyage différé de A a tourné
   const n = await clearsDuring(quit);
   assert.equal(clip.text, '', 'le mot de passe B doit être effacé à la fermeture');
-  assert.ok(n > 0, 'l\'historique Win+V doit être vidé à la fermeture');
+  // Historique Win+V : propre à Windows (secureClipboard.clearClipboardHistory ne fait rien ailleurs)
+  if (IS_WINDOWS) assert.ok(n > 0, 'l\'historique Win+V doit être vidé à la fermeture');
   await sleep(2500);
 });
 
@@ -144,7 +146,7 @@ test('« Effacer maintenant » après le nettoyage différé de la copie précé
   await sleep(800);
   const n = await clearsDuring(() => invoke('clipboard-clear-now'));
   assert.equal(clip.text, '');
-  assert.ok(n > 0, 'l\'effacement immédiat doit passer par le minuteur de la copie (historique Win+V compris)');
+  if (IS_WINDOWS) assert.ok(n > 0, 'l\'effacement immédiat doit passer par le minuteur de la copie (historique Win+V compris)');
   await sleep(2500);
 });
 
@@ -156,7 +158,7 @@ test('open-rdp-connection : le mot de passe copié est effacé à la fermeture',
   await sleep(50);
   const n = await clearsDuring(quit);
   assert.equal(clip.text, '');
-  assert.ok(n > 0);
+  if (IS_WINDOWS) assert.ok(n > 0);
   await sleep(2200); // laisser supprimer le .rdp temporaire
 });
 
