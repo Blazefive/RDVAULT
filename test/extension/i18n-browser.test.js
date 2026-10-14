@@ -117,10 +117,11 @@ async function shadowNode(page, cls, timeoutMs = 10000, filter = null) {
   return null;
 }
 
-// Textes français d'origine (avant l'internationalisation) : doivent rester identiques
+// Textes français d'origine (avant l'internationalisation) : doivent rester identiques. Exception
+// voulue (EXT-29) : la popup parle de l'application RDVAULT (plus de « Desktop Vault »).
 const FR_ORIGINAL = {
   popupDesktopConnected: 'Desktop connecté',
-  popupInfo: 'Cette extension nécessite que l\'application Desktop Vault soit lancée et connectée.',
+  popupInfo: 'Cette extension nécessite que l\'application RDVAULT soit lancée et déverrouillée.',
   details: ['Utilisateur: alice', 'Serveur: https://vault.i18n.test', '✓ Auto-remplissage actif'],
   iconTitle: 'Auto-remplir avec RDVAULT',
   header: 'Identifiants RDVAULT',
@@ -161,7 +162,8 @@ test('extensions traduites dans Chrome selon la langue du navigateur (en, fr, ar
     });
     let session = null;
     try {
-      // Deux service workers : version 1.2.0 = extension enrichie, 1.1.0 = extension simple
+      // Deux service workers (même version 1.7.0, alignée sur l'application) : l'extension enrichie est
+      // celle qui a accès à l'application RDVAULT (host_permissions 127.0.0.1:45678)
       const ids = {};
       const deadline = Date.now() + 20000;
       while ((!ids.enriched || !ids.simple) && Date.now() < deadline) {
@@ -169,8 +171,8 @@ test('extensions traduites dans Chrome selon la langue du navigateur (en, fr, ar
           const id = new URL(target.url()).hostname;
           if (Object.values(ids).some((v) => v.id === id)) continue;
           const w = await target.worker();
-          const version = await w.evaluate(() => chrome.runtime.getManifest().version);
-          ids[version === '1.2.0' ? 'enriched' : 'simple'] = { id, target, worker: w };
+          const enriched = await w.evaluate(() => (chrome.runtime.getManifest().host_permissions || []).some((h) => h.startsWith('http://127.0.0.1:45678')));
+          ids[enriched ? 'enriched' : 'simple'] = { id, target, worker: w };
         }
         if (!ids.enriched || !ids.simple) await sleep(300);
       }

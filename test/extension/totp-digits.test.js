@@ -6,7 +6,7 @@
 // n'est pas enregistré) ; auth-manager.js est remplacé par un double qui renvoie la réponse
 // de /api/totp/<clé>.
 // Lancement : node --test test/extension/totp-digits.test.js
-'use strict';
+'use strict'; // eslint-disable-line strict -- script CommonJS exécuté par node --test, pas un module ES
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

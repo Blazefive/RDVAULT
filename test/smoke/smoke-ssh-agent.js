@@ -16,6 +16,8 @@
 // session inconnue ou d'un autre jeton → 404 identique, pas de limitation de débit authentifiée.
 // Fin d'un shell sur ERREUR : code toujours en CHAÎNE (/ssh/status, audit, réponses d'erreur de /ssh), y compris
 // la raison NUMÉRIQUE d'un SSH_MSG_DISCONNECT distant (ssh2 : err.code = 2), ECONNRESET et SSH_CONNECTION_LOST.
+// Masquage de `mvault get` sans --reveal (VRAI mvault) : champs personnalisés protégés, phrase de passe SSH,
+// contenu des pièces jointes — mêmes règles que l'interface.
 'use strict'; // eslint-disable-line strict -- script CommonJS exécuté par Electron (pas un module ES) : mode strict voulu
 const { app } = require('electron');
 const path = require('path');
@@ -736,6 +738,40 @@ app.whenReady().then(async () => {
     //        VRAI mvault : raison numérique affichée en clair, code de sortie 1 (coupure, pas une fin normale)
     m = await runMvaultShell(sshArgs(sshPort), SESSION_FILE, (ch) => ch.stdin.write('drop-disconnect\n'));
     check(m.ready && m.code === 1 && /interrompue par RDVAULT \(2\)/.test(m.stderr), `mvault shell : DISCONNECT distant (raison 2) -> message + code 1 (exit=${m.code}, stderr=${JSON.stringify(otherLines(m.stderr))})`);
+    cli.stopCLIServer();
+
+    // (CLI-6) VRAI `mvault get` sans --reveal sur une entrée à la forme de l'application (vaultApi.readSecretV2) :
+    //        mêmes règles de masquage que l'interface — valeur des champs personnalisés PROTÉGÉS masquée (leur NOM
+    //        reste affiché), phrase de passe d'une clé SSH (stockée dans `username`) et contenu des pièces jointes
+    //        masqués. Avant : le nom du champ (« key ») était masqué et la valeur protégée affichée en clair.
+    const UI_SECRETS = {
+      'cle-ui': { name: 'cle-ui', username: 'phrase-SSH-tres-secrete', password: rsaPem, url: 'ssh-ed25519 AAAA… deploy', website: '', notes: 'note visible', tags: 'prod', Port: '', entryType: 'ssh',
+        customFields: [{ key: 'Jeton API', value: 'sk-live-TRES-SECRET', protected: true }, { key: 'Environnement', value: 'production', protected: false }],
+        attachments: [{ name: 'id_ed25519', type: 'application/octet-stream', size: 6, data: 'c2VjcmV0' }] },
+      'web-ui': { name: 'web-ui', username: 'alice', password: 'Mdp-Web-S3cret', url: 'https://exemple.test', website: '', notes: '', tags: '', Port: '', entryType: 'secret',
+        customFields: [{ key: 'password', value: 'mdp-dans-un-champ-non-protege', protected: false }, { key: 'Ville', value: 'Paris', protected: false }], attachments: [] },
+    };
+    const readFnUi = async (engine, p) => (engine === 'test' && UI_SECRETS[p] ? { success: true, data: UI_SECRETS[p] } : { success: false, error: 'introuvable' });
+    await cli.startCLIServer(fakeWin, readFnUi, async () => [{ name: 'test', version: 2, type: 'kv' }], null, []);
+    m = await runMvault(['get', 'test/cle-ui'], SESSION_FILE);
+    let shown = null;
+    try { shown = JSON.parse(m.stdout); } catch { /* sortie non JSON : échec ci-dessous */ }
+    const cf = shown?.customFields || [];
+    check(m.code === 0 && shown && !m.stdout.includes('phrase-SSH-tres-secrete') && shown.username === '********',
+      `mvault get (SSH) : phrase de passe (username d'une entrée ssh) masquée (exit=${m.code}, username=${JSON.stringify(shown?.username)})`);
+    check(!m.stdout.includes('sk-live-TRES-SECRET') && cf[0]?.key === 'Jeton API' && cf[0]?.value === '********',
+      `mvault get : champ personnalisé PROTÉGÉ -> nom affiché, valeur masquée (${JSON.stringify(cf[0])})`);
+    check(cf[1]?.key === 'Environnement' && cf[1]?.value === 'production', 'mvault get : champ personnalisé non protégé affiché (comme dans l\'interface)');
+    check(!m.stdout.includes('c2VjcmV0') && shown?.attachments?.[0]?.data === '********' && shown.attachments[0].name === 'id_ed25519',
+      'mvault get : contenu des pièces jointes masqué, nom affiché');
+    check(!m.stdout.includes('PRIVATE KEY') && shown?.password === '********' && shown?.notes === 'note visible', 'mvault get : clé privée (password) masquée, champs ordinaires affichés');
+    m = await runMvault(['get', 'test/web-ui'], SESSION_FILE);
+    check(m.code === 0 && !m.stdout.includes('Mdp-Web-S3cret') && !m.stdout.includes('mdp-dans-un-champ-non-protege') && /"username": "alice"/.test(m.stdout) && /"value": "Paris"/.test(m.stdout),
+      'mvault get (entrée ordinaire) : username affiché ; champ personnalisé nommé « password » masqué même non protégé');
+    m = await runMvault(['get', 'test/cle-ui', '--reveal'], SESSION_FILE);
+    check(m.code === 0 && m.stdout.includes('sk-live-TRES-SECRET') && m.stdout.includes('phrase-SSH-tres-secrete') && m.stdout.includes('c2VjcmV0'), 'mvault get --reveal : tout affiché en clair (choix explicite)');
+    m = await runMvault(['get', 'test/cle-ui', '-k', 'username'], SESSION_FILE);
+    check(m.code === 0 && m.stdout === 'phrase-SSH-tres-secrete', 'mvault get -k username : valeur brute (usage en $(...)) inchangée');
     cli.stopCLIServer();
 
     for (const s of muteSockets) { try { s.destroy(); } catch {} }

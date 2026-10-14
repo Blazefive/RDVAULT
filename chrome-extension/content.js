@@ -60,6 +60,9 @@
   let credentialsList = [];
   let credentialsLoadedAt = 0;
   let credentialsLoadPromise = null;
+  // Dernier chargement en ÉCHEC (non connecté à Vault, Vault injoignable) et son message
+  let credentialsLoadFailed = false;
+  let credentialsLoadError = '';
 
   let activeDropdown = null;
   let activeDropdownField = null;
@@ -73,6 +76,8 @@
 
   let uiHost = null;
   let uiRoot = null;
+  // Région role="status" du shadow root : annonces aux lecteurs d'écran (ouverture du menu)
+  let liveRegion = null;
 
   // ============================================================================
   // PATTERNS DE DÉTECTION
@@ -199,6 +204,23 @@
     .vault-autofill-no-results { color: #9ca3af; }
     .vault-autofill-loading { color: #3b82f6; }
     .vault-autofill-error { color: #dc2626; }
+    /* Entrée active au clavier (focus) */
+    .vault-autofill-item:focus,
+    .vault-autofill-item[aria-selected="true"] {
+      background: #eff6ff;
+      outline: 2px solid #3b82f6;
+      outline-offset: -2px;
+    }
+    /* Région lue par les lecteurs d'écran, invisible à l'écran */
+    .vault-autofill-live {
+      position: fixed;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
   `;
 
   // ============================================================================
@@ -738,9 +760,19 @@
     uiHost.style.cssText = 'all: initial; position: static; display: block; width: 0; height: 0; overflow: visible;';
     uiRoot = uiHost.attachShadow({ mode: 'closed' });
     uiRoot.appendChild(createElement('style', {}, STYLES));
+    // Région présente dès le départ : un lecteur d'écran n'annonce que ses CHANGEMENTS
+    liveRegion = createElement('div', { className: 'vault-autofill-live', role: 'status', 'aria-live': 'polite' });
+    uiRoot.appendChild(liveRegion);
 
     if (mountPoint) mountPoint.appendChild(uiHost);
     return uiRoot;
+  }
+
+  // Annonce un texte aux lecteurs d'écran (vidée puis remplie : répétée à chaque ouverture)
+  function announce(text) {
+    if (!liveRegion) return;
+    liveRegion.textContent = '';
+    setTimeout(() => { if (liveRegion) liveRegion.textContent = text; }, 50);
   }
 
   function positionIcon(field, icon) {
@@ -796,7 +828,9 @@
     if (existingIcon && existingIcon.isConnected) return existingIcon;
 
     const root = ensureUiRoot();
-    const icon = createElement('div', { className: 'vault-autofill-icon', title: msg('autofillIconTitle', 'Auto-remplir avec Vault') }, 'V');
+    // Bouton nommé pour les lecteurs d'écran ; au clavier, le menu s'ouvre depuis le champ
+    const iconLabel = msg('autofillIconTitle', 'Auto-remplir avec Vault');
+    const icon = createElement('div', { className: 'vault-autofill-icon', title: iconLabel, role: 'button', 'aria-label': iconLabel }, 'V');
 
     root.appendChild(icon);
     iconByField.set(field, icon);
@@ -815,8 +849,9 @@
         return;
       }
 
-      const credentials = await loadCredentials(false);
-      createDropdown(field, credentials);
+      const credentials = await loadCredentials(credentialsList.length === 0);
+      // Échec (non connecté à Vault, Vault injoignable) : le dire, au lieu de « aucun identifiant »
+      createDropdown(field, credentials, credentialsLoadFailed ? credentialsLoadError : '');
     });
 
     return icon;
@@ -826,25 +861,79 @@
     const header = dropdown.firstChild;
     clearChildren(dropdown);
     if (header) dropdown.appendChild(header);
-    dropdown.appendChild(createElement('div', { className }, text));
+    // Erreur annoncée immédiatement (alert), chargement poliment (status)
+    const role = className === 'vault-autofill-error' ? 'alert' : 'status';
+    dropdown.appendChild(createElement('div', { className, role }, text));
   }
 
-  function createDropdown(field, credentials) {
+  // Entrées du menu (role="option")
+  function menuItems(dropdown) {
+    return dropdown ? Array.from(dropdown.querySelectorAll('.vault-autofill-item')) : [];
+  }
+
+  // Clavier dans le menu (focus sur une entrée) : Flèches / Origine / Fin pour se déplacer, Entrée
+  // ou Espace pour choisir, Échap pour fermer et revenir au champ, Tab pour fermer et poursuivre la
+  // navigation depuis le champ. Seuls les événements réels (isTrusted) comptent.
+  function onMenuKeydown(e, dropdown, field, credentials) {
+    if (!e.isTrusted) return;
+    const items = menuItems(dropdown);
+    if (!items.length) return;
+    const index = items.indexOf(uiRoot ? uiRoot.activeElement : null);
+    const focusItem = (i) => items[(i + items.length) % items.length].focus();
+    switch (e.key) {
+      case 'ArrowDown': focusItem(index + 1); break;
+      case 'ArrowUp': focusItem(index < 0 ? -1 : index - 1); break;
+      case 'Home': focusItem(0); break;
+      case 'End': focusItem(-1); break;
+      case 'Enter':
+      case ' ':
+        if (index < 0) return;
+        // preventDefault (ci-dessous) : la touche n'atteint pas le champ (pas de soumission du formulaire vide)
+        try { field.focus({ preventScroll: true }); } catch (err) { /* champ retiré */ }
+        selectCredential(credentials[index], dropdown, field);
+        break;
+      case 'Escape':
+        removeDropdown();
+        try { field.focus({ preventScroll: true }); } catch (err) { /* champ retiré */ }
+        break;
+      case 'Tab':
+        // Retour au champ SANS bloquer la touche : le navigateur avance (ou recule) depuis le champ
+        removeDropdown();
+        try { field.focus({ preventScroll: true }); } catch (err) { /* champ retiré */ }
+        e.stopPropagation();
+        return;
+      default:
+        return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function createDropdown(field, credentials, errorMessage = '') {
     removeDropdown();
 
     const root = ensureUiRoot();
     const dropdown = createElement('div', { className: 'vault-autofill-dropdown', ...uiLangAttrs() });
-    dropdown.appendChild(createElement('div', { className: 'vault-autofill-header' }, msg('autofillHeader', 'Identifiants Vault')));
+    const headerText = msg('autofillHeader', 'Identifiants Vault');
+    // En-tête (repris comme nom de la liste pour les lecteurs d'écran)
+    dropdown.appendChild(createElement('div', { className: 'vault-autofill-header', 'aria-hidden': 'true' }, headerText));
 
-    if (!credentials || credentials.length === 0) {
-      dropdown.appendChild(createElement('div', { className: 'vault-autofill-no-results' },
+    if (errorMessage) {
+      dropdown.appendChild(createElement('div', { className: 'vault-autofill-error', role: 'alert' }, errorMessage));
+    } else if (!credentials || credentials.length === 0) {
+      dropdown.appendChild(createElement('div', { className: 'vault-autofill-no-results', role: 'status' },
         msg('autofillNoResults', 'Aucun identifiant trouvé pour ce site')));
     } else {
+      // Liste accessible : listbox / option, focus déplaçable au clavier (tabindex -1)
+      const list = createElement('div', { className: 'vault-autofill-list', role: 'listbox', 'aria-label': headerText });
       credentials.forEach(cred => {
-        const item = createElement('div', { className: 'vault-autofill-item' });
-        item.appendChild(createElement('div', { className: 'vault-autofill-item-name' }, cred.name || msg('autofillUnnamed', 'Sans nom')));
-        item.appendChild(createElement('div', { className: 'vault-autofill-item-username' },
-          cred.username || msg('autofillNoUsername', '(pas de username)')));
+        const name = cred.name || msg('autofillUnnamed', 'Sans nom');
+        const user = cred.username || msg('autofillNoUsername', '(pas de username)');
+        const item = createElement('div', {
+          className: 'vault-autofill-item', role: 'option', tabindex: '-1', 'aria-selected': 'false', 'aria-label': name + ', ' + user
+        });
+        item.appendChild(createElement('div', { className: 'vault-autofill-item-name' }, name));
+        item.appendChild(createElement('div', { className: 'vault-autofill-item-username' }, user));
 
         item.addEventListener('click', (e) => {
           // SÉCURITÉ: ignorer les événements synthétiques
@@ -853,9 +942,14 @@
           e.preventDefault();
           selectCredential(cred, dropdown, field);
         });
+        item.addEventListener('focus', () => item.setAttribute('aria-selected', 'true'));
+        item.addEventListener('blur', () => item.setAttribute('aria-selected', 'false'));
 
-        dropdown.appendChild(item);
+        list.appendChild(item);
       });
+      list.addEventListener('keydown', (e) => onMenuKeydown(e, dropdown, field, credentials));
+      dropdown.appendChild(list);
+      announce(msg('autofillMenuAnnounce', 'Identifiants Vault disponibles : $1. Flèche bas pour choisir, Échap pour fermer.', String(credentials.length)));
     }
 
     root.appendChild(dropdown);
@@ -995,17 +1089,24 @@
     if (credentialsLoadPromise) return credentialsLoadPromise;
 
     credentialsLoadPromise = (async () => {
+      let loaded = false;
+      let loadError = '';
       try {
         const response = await chrome.runtime.sendMessage({ type: 'GET_CREDENTIALS' });
         if (response && response.success && Array.isArray(response.credentials)) {
           credentialsList = response.credentials.map(toCredentialSummary).filter(Boolean);
+          loaded = true;
         } else {
           credentialsList = [];
+          // Raison de l'échec, traduite par le service worker (non connecté, Vault injoignable…)
+          if (response && typeof response.error === 'string') loadError = response.error.slice(0, 300);
         }
       } catch (err) {
         credentialsList = [];
       } finally {
         credentialsLoadedAt = Date.now();
+        credentialsLoadFailed = !loaded;
+        credentialsLoadError = loaded ? '' : (loadError || msg('autofillFetchFailed', 'Impossible de récupérer l\'identifiant'));
         credentialsLoadPromise = null;
       }
       return credentialsList;
@@ -1095,9 +1196,45 @@
       removeDropdown();
     }, true);
 
+    // Clavier depuis la page. Les touches pressées DANS le menu (shadow root fermé, cible
+    // retargetée sur l'hôte) sont traitées par onMenuKeydown.
+    //  - Échap : ferme le menu ;
+    //  - champ d'origine, menu ouvert : Flèche bas / haut entrent dans la liste, Tab la ferme ;
+    //  - champ détecté, menu fermé : Alt+Flèche bas l'ouvre (liste en cache).
     document.addEventListener('keydown', (e) => {
       if (!e.isTrusted) return;
-      if (e.key === 'Escape' && activeDropdown) removeDropdown();
+      if (uiHost && e.target === uiHost) return;
+      const target = typeof e.composedPath === 'function' ? e.composedPath()[0] : e.target;
+      if (activeDropdown) {
+        if (e.key === 'Escape') {
+          removeDropdown();
+          return;
+        }
+        if (target !== activeDropdownField) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          const items = menuItems(activeDropdown);
+          if (!items.length) return;
+          e.preventDefault();
+          e.stopPropagation();
+          (e.key === 'ArrowDown' ? items[0] : items[items.length - 1]).focus();
+        } else if (e.key === 'Tab') {
+          removeDropdown();
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown' && e.altKey && target && processedFields.has(target) && credentialsList.length > 0) {
+        e.preventDefault();
+        createDropdown(target, credentialsList);
+      }
+    }, true);
+
+    // Focus parti ailleurs dans la page (ni le champ du menu, ni l'UI) : menu fermé
+    document.addEventListener('focusin', (e) => {
+      if (!activeDropdown) return;
+      if (uiHost && e.target === uiHost) return;
+      const target = typeof e.composedPath === 'function' ? e.composedPath()[0] : e.target;
+      if (target === activeDropdownField) return;
+      removeDropdown();
     }, true);
 
     const onViewportChange = () => {

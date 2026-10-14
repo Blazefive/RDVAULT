@@ -10,7 +10,7 @@ const https = require('https');
 const net = require('net');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { appWrapperPath, loginInApp, removeTempDir, waitSyncPortFree, assertSyncPortOwner, SYNC_PORT } = require('./app-helpers');
+const { appWrapperPath, loginInApp, removeTempDir, portFree, waitSyncPortFree, assertSyncPortOwner, SYNC_PORT } = require('./app-helpers');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const E2E = __dirname;
@@ -111,6 +111,23 @@ async function pickCredential(page, fieldSelector, text) {
 
 async function fieldValue(page, selector) {
   return page.$eval(selector, el => el.value);
+}
+
+/** Arbre d'accessibilité de Chrome (shadow roots fermés compris), à plat */
+async function axNodes(page) {
+  const out = [];
+  (function walk(n) { if (!n) return; out.push(n); (n.children || []).forEach(walk); })(await page.accessibility.snapshot({ interestingOnly: false }));
+  return out;
+}
+async function waitAx(page, pred, timeoutMs = 5000) {
+  const start = Date.now();
+  let nodes = [];
+  while (Date.now() - start < timeoutMs) {
+    nodes = await axNodes(page);
+    if (pred(nodes)) return nodes;
+    await sleep(150);
+  }
+  return nodes;
 }
 
 /** TOTP RFC 6238 (SHA1, période 30 s, `digits` chiffres) pour calculer le code attendu */
@@ -531,6 +548,51 @@ async function main() {
     check(/^\d{8}$/.test(otp8), 'TOTP 8 chiffres: code à 8 chiffres saisi automatiquement (' + (otp8 || 'vide') + ')');
     check(otp8 === totp(TOTP8_B32, 8) || otp8 === totp(TOTP8_B32, 8, Date.now() - 30000), 'TOTP 8 chiffres: code saisi conforme à la RFC 6238');
 
+    // 7p. EXT-22 : menu utilisable au CLAVIER et par les lecteurs d'écran (vrais événements clavier,
+    // arbre d'accessibilité de Chrome) : Tab → menu, liste/entrées nommées, Flèche bas, Entrée →
+    // remplissage SANS soumission du formulaire vide ; Échap → focus rendu au champ ; Alt+Flèche bas
+    // rouvre ; focus parti ailleurs → menu fermé
+    await page.goto('https://localhost:8443/classic.html', { waitUntil: 'load' });
+    await sleep(1500);
+    const subsBeforeKbd = ((await siteReq('/__submissions')).json || []).length;
+    await page.keyboard.press('Tab'); // premier élément focalisable : #email
+    const kbdField = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    let ax = await waitAx(page, (ns) => ns.some((n) => n.role === 'option'));
+    const kbdList = ax.find((n) => n.role === 'listbox');
+    const kbdOptions = ax.filter((n) => n.role === 'option').map((n) => n.name);
+    check(kbdField === 'email' && !!kbdList && kbdList.name === 'Identifiants RDVAULT', 'clavier: Tab → champ identifiant, menu exposé comme liste nommée « Identifiants RDVAULT » (' + kbdField + ', ' + (kbdList && kbdList.name) + ')');
+    check(kbdOptions.includes('classic-site, alice@example.com') && kbdOptions.includes('localhost-admin, admin'), 'clavier: entrées nommées « nom, identifiant » ' + JSON.stringify(kbdOptions));
+    check(ax.some((n) => /^Auto-remplir avec RDVAULT$/.test(n.name || '') && n.role === 'button'), 'lecteur d\'écran: icône exposée comme bouton nommé');
+    await page.keyboard.press('ArrowDown');
+    ax = await waitAx(page, (ns) => ns.some((n) => n.role === 'option' && n.focused));
+    const firstFocused = (ax.find((n) => n.role === 'option' && n.focused) || {}).name || '';
+    // Entrée sur l'entrée alice (la liste suit l'ordre renvoyé par l'app)
+    if (!/alice/.test(firstFocused)) await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await sleep(1200);
+    check(await fieldValue(page, '#email') === 'alice@example.com' && await fieldValue(page, '#password') === 'P@ss-classic-1', 'clavier: Flèche bas + Entrée → identifiant et mot de passe remplis');
+    const subsAfterKbd = ((await siteReq('/__submissions')).json || []).length;
+    check(subsAfterKbd === subsBeforeKbd, 'clavier: Entrée dans le menu ne soumet pas le formulaire (' + subsBeforeKbd + ' → ' + subsAfterKbd + ')');
+    await page.goto('https://localhost:8443/classic.html', { waitUntil: 'load' });
+    await sleep(1500);
+    await page.keyboard.press('Tab');
+    await waitAx(page, (ns) => ns.some((n) => n.role === 'option'));
+    await page.keyboard.press('ArrowDown');
+    await waitAx(page, (ns) => ns.some((n) => n.role === 'option' && n.focused));
+    await page.keyboard.press('Escape');
+    ax = await waitAx(page, (ns) => !ns.some((n) => n.role === 'option'));
+    const afterEsc = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    check(!ax.some((n) => n.role === 'option') && afterEsc === 'email', 'clavier: Échap → menu fermé, focus rendu au champ (' + afterEsc + ')');
+    await page.keyboard.down('Alt'); await page.keyboard.press('ArrowDown'); await page.keyboard.up('Alt');
+    ax = await waitAx(page, (ns) => ns.some((n) => n.role === 'option'));
+    check(ax.some((n) => n.role === 'option'), 'clavier: Alt+Flèche bas → menu rouvert');
+    await page.keyboard.press('Tab'); // → mot de passe (menu proposé sur ce champ aussi)
+    await page.keyboard.press('Tab'); // → bouton « Sign in »
+    await sleep(500);
+    ax = await axNodes(page);
+    const kbdActive = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    check(kbdActive === 'submit' && !ax.some((n) => n.role === 'option'), 'clavier: focus sur le bouton de la page → menu fermé, il ne masque plus la page (' + kbdActive + ')');
+
     await page.close();
 
     // 8. Extension « simple » (chrome-extension/content.js) : mêmes règles de détection. Contexte de
@@ -587,6 +649,37 @@ async function main() {
     check((await shadowNodes(simplePage, 'vault-autofill-icon')).length === 0, 'simple, chemin d\'action /account/register: aucune icône (inscription)');
 
     await simpleCtx.close();
+
+    // 9. EXT-23 : RDVAULT FERMÉ alors que la page de connexion est ouverte : le menu le dit (« RDVAULT est
+    // fermé ou injoignable ») au lieu de « Erreur de communication » / « Aucun identifiant trouvé pour ce site »
+    const closedPage = await browser.newPage();
+    await closedPage.setViewport({ width: 1180, height: 800 });
+    await closedPage.goto('https://localhost:8443/classic.html', { waitUntil: 'load' });
+    const closedIcons = await waitShadowNodes(closedPage, 'vault-autofill-icon', 1, 8000);
+    check(closedIcons.length >= 1, 'RDVAULT fermé: icône affichée tant que l\'application est ouverte');
+    appProc.kill();
+    for (let i = 0; i < 40 && !(await portFree(SYNC_PORT)); i++) await sleep(250);
+    check(await portFree(SYNC_PORT), 'RDVAULT fermé: application de test arrêtée (port ' + SYNC_PORT + ' libéré)');
+    // [b] Entrée encore en cache dans la page (liste chargée il y a moins de 60 s) puis choisie
+    if (closedIcons[0]) await closedPage.mouse.click(closedIcons[0].x, closedIcons[0].y);
+    const cachedItems = await waitShadowNodes(closedPage, 'vault-autofill-item', 1, 4000);
+    if (cachedItems[0]) await closedPage.mouse.click(cachedItems[0].x, cachedItems[0].y);
+    let closedErr = await waitShadowNodes(closedPage, 'vault-autofill-error', 1, 8000);
+    check(closedErr.length === 1 && closedErr[0].html.includes('RDVAULT est fermé ou injoignable') && closedErr[0].html.includes('role="alert"'),
+      'RDVAULT fermé: entrée choisie → « RDVAULT est fermé ou injoignable… » annoncé (role=alert) (' + (closedErr[0] ? closedErr[0].html.replace(/<[^>]+>/g, '').slice(0, 90) : 'aucun message') + ')');
+    // [a] Onglet masqué puis revenu (liste purgée), clic sur l'icône : même explication, pas « aucun identifiant »
+    await sleep(2600); // fermeture automatique du message d'erreur
+    const otherTab = await browser.newPage();
+    await otherTab.bringToFront(); await sleep(600);
+    await closedPage.bringToFront(); await sleep(600);
+    await otherTab.close();
+    const iconsAgain = await waitShadowNodes(closedPage, 'vault-autofill-icon', 1, 4000);
+    if (iconsAgain[0]) await closedPage.mouse.click(iconsAgain[0].x, iconsAgain[0].y);
+    closedErr = await waitShadowNodes(closedPage, 'vault-autofill-error', 1, 12000);
+    const noResults = await shadowNodes(closedPage, 'vault-autofill-no-results');
+    check(closedErr.length === 1 && closedErr[0].html.includes('RDVAULT est fermé ou injoignable') && noResults.length === 0,
+      'RDVAULT fermé: clic sur l\'icône → « RDVAULT est fermé ou injoignable… », plus « Aucun identifiant trouvé pour ce site » (' + (closedErr[0] ? closedErr[0].html.replace(/<[^>]+>/g, '').slice(0, 90) : (noResults[0] ? noResults[0].html.replace(/<[^>]+>/g, '') : 'aucun menu')) + ')');
+    await closedPage.close();
   } catch (err) {
     console.log('FAIL exception: ' + ((err && err.stack) || err));
     failures++;

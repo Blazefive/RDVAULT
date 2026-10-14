@@ -162,12 +162,19 @@ export function createExtensionSync(getLatest) {
     st.inFlight.set(engine.name, ac);
     const seqAtStart = st.seq;
     try {
-      const r = await readAllSecrets(getLatest().vaultApi, [engine], {
-        signal: ac.signal,
-        priority: 'low',
-        mapSecret: (secret) => toExtensionEntry(secret, engine.name),
-        keyFilter: known ? (e, keys) => keys.filter(k => !known.has(k)) : undefined,
-      });
+      // PERFORMANCE : lecture par les listes gardées du tableau (useSecrets.readEnginesWithCache) quand elle
+      // est fournie — chaque entrée n'est lue qu'une fois par session pour le tableau, la recherche et
+      // l'extension (ensuite : nouvelles entrées et entrées écrites seulement, journal des écritures).
+      const readEngines = getLatest().readEngines;
+      const viaCache = typeof readEngines === 'function';
+      const r = viaCache
+        ? await readEngines([engine], { signal: ac.signal, priority: 'low' })
+        : await readAllSecrets(getLatest().vaultApi, [engine], {
+          signal: ac.signal,
+          priority: 'low',
+          mapSecret: (secret) => toExtensionEntry(secret, engine.name),
+          keyFilter: known ? (e, keys) => keys.filter(k => !known.has(k)) : undefined,
+        });
       if (r.aborted || ac.signal.aborted || !current(st, startToken)) return { failures: 0, changed: false };
       const previous = st.byEngine.get(engine.name);
       // Mise à jour plus récente arrivée pendant la lecture (relecture du tableau) : elle prime
@@ -181,7 +188,10 @@ export function createExtensionSync(getLatest) {
       const listed = r.listedKeys[engine.name] || [];
       const failedNames = new Set(r.failedKeys.map(f => f.key));
       let entries;
-      if (known && previous) {
+      if (viaCache) {
+        // Entrées complètes du coffre (gardées + relues) : celles en échec gardent leur dernière version
+        entries = mergeWithPrevious(r.secrets.map(sec => toExtensionEntry(sec, engine.name)), failedNames, previous);
+      } else if (known && previous) {
         const listedSet = new Set(listed);
         entries = [...previous.entries.filter(e => listedSet.has(e.name)), ...r.secrets];
       } else {
@@ -347,6 +357,8 @@ export function createExtensionSync(getLatest) {
  *   de façon SYNCHRONE par useAuth (connexion / déconnexion / expiration)
  * @param {Function} [params.isSecretRbiOnly] - (nomSecret, coffre) => true si le secret est
  *   « RBI uniquement » : il n'est alors ni envoyé à l'extension ni servi à la CLI
+ * @param {Object} [params.readEnginesRef] - { current } lecture multi-coffres à listes gardées
+ *   (useSecrets.readEnginesWithCache) : lectures de fond partagées avec le tableau ; absente, readAllSecrets
  */
 export function useSync({
   vaultApi,
@@ -359,7 +371,8 @@ export function useSync({
   totpRateLimit,
   showToast,
   sessionTokenRef,
-  isSecretRbiOnly
+  isSecretRbiOnly,
+  readEnginesRef
 }) {
   const { baseHeaders, axiosConfig, readSecretV2, readSecretV1, listKeysV2, listKeysV1 } = vaultApi;
   const i18n = useOptionalTranslation();
@@ -387,7 +400,10 @@ export function useSync({
 
   // Valeurs du dernier rendu, lues par la synchro incrémentale (fonctions stables)
   const latestRef = useRef(null);
-  latestRef.current = { vaultApi, token, vaultUrl, authUser, secretEngines, isRbiOnly, isSessionCurrent, showToast, t: i18n?.t };
+  latestRef.current = {
+    vaultApi, token, vaultUrl, authUser, secretEngines, isRbiOnly, isSessionCurrent, showToast, t: i18n?.t,
+    readEngines: readEnginesRef?.current,
+  };
   const extensionSyncRef = useRef(null);
   if (!extensionSyncRef.current) extensionSyncRef.current = createExtensionSync(() => latestRef.current);
   const extensionSync = extensionSyncRef.current;

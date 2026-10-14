@@ -15,10 +15,13 @@ import { getPasswordStrength, STRENGTH_LABEL_KEYS } from '../utils/passwordStren
 import { useTranslation } from '../i18n';
 import { partialListMessages, unreadableCount } from '../hooks/useTags';
 
+// Carte statistique servant de filtre : bouton bascule (UI-38 : aria-pressed indique le filtre
+// actif aux technologies d'assistance ; avant, seule la bordure colorée le signalait)
 function StatCard({ value, label, color, active, onClick }) {
   return (
     <button
       type="button"
+      aria-pressed={!!active}
       onClick={onClick}
       style={{
         flex: 1, minWidth: 90, cursor: 'pointer', textAlign: 'center',

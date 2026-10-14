@@ -12,8 +12,8 @@
  * - Mémorisation (sans secret) du dernier identifiant utilisé pour le TOTP multi-page
  *
  * Le filtrage des secrets par site est effectué côté Desktop : le hostname
- * transmis au serveur est TOUJOURS celui de l'onglet (sender.tab.url), jamais
- * une valeur fournie par le content script.
+ * transmis au serveur est TOUJOURS celui rapporté par Chrome (sender.tab.url pour
+ * la page, sender.url pour une iframe), jamais une valeur fournie par le content script.
  *
  * @author Vault Autofill Team
  * @version 2.1.0
@@ -275,7 +275,7 @@ async function getSecretsForHost(hostname) {
 
     if (!response.ok) {
       console.warn('[Vault BG] Erreur récupération secrets:', response.status);
-      return null;
+      return { error: desktopFailureMessage(response.status) };
     }
 
     const data = await response.json();
@@ -289,8 +289,38 @@ async function getSecretsForHost(hostname) {
     return data.secrets.filter(isValidSecretSummary).map(toSecretSummary);
   } catch (err) {
     console.warn('[Vault BG] Erreur récupération secrets:', err.message);
-    return null;
+    return { error: desktopFailureMessage(0) };
   }
+}
+
+/**
+ * Message compréhensible pour un échec d'échange avec RDVAULT (EXT-23), au lieu de « Erreur HTTP 401 »
+ * ou d'une liste vide prise pour « aucun identifiant » :
+ * - 401 (« Not authenticated » : coffre verrouillé, y compris après le renouvellement du token) ;
+ * - 429 (limite de débit du serveur de synchronisation) ;
+ * - 0 : application injoignable ou token impossible à obtenir (fermée, appairage refusé).
+ *
+ * @param {number} status - Code HTTP, 0 pour une erreur réseau / d'authentification
+ * @returns {string}
+ */
+function desktopFailureMessage(status) {
+  if (status === 401) {
+    return i18nMessage('bgErrVaultLocked', 'RDVAULT est verrouillé : déverrouillez l\'application, puis réessayez.');
+  }
+  if (status === 429) {
+    return i18nMessage('bgErrRateLimited', 'Trop de demandes envoyées à RDVAULT : réessayez dans un instant.');
+  }
+  if (status === 0) {
+    if (typeof authManager !== 'undefined' && authManager && typeof authManager.isPairingDenied === 'function' && authManager.isPairingDenied()) {
+      return i18nMessage('popupPairingDeniedTitle', 'Accès refusé dans RDVAULT');
+    }
+    // Demande d'appairage restée sans réponse (EXT-25) : ce n'est ni un refus ni une application fermée
+    if (typeof authManager !== 'undefined' && authManager && typeof authManager.isPairingExpired === 'function' && authManager.isPairingExpired()) {
+      return i18nMessage('popupPairingExpiredTitle', 'Demande d\'appairage expirée : rouvrez l\'extension pour réessayer');
+    }
+    return i18nMessage('bgErrVaultClosed', 'RDVAULT est fermé ou injoignable : ouvrez l\'application, puis réessayez.');
+  }
+  return i18nMessage('bgErrHttp', 'Erreur HTTP $1', status);
 }
 
 /**
@@ -303,20 +333,26 @@ async function getSecretsForHost(hostname) {
  */
 async function getSecretForHost(hostname, engine, name) {
   try {
-    await ensureAuthManagerReady();
-
     const query = `host=${encodeURIComponent(hostname)}` +
       `&engine=${encodeURIComponent(engine)}` +
       `&name=${encodeURIComponent(name)}`;
 
-    const response = await authManager.authenticatedFetch(`${DESKTOP_API_BASE}/api/secret?${query}`);
+    let response;
+    try {
+      await ensureAuthManagerReady();
+      response = await authManager.authenticatedFetch(`${DESKTOP_API_BASE}/api/secret?${query}`);
+    } catch (err) {
+      // Application fermée, injoignable ou token impossible à obtenir : message explicite
+      console.warn('[Vault BG] RDVAULT injoignable:', err.message);
+      return { success: false, error: desktopFailureMessage(0) };
+    }
 
     if (response.status === 404) {
       return { success: false, error: i18nMessage('bgErrNotFound', 'Identifiant introuvable pour ce site') };
     }
 
     if (!response.ok) {
-      return { success: false, error: i18nMessage('bgErrHttp', 'Erreur HTTP $1', response.status) };
+      return { success: false, error: desktopFailureMessage(response.status) };
     }
 
     const data = await response.json();
@@ -405,7 +441,8 @@ const SENSITIVE_MESSAGE_TYPES = [
   'GET_LAST_CREDENTIAL',
   'PASSKEY_STORE',
   'PASSKEY_LIST',
-  'PASSKEY_UPDATE_COUNT'
+  'PASSKEY_UPDATE_COUNT',
+  'PASSKEY_STATUS'
 ];
 
 // ========================================
@@ -466,6 +503,24 @@ async function handlePasskeyList(request, sender) {
     return { success: false, passkeys: [] };
   }
 }
+/**
+ * État de RDVAULT pour la fenêtre passkey (EXT-26) : ouvert ET déverrouillé ? (GET /sync, quota
+ * « lecture » du serveur de synchronisation). Aucune passkey ni clé n'est lue : la fenêtre de
+ * création n'active « Créer dans RDVAULT » que si l'enregistrement peut aboutir.
+ *
+ * @returns {Promise<{success: boolean, ready: boolean}>}
+ */
+async function handlePasskeyStatus() {
+  try {
+    const response = await authManager.authenticatedFetch(`${DESKTOP_API_BASE}/sync`);
+    if (!response.ok) return { success: true, ready: false };
+    const data = await response.json().catch(() => ({}));
+    return { success: true, ready: !!(data && data.connected === true) };
+  } catch (err) {
+    return { success: true, ready: false };
+  }
+}
+
 async function handlePasskeyUpdateCount(request, sender) {
   const { rpId, credentialId, signCount } = request;
   if (!passkeyRpAllowedForSender(rpId, sender)) return { success: false };
@@ -586,6 +641,8 @@ async function handleMessage(request, sender) {
       return await handlePasskeyList(request, sender);
     case 'PASSKEY_UPDATE_COUNT':
       return await handlePasskeyUpdateCount(request, sender);
+    case 'PASSKEY_STATUS':
+      return await handlePasskeyStatus();
 
     // -------------------------------------------------------------------------
     // Message non reconnu
@@ -627,6 +684,17 @@ async function handleCheckAuth() {
 
       if (authManager.isPairingPending()) {
         return { authenticated: false, pairing: 'pending', reachable: true };
+      }
+
+      // Demande expirée sans réponse (EXT-25) : RDVAULT est joignable, il faut rouvrir l'extension
+      if (typeof authManager.isPairingExpired === 'function' && authManager.isPairingExpired()) {
+        return { authenticated: false, pairing: 'expired', reachable: true };
+      }
+
+      // Demande de token encore sans réponse (connexion en cours) : « Vérification... », ni
+      // « appairage envoyé » (rien ne prouve que RDVAULT l'a reçue) ni « indisponible » (EXT-25)
+      if (typeof authManager.isConnecting === 'function' && authManager.isConnecting()) {
+        return { authenticated: false, pairing: 'connecting', reachable: null };
       }
 
       if (!authManager.getToken()) {
@@ -673,10 +741,12 @@ async function handleGetCredentials(sender) {
 
   try {
     const credentials = await getSecretsForHost(hostname);
-    if (credentials === null) {
+    if (!Array.isArray(credentials)) {
       // Échec (app verrouillée, injoignable, limite de débit) : signalé comme tel pour que le
-      // content script ne le confonde pas avec « aucun identifiant » et retente
-      return { success: false, credentials: [], error: i18nMessage('bgErrUnavailableOrLocked', 'RDVAULT indisponible ou verrouillé') };
+      // content script ne le confonde pas avec « aucun identifiant », l'explique et retente
+      const error = (credentials && typeof credentials.error === 'string' && credentials.error)
+        || i18nMessage('bgErrUnavailableOrLocked', 'RDVAULT indisponible ou verrouillé');
+      return { success: false, credentials: [], error };
     }
     return { success: true, credentials };
   } catch (err) {

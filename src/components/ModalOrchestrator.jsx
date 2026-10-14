@@ -17,6 +17,7 @@ import EditSecretModalWrapper from '../EditSecretModalWrapper.jsx';
 import ShareRbiModal from '../ShareRbiModal.jsx';
 import PasswordHealthModal from './PasswordHealthModal.jsx';
 import PasskeysModal from './PasskeysModal.jsx';
+import PasswordGeneratorModal from '../PasswordGeneratorModal.jsx';
 import { encodeEnginePath, sanitizeErrorMessage } from '../utils/security';
 
 // APP-6 : délai après la dernière écriture observée avant la relecture (un import = une seule relecture)
@@ -137,6 +138,8 @@ export default function ModalOrchestrator({
   showPasswordHealth, setShowPasswordHealth, vaultApi,
   // Gestion des passkeys
   showPasskeys, setShowPasskeys, authUser,
+  // Générateur de mot de passe autonome (menu utilisateur : copie, sans fiche à remplir)
+  showPasswordGenerator, setShowPasswordGenerator,
   // Utilitaires
   restoreFocus, showToast, t,
 }) {
@@ -411,6 +414,12 @@ export default function ModalOrchestrator({
           onClose={() => { setShowPasskeys(false); returnFocus(); }}
         />
       )}
+
+      {showPasswordGenerator && (
+        <PasswordGeneratorModal
+          onClose={() => { setShowPasswordGenerator(false); returnFocus(); }}
+        />
+      )}
     </>
   );
 }
@@ -471,7 +480,8 @@ function CreateFolderInlineModal({
       if (selectedEngine.version === 2) await writeSecretV2(selectedEngine, placeholderEntry);
       else await writeSecretV1(selectedEngine, placeholderEntry);
       onClose();
-      await fetchSecrets(selectedEngine);
+      // Seul le marqueur écrit est relu (et non tout le coffre)
+      await fetchSecrets(selectedEngine, undefined, { incremental: true, touched: [placeholderPath] });
       syncExtensionRef.current?.();
       showToast(t('toast.folderCreated'), 'success');
     } catch (err) {

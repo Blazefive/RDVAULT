@@ -5,6 +5,7 @@ import { useState } from 'react';
 import axios from 'axios';
 import { encodeEnginePath, sanitizeErrorMessage } from '../utils/security';
 import secureLogger from '../secureLogger';
+import { trackVaultWrite } from '../services/vaultWriteLog';
 
 export function useEngines(options) {
   const {
@@ -53,7 +54,9 @@ export function useEngines(options) {
     const mountPath = name.replace(/^\/+|\/+$/g, '');
     const body = { type: 'kv', description: description || undefined, options: { version: String(version) } };
     try {
-      await axios.post(`${vaultUrl}/v1/sys/mounts/${encodeEnginePath(mountPath)}`, body, axiosConfig({ headers: baseHeaders() }));
+      const mountUrl = `${vaultUrl}/v1/sys/mounts/${encodeEnginePath(mountPath)}`;
+      // Coffre (re)créé : une liste gardée sous ce nom ne sera jamais réutilisée (journal des écritures)
+      await trackVaultWrite('post', mountUrl, () => axios.post(mountUrl, body, axiosConfig({ headers: baseHeaders() })));
       await fetchEnginesLikeUi(token, { keepSelection: true });
       const created = { name: mountPath, version: Number(version) === 2 ? 2 : 1 };
       setSelectedEngine(created);
@@ -79,7 +82,9 @@ export function useEngines(options) {
     const mountPath = engineToDelete.name.replace(/^\/+|\/+$/g, '');
     try {
       setDeletingEngine(true);
-      await axios.delete(`${vaultUrl}/v1/sys/mounts/${encodeEnginePath(mountPath)}`, axiosConfig({ headers: baseHeaders() }));
+      const mountUrl = `${vaultUrl}/v1/sys/mounts/${encodeEnginePath(mountPath)}`;
+      // Coffre supprimé : sa liste gardée n'est plus réutilisée (journal des écritures)
+      await trackVaultWrite('delete', mountUrl, () => axios.delete(mountUrl, axiosConfig({ headers: baseHeaders() })));
       setEngineToDelete(null);
       // APP-8 : un AUTRE coffre supprimé → le coffre affiché reste affiché (avant : premier coffre de la
       // liste, sans remise à zéro, mot de passe homonyme révélé en clair)

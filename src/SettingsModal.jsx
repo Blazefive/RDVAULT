@@ -12,6 +12,8 @@ import { escapeXml, readXmlTag, hasXmlTag } from './utils/xml';
 import { validateSecretName } from './validation';
 import { isInternalSecretKey } from './utils/passkeyEngine';
 import { engineDisplayName } from './components/layout/Sidebar';
+import ExtensionTab from './components/settings/ExtensionTab';
+import SecurityTab from './components/settings/SecurityTab';
 
 // Texte technique dans un <option> (qui n'accepte pas d'élément <bdi>) : isolé et lu de gauche à
 // droite par les caractères LRI (U+2066) … PDI (U+2069). En arabe, « Comptabilite/ (KV v2) »
@@ -43,10 +45,39 @@ const isImportableName = (name) => validateSecretName(name).valid
   && !name.split('/').some(s => s === '' || s === '.' || s === '..')
   && !isInternalSecretName(name);
 
-// SÉCURITÉ : champs non-password nettoyés (caractères de contrôle retirés, sauf tabulation et
-// sauts de ligne, légitimes dans les notes ; longueur limitée)
+// SÉCURITÉ : champs « identifiants » (utilisateur, URL, tags, site, noms de champs) nettoyés des
+// caractères de contrôle, sauf tabulation et sauts de ligne.
+// IMPORT-5 : plus aucune troncature (avant : coupe silencieuse à 10 000 caractères) ; les notes et
+// les valeurs de champs personnalisés sont reprises telles quelles, comme le mot de passe (l'éditeur
+// les accepte avec leurs caractères de contrôle). Une valeur longue est signalée (hasLongValue).
 // eslint-disable-next-line no-control-regex -- caractères de contrôle volontairement ciblés
-const sanitizeField = (v) => typeof v === 'string' ? v.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, 10000) : '';
+const sanitizeField = (v) => typeof v === 'string' ? v.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') : '';
+const verbatimField = (v) => (typeof v === 'string' ? v : '');
+
+// Limite de l'éditeur pour les notes et les valeurs de champs personnalisés (validateSecret,
+// EditSecretModal) : une entrée importée au-delà est conservée en entier mais signalée, car
+// l'éditeur demandera de la raccourcir avant de l'enregistrer.
+const EDITOR_TEXT_MAX = 10000;
+const hasLongValue = (data) => ['Username', 'URL', 'Notes', 'Tags', 'Website']
+  .some(k => typeof data[k] === 'string' && data[k].length > EDITOR_TEXT_MAX)
+  || (Array.isArray(data.CustomFields)
+    && data.CustomFields.some(f => f && typeof f.value === 'string' && f.value.length > EDITOR_TEXT_MAX));
+
+// IMPORT-2 : le nom n'est plus rogné (« Banque » et « Banque␠ » sont deux entrées distinctes,
+// permises par l'éditeur et le coffre ; avant : fusionnées sans avertissement). Seuls les blancs de
+// MISE EN PAGE sont retirés : une suite d'espaces en début ou fin de nom qui contient un retour à la
+// ligne ou une tabulation (XML indenté par un outil tiers ; un nom ne peut pas en contenir).
+// Parcours linéaire (pas d'expression régulière à retour arrière sur un fichier arbitraire).
+const stripLayoutWhitespace = (value) => {
+  const s = String(value ?? '');
+  let start = 0;
+  while (start < s.length && /\s/.test(s[start])) start++;
+  let end = s.length;
+  while (end > start && /\s/.test(s[end - 1])) end--;
+  const lead = s.slice(0, start);
+  const trail = s.slice(end);
+  return (/[\t\n\r]/.test(lead) ? '' : lead) + s.slice(start, end) + (/[\t\n\r]/.test(trail) ? '' : trail);
+};
 
 // Types d'entrée acceptés à l'import (« folder » n'est jamais stocké : c'est une action de l'éditeur)
 const IMPORTABLE_ENTRY_TYPES = ['secret', 'ssh', 'placeholder'];
@@ -61,7 +92,7 @@ const parseCustomFieldsCell = (raw) => {
   for (const f of list) {
     if (!f || typeof f !== 'object' || Array.isArray(f) || typeof f.key !== 'string') return null;
     if (f.value != null && !['string', 'number', 'boolean'].includes(typeof f.value)) return null;
-    const field = { key: sanitizeField(f.key).slice(0, 256), value: sanitizeField(f.value == null ? '' : String(f.value)) };
+    const field = { key: sanitizeField(f.key).slice(0, 256), value: verbatimField(f.value == null ? '' : String(f.value)) };
     if (typeof f.protected === 'boolean') field.protected = f.protected;
     out.push(field);
   }
@@ -111,7 +142,7 @@ const buildImportData = (rec, existing) => {
     ? { ...existing }
     : { Username: '', Password: '', URL: '', Notes: '', Tags: '' };
   for (const [k, v] of Object.entries(rec.fields)) {
-    data[k] = k === 'Password' ? v : sanitizeField(v);
+    data[k] = k === 'Password' || k === 'Notes' ? verbatimField(v) : sanitizeField(v);
   }
   if (rec.Website !== undefined) data.Website = sanitizeField(rec.Website);
   if (rec.EntryType !== undefined && IMPORTABLE_ENTRY_TYPES.includes(rec.EntryType)) data.EntryType = rec.EntryType;
@@ -381,8 +412,8 @@ export default function SettingsModal({
   // Une colonne étendue absente ou vide vaut undefined (aucun changement).
   const parseCSV = (content) => {
     // Parseur RFC 4180 partagé (src/utils/csv.js) : guillemets doublés, champs multi-lignes,
-    // BOM Excel, séparateur détecté. Les valeurs ne sont pas tronquées : seuls les champs
-    // « identifiants » (nom, utilisateur, URL, tags, port) sont nettoyés de leurs espaces.
+    // BOM Excel, séparateur détecté. Les valeurs ne sont pas tronquées. Le nom n'est jamais rogné
+    // (IMPORT-2) ; dans un fichier tiers, utilisateur, URL, tags et port sont nettoyés de leurs espaces.
     const { header, rows } = parseCsv(content);
     const has = (k) => header.includes(k);
     const pick = (row, keys) => {
@@ -395,6 +426,11 @@ export default function SettingsModal({
     // Colonnes « url » ET « website » (export RDVAULT) : deux champs distincts. Une colonne
     // « website » sans colonne « url » (fichiers tiers) reste l'URL, comme avant.
     const websiteSeparate = has('url') && has('website');
+    // IMPORT-4 : export RDVAULT (7 colonnes historiques en tête, ou colonne EntryType) → valeurs
+    // reprises à l'identique. L'identifiant d'une clé SSH est sa phrase de passe : rognée, la clé
+    // privée restaurée ne s'ouvrait plus. Les fichiers tiers restent nettoyés comme avant.
+    const rdvaultExport = has('entrytype')
+      || ['name', 'username', 'password', 'url', 'notes', 'tags', 'port'].every((k, i) => header[i] === k);
     const columns = {
       Username: { keys: ['username', 'identifiant', 'user', 'login'], trim: true },
       Password: { keys: ['password', 'mot de passe', 'mdp', 'pass'], trim: false },
@@ -409,10 +445,10 @@ export default function SettingsModal({
         for (const [field, { keys, trim }] of Object.entries(columns)) {
           if (!keys.some(has)) continue;
           const v = pick(row, keys);
-          fields[field] = trim ? v.trim() : v;
+          fields[field] = trim && !rdvaultExport ? v.trim() : v;
         }
         return {
-          name: pick(row, ['name', 'nom']).trim(),
+          name: stripLayoutWhitespace(pick(row, ['name', 'nom'])),
           fields,
           Port: pick(row, ['port']).trim(),
           Website: websiteSeparate ? optional(row, 'website') : undefined,
@@ -435,7 +471,7 @@ export default function SettingsModal({
       }
       const optional = (tag) => readXmlTag(block, tag).trim() || undefined;
       secrets.push({
-        name: readXmlTag(block, 'name').trim(),
+        name: stripLayoutWhitespace(readXmlTag(block, 'name')),
         fields,
         Port: readXmlTag(block, 'port'),
         Website: optional('website'),
@@ -518,10 +554,11 @@ export default function SettingsModal({
       // et signalées à l'utilisateur (doublons ignorés volontairement non comptés).
       let imported = 0;
       let failed = 0;
+      let longValues = 0; // IMPORT-5 : entrées importées en entier au-delà de la limite de l'éditeur
       for (const secret of parsed) {
-        // Nom vide, invalide (« .. », « \ », contrôle, segment vide ou « . ») ou réservé (nom exact
+        // Nom vide ou blanc, invalide (« .. », « \ », contrôle, segment vide ou « . ») ou réservé (nom exact
         // « .rdvault-passkeys » : stockage des passkeys, jamais écrasé ; « .rdvault-keycheck ») → refusé et compté
-        if (!secret.name || !isImportableName(secret.name)) { failed++; continue; }
+        if (!secret.name || !secret.name.trim() || !isImportableName(secret.name)) { failed++; continue; }
 
         try {
           const existing = await readExisting(secret.name);
@@ -541,13 +578,18 @@ export default function SettingsModal({
           const { folder, leaf } = splitName(secret.name);
           folderListings.get(folder)?.add(leaf);
           imported++;
+          if (hasLongValue(data)) longValues++;
         } catch {
           failed++;
         }
       }
 
+      // IMPORT-5 : les valeurs longues ne sont plus tronquées en silence ; elles sont signalées
+      const longNote = longValues > 0 ? ' ' + t('export.importLongValues', { count: longValues }) : '';
       if (failed > 0) {
-        showToast(t('export.importPartial', { count: imported, failed }), imported > 0 ? 'warning' : 'error', 5000);
+        showToast(t('export.importPartial', { count: imported, failed }) + longNote, imported > 0 ? 'warning' : 'error', longNote ? 8000 : 5000);
+      } else if (longNote) {
+        showToast(t('export.importSuccess', { count: imported }) + longNote, 'warning', 8000);
       } else {
         showToast(t('export.importSuccess', { count: imported }), 'success');
       }
@@ -564,6 +606,11 @@ export default function SettingsModal({
   // ni focus initial ni piège de focus (Tab sortait vers l'application en arrière-plan).
   const panelRef = useRef(null);
   const titleId = useId();
+  // UI-35 : identifiants des champs de l'onglet Export / Import (libellés reliés par htmlFor / id)
+  const fieldIdBase = useId();
+  const exportVaultId = `${fieldIdBase}-export-vault`;
+  const exportFormatLabelId = `${fieldIdBase}-export-format`;
+  const importVaultId = `${fieldIdBase}-import-vault`;
   useDialogA11y(panelRef, { onEscape: onClose });
 
   // SETTINGS-13 : tous les onglets partagent le même corps défilant ; sans remise à zéro, l'onglet
@@ -573,6 +620,50 @@ export default function SettingsModal({
   useLayoutEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = 0;
   }, [activeTab]);
+
+  // IMPORT-37 : sémantique d'onglets (motif WAI-ARIA APG « Tabs », activation automatique).
+  // Avant : boutons dans un <div> neutre, onglet actif signalé par la seule classe CSS.
+  // - role tablist / tab / tabpanel, aria-selected, aria-controls, aria-labelledby ;
+  // - tabIndex itinérant : seul l'onglet affiché est dans l'ordre de tabulation ;
+  // - flèches gauche/droite (sens inversé en RTL, avec bouclage), Début, Fin.
+  // Apparence inchangée (mêmes classes .tab-button / .tab-button-active).
+  const tabIdBase = useId();
+  const tabDomId = (key) => `${tabIdBase}-tab-${key}`;
+  const tabPanelId = `${tabIdBase}-panel`;
+  const tabRefs = useRef({});
+  const SETTINGS_TABS = ['appearance', 'columns', 'cli', 'language', 'export', 'extension', 'security', 'about'];
+  const handleTabKeyDown = (e) => {
+    // Tab / Maj+Tab : laissés au piège de focus de la modale (useDialogA11y), qui ignore désormais
+    // les onglets inactifs (tabIndex -1) ; la compensation locale qui bouclait ici est devenue inutile.
+    const rtl = e.currentTarget.closest('[dir]')?.getAttribute('dir') === 'rtl';
+    const index = SETTINGS_TABS.indexOf(activeTab);
+    let next = null;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      const step = (e.key === 'ArrowRight') !== rtl ? 1 : -1;
+      next = SETTINGS_TABS[(index + step + SETTINGS_TABS.length) % SETTINGS_TABS.length];
+    } else if (e.key === 'Home') {
+      next = SETTINGS_TABS[0];
+    } else if (e.key === 'End') {
+      next = SETTINGS_TABS[SETTINGS_TABS.length - 1];
+    }
+    if (!next) return;
+    e.preventDefault();
+    setActiveTab(next);
+    tabRefs.current[next]?.focus();
+  };
+  // Attributs communs d'un onglet
+  const tabProps = (key) => ({
+    ref: (el) => { tabRefs.current[key] = el; },
+    id: tabDomId(key),
+    role: 'tab',
+    'aria-selected': activeTab === key,
+    'aria-controls': tabPanelId,
+    tabIndex: activeTab === key ? 0 : -1,
+    onClick: () => setActiveTab(key),
+    onKeyDown: handleTabKeyDown,
+    className: activeTab === key ? 'tab-button tab-button-active' : 'tab-button',
+    type: 'button'
+  });
 
   const allColumns = [
     { key: 'name', label: t('table.name'), locked: true },
@@ -637,8 +728,9 @@ export default function SettingsModal({
 
         {/* Onglets — en dehors du scroll. SETTINGS-12 : onglets compacts (.tab-button), sur une
             ligne dans les 12 langues à la taille par défaut ; sur une fenêtre étroite, retour à la
-            ligne propre (libellés jamais coupés) au lieu d'une barre de défilement horizontale. */}
-        <div style={{
+            ligne propre (libellés jamais coupés) au lieu d'une barre de défilement horizontale.
+            IMPORT-37 : role="tablist" nommé par le titre de la modale. */}
+        <div role="tablist" aria-labelledby={titleId} style={{
           display: 'flex',
           flexWrap: 'wrap',
           columnGap: 'var(--sp-1)',
@@ -648,23 +740,15 @@ export default function SettingsModal({
           padding: 'var(--sp-2) var(--sp-6) 0 var(--sp-6)',
           flexShrink: 0
         }}>
-          <button
-            onClick={() => setActiveTab('appearance')}
-            className={activeTab === 'appearance' ? 'tab-button tab-button-active' : 'tab-button'}
-            type="button"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <button {...tabProps('appearance')}>
+            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="4"/>
               <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41m11.32-11.32l1.41-1.41"/>
             </svg>
             <span>{t('settings.appearance')}</span>
           </button>
-          <button
-            onClick={() => setActiveTab('columns')}
-            className={activeTab === 'columns' ? 'tab-button tab-button-active' : 'tab-button'}
-            type="button"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <button {...tabProps('columns')}>
+            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="3" width="7" height="7" rx="1"/>
               <rect x="14" y="3" width="7" height="7" rx="1"/>
               <rect x="14" y="14" width="7" height="7" rx="1"/>
@@ -672,47 +756,44 @@ export default function SettingsModal({
             </svg>
             <span>{t('settings.columns')}</span>
           </button>
-          <button
-            onClick={() => setActiveTab('cli')}
-            className={activeTab === 'cli' ? 'tab-button tab-button-active' : 'tab-button'}
-            type="button"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <button {...tabProps('cli')}>
+            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="4 17 10 11 4 5"/>
               <line x1="12" y1="19" x2="20" y2="19"/>
             </svg>
             <span>{t('settings.cli')}</span>
           </button>
-          <button
-            onClick={() => setActiveTab('language')}
-            className={activeTab === 'language' ? 'tab-button tab-button-active' : 'tab-button'}
-            type="button"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <button {...tabProps('language')}>
+            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10"/>
               <line x1="2" y1="12" x2="22" y2="12"/>
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
             </svg>
             <span>{t('settings.language')}</span>
           </button>
-          <button
-            onClick={() => setActiveTab('export')}
-            className={activeTab === 'export' ? 'tab-button tab-button-active' : 'tab-button'}
-            type="button"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <button {...tabProps('export')}>
+            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
               <polyline points="7 10 12 15 17 10"/>
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
             <span>{t('export.title')}</span>
           </button>
-          <button
-            onClick={() => setActiveTab('about')}
-            className={activeTab === 'about' ? 'tab-button tab-button-active' : 'tab-button'}
-            type="button"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <button {...tabProps('extension')}>
+            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 3h6v3a2 2 0 1 0 4 0V3h2v6h-3a2 2 0 1 0 0 4h3v8h-6v-3a2 2 0 1 0-4 0v3H3v-6h3a2 2 0 1 0 0-4H3V3h6z"/>
+            </svg>
+            <span>{t('extensionTab.tab')}</span>
+          </button>
+          <button {...tabProps('security')}>
+            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <span>{t('settings.security')}</span>
+          </button>
+          <button {...tabProps('about')}>
+            <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10"/>
               <line x1="12" y1="16" x2="12" y2="12"/>
               <line x1="12" y1="8" x2="12.01" y2="8"/>
@@ -722,7 +803,13 @@ export default function SettingsModal({
         </div>
 
         {/* Contenu scrollable (repart du haut à chaque changement d'onglet : SETTINGS-13) */}
-        <div ref={bodyRef} className="modal-body" style={{ overflowY: 'auto', maxHeight: 'calc(85vh - 200px)' }}>
+        <div
+          ref={bodyRef}
+          id={tabPanelId}
+          role="tabpanel"
+          aria-labelledby={tabDomId(activeTab)}
+          className="modal-body"
+          style={{ overflowY: 'auto', maxHeight: 'calc(85vh - 200px)' }}>
           {/* Onglet Apparence */}
           {activeTab === 'appearance' && (
             <div>
@@ -740,7 +827,7 @@ export default function SettingsModal({
                   border: !darkMode ? '3px solid var(--accent)' : '2px solid var(--border-color)',
                   borderRadius: 'var(--radius-lg)',
                   cursor: 'pointer',
-                  transition: 'all var(--duration-base)',
+                  transition: 'background-color var(--duration-base), border-color var(--duration-base)',
                   background: !darkMode ? 'var(--bg-surface-hover)' : 'var(--bg-surface)',
                   display: 'flex',
                   flexDirection: 'column',
@@ -780,7 +867,7 @@ export default function SettingsModal({
                   border: darkMode ? '3px solid var(--accent)' : '2px solid var(--border-color)',
                   borderRadius: 'var(--radius-lg)',
                   cursor: 'pointer',
-                  transition: 'all var(--duration-base)',
+                  transition: 'background-color var(--duration-base), border-color var(--duration-base)',
                   background: darkMode ? 'var(--bg-surface-hover)' : 'var(--bg-surface)',
                   display: 'flex',
                   flexDirection: 'column',
@@ -850,7 +937,7 @@ export default function SettingsModal({
                       borderRadius: 'var(--radius)',
                       cursor: col.locked ? 'not-allowed' : 'pointer',
                       background: visibleColumns[col.key] !== false ? 'var(--bg-surface-hover)' : 'var(--bg-surface)',
-                      transition: 'all var(--duration-base)',
+                      transition: 'background-color var(--duration-base), border-color var(--duration-base)',
                       opacity: col.locked ? 0.6 : 1
                     }}
                   >
@@ -950,7 +1037,7 @@ export default function SettingsModal({
                           border: '1px solid var(--border-color)',
                           borderRadius: 'var(--radius)',
                           background: (autoApproved || listApproved) ? 'var(--bg-surface-hover)' : 'var(--bg-surface)',
-                          transition: 'all var(--duration-base)',
+                          transition: 'background-color var(--duration-base), border-color var(--duration-base)',
                           gap: 'var(--sp-3)'
                         }}
                       >
@@ -1125,7 +1212,7 @@ export default function SettingsModal({
                         borderRadius: 'var(--radius)',
                         cursor: 'pointer',
                         background: isSelected ? 'var(--bg-surface-hover)' : 'var(--bg-surface)',
-                        transition: 'all var(--duration-base)',
+                        transition: 'background-color var(--duration-base), border-color var(--duration-base)',
                         // SETTINGS-14 : alignement logique (à droite en arabe)
                         textAlign: 'start',
                         width: '100%'
@@ -1185,8 +1272,8 @@ export default function SettingsModal({
                 {t('export.contentNote')}
               </p>
 
-              {/* Sélection du coffre */}
-              <label style={{
+              {/* Sélection du coffre (UI-35 : libellé relié au <select>) */}
+              <label htmlFor={exportVaultId} style={{
                 display: 'block',
                 fontSize: 'var(--text-sm)',
                 fontWeight: 'var(--weight-bold)',
@@ -1196,6 +1283,7 @@ export default function SettingsModal({
                 {t('export.selectVault')}
               </label>
               <select
+                id={exportVaultId}
                 value={exportEngine}
                 onChange={(e) => setExportEngine(e.target.value)}
                 style={{
@@ -1221,8 +1309,8 @@ export default function SettingsModal({
                 }
               </select>
 
-              {/* Sélection du format */}
-              <label style={{
+              {/* Sélection du format : libellé du groupe de boutons radio */}
+              <label id={exportFormatLabelId} style={{
                 display: 'block',
                 fontSize: 'var(--text-sm)',
                 fontWeight: 'var(--weight-bold)',
@@ -1231,7 +1319,7 @@ export default function SettingsModal({
               }}>
                 {t('export.format')}
               </label>
-              <div style={{ display: 'flex', gap: 'var(--sp-3)', marginBottom: 'var(--sp-4)' }}>
+              <div role="radiogroup" aria-labelledby={exportFormatLabelId} style={{ display: 'flex', gap: 'var(--sp-3)', marginBottom: 'var(--sp-4)' }}>
                 <label style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -1295,8 +1383,8 @@ export default function SettingsModal({
                   {t('export.importDescription')}
                 </p>
 
-                {/* Sélection du coffre de destination */}
-                <label style={{
+                {/* Sélection du coffre de destination (UI-35 : libellé relié au <select>) */}
+                <label htmlFor={importVaultId} style={{
                   display: 'block',
                   fontSize: 'var(--text-sm)',
                   fontWeight: 'var(--weight-bold)',
@@ -1306,6 +1394,7 @@ export default function SettingsModal({
                   {t('export.importSelectVault')}
                 </label>
                 <select
+                  id={importVaultId}
                   value={importEngine}
                   onChange={(e) => setImportEngine(e.target.value)}
                   style={{
@@ -1405,6 +1494,12 @@ export default function SettingsModal({
               </div>
             </div>
           )}
+
+          {/* Onglet Extension */}
+          {activeTab === 'extension' && <ExtensionTab />}
+
+          {/* Onglet Sécurité : délai de verrouillage automatique */}
+          {activeTab === 'security' && <SecurityTab />}
 
           {/* Onglet À propos */}
           {activeTab === 'about' && (

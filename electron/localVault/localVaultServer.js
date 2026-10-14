@@ -28,6 +28,35 @@ let serverPort = null;
 // « introuvable » et volontairement générique (aucun détail sur la cause) — LOCALVAULT-3
 const DECRYPTION_FAILED = 'decryption failed';
 
+// ─── LECTURE GROUPÉE (route propre au coffre local, absente de HashiCorp Vault) ───
+// POST /v1/{engine}/rdvault-batch-read  { keys: [clé, …] } : dernière version de plusieurs entrées en une
+// requête (l'interface lisait un coffre de 1 200 entrées en 1 200 requêtes). Chaque clé est lue EXACTEMENT
+// comme par GET /v1/{engine}/data/{clé} (même contrôle de propriété du coffre, même clé de session, même
+// contrôle d'intégrité GCM/AAD, même format de données) ; les barrières communes du serveur (origine, corps
+// JSON, jeton) s'appliquent. Le client (src/services/vaultApi.js) ne l'emploie qu'en mode local et revient
+// à la lecture unitaire si elle échoue. Blobs internes cachés (passkeys, témoin de clé) : jamais servis
+// par cette route (403 pour la clé), seule la lecture unitaire les lit.
+const BATCH_READ_OP = 'rdvault-batch-read';
+const BATCH_READ_MAX_KEYS = 1000;
+const BATCH_READ_MAX_KEY_LENGTH = 4096;
+// Taille approximative de la réponse au-delà de laquelle les clés suivantes sont renvoyées dans
+// `remaining` (pièces jointes volumineuses) : au moins une entrée est toujours traitée
+const BATCH_READ_MAX_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Résultat d'une clé de la lecture groupée, au format d'une lecture unitaire :
+ * { key, status: 200, data, metadata } | { key, status: 404, deleted: true, metadata } (version supprimée)
+ * | { key, status: 404 } | { key, status: 500, error } (intégrité) | { key, status: 403 } (blob caché)
+ */
+function batchReadOne(engine, key, encKey) {
+  if (secretsService.isHiddenBlobKey(key)) return { key, status: 403 };
+  const result = secretsService.readSecret(engine.id, key, encKey, null);
+  if (result.success) return { key, status: 200, data: result.data, metadata: result.metadata };
+  if (result.deleted) return { key, status: 404, deleted: true, metadata: result.metadata };
+  if (result.integrityError) return { key, status: 500, error: DECRYPTION_FAILED };
+  return { key, status: 404 };
+}
+
 // Clés de chiffrement dérivées en mémoire (token -> { encKey: Buffer, salt: string })
 // Le mot de passe brut n'est JAMAIS stocké — seule la clé AES-256 dérivée est conservée
 const sessionKeys = new Map();
@@ -442,6 +471,13 @@ async function handleKV(req, res, pathParts, query) {
     }
     if (engine) break;
 
+    // Lecture groupée : /v1/{engine}/rdvault-batch-read (corps JSON, voir BATCH_READ_OP)
+    if (fullPath === `${eName}/${BATCH_READ_OP}`) {
+      engine = secretsService.getEngine(eName);
+      operation = BATCH_READ_OP;
+      break;
+    }
+
     // KV v2 sans opération : /v1/{engine}/metadata?list=true (quand key est vide)
     // Fallback: /v1/{engine}?list=true (compatibilité)
     if (fullPath === eName || fullPath === eName + '/') {
@@ -462,6 +498,32 @@ async function handleKV(req, res, pathParts, query) {
   // SÉCURITÉ: contrôle de propriété (lecture, écriture, suppression)
   if (!canAccess(engine, session)) {
     sendJson(res, 403, { errors: ['permission denied'] });
+    return;
+  }
+
+  // ─── LECTURE GROUPÉE ───
+  if (operation === BATCH_READ_OP) {
+    if (req.method !== 'POST') { sendJson(res, 405, { errors: ['method not allowed'] }); return; }
+    const body = await parseBody(req);
+    const keys = body.keys;
+    if (!Array.isArray(keys) || keys.length === 0 || keys.length > BATCH_READ_MAX_KEYS
+      || keys.some(k => typeof k !== 'string' || k.length === 0 || k.length > BATCH_READ_MAX_KEY_LENGTH)) {
+      sendJson(res, 400, { errors: ['invalid keys'] });
+      return;
+    }
+    const results = [];
+    let remaining = [];
+    let bytes = 0;
+    for (let i = 0; i < keys.length; i++) {
+      if (results.length > 0 && bytes >= BATCH_READ_MAX_BYTES) {
+        remaining = keys.slice(i);
+        break;
+      }
+      const item = batchReadOne(engine, keys[i], sessionKey.encKey);
+      bytes += Buffer.byteLength(JSON.stringify(item));
+      results.push(item);
+    }
+    sendJson(res, 200, { data: { results, remaining } });
     return;
   }
 

@@ -143,3 +143,16 @@ test('PERF-5 : coffre lu partiellement → « rapport partiel » affiché', asyn
   expect(notice.textContent).toContain('1');
   expect(mockState.lastReport.items).toHaveLength(9);
 });
+
+// UI-38 : cartes statistiques (filtres) = boutons bascule ; avant, le filtre actif n'était signalé
+// que par la bordure colorée (aucun aria-pressed).
+test('UI-38 : cartes filtres avec aria-pressed, un seul enfoncé, qui suit le clic', async () => {
+  await open(fakeVaultApi(3));
+  const cards = () => Array.from(document.querySelectorAll('button[aria-pressed]'));
+  expect(cards()).toHaveLength(4);
+  const pressed = () => cards().filter(b => b.getAttribute('aria-pressed') === 'true').map(b => b.textContent);
+  expect(pressed()).toEqual([expect.stringContaining(en.passwordHealth.filterAll)]);
+  const weak = cards().find(b => b.textContent.includes(en.passwordHealth.weak));
+  await act(async () => { weak.click(); });
+  expect(pressed()).toEqual([expect.stringContaining(en.passwordHealth.weak)]);
+});

@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT（直连 Vault）"
   },
   "extDescription": {
     "message": "使用 HashiCorp Vault 自动填写表单"
@@ -115,5 +115,20 @@
   },
   "bgErrInternal": {
     "message": "内部错误"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Vault 登录凭据：$COUNT$ 个。按向下箭头键选择，按 Esc 键关闭。",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "未登录 Vault：请打开扩展窗口登录。"
+  },
+  "bgErrVaultUnreachable": {
+    "message": "无法连接 Vault 或会话已过期：请从扩展窗口重新登录。"
   }
 }

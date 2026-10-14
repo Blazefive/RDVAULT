@@ -168,11 +168,14 @@ function sanitizeTrustedDomains(value) {
 
 /**
  * Normalise une empreinte de certificat en hex minuscule (64 caractères).
- * Accepte "sha256/<base64>" (format Electron/Chrome), l'hex avec ou sans ":", ou le base64 nu.
+ * Accepte "sha256/<base64>" (format Electron/Chrome), l'hex avec ou sans ":", le base64 nu, et (CONFIG-3)
+ * la ligne complète de la commande documentée `openssl x509 -noout -fingerprint -sha256` :
+ * « sha256 Fingerprint=AB:CD:… » (OpenSSL 3) ou « SHA256 Fingerprint=AB:CD:… » (OpenSSL 1.1).
  */
 function normalizeFingerprint(raw) {
   let s = String(raw || '').trim();
   if (!s) return null;
+  s = s.replace(/^(?:sha-?256\s*)?fingerprint\s*=\s*/i, '');
   if (/^sha256\//i.test(s)) s = s.slice(7);
   const hexCandidate = s.replace(/[:\s]/g, '').toLowerCase();
   if (/^[0-9a-f]{64}$/.test(hexCandidate)) return hexCandidate;
@@ -193,6 +196,230 @@ function sanitizeFingerprints(value) {
     log.warn(`[CONFIG] ${invalidCount} empreinte(s) TRUSTED_CERT_FINGERPRINTS invalide(s) ignorée(s)`);
   }
   return list.filter(Boolean);
+}
+
+// CONFIG-3 : empreinte « sentinelle » qui ne correspond à aucun certificat (aucun SHA-256 réel n'est nul).
+// Quand TRUSTED_CERT_FINGERPRINTS est renseigné mais qu'AUCUNE entrée n'est valide, l'épinglage reste
+// actif avec cette seule valeur : tout certificat de l'hôte de VAULT_URL est refusé (main.js,
+// vaultCertVerifyDecision et 'certificate-error'), au lieu de désactiver l'épinglage en silence.
+const PIN_FAIL_CLOSED = '0'.repeat(64);
+
+/**
+ * Valeur finale de TRUSTED_CERT_FINGERPRINTS : empreintes valides, ou la sentinelle PIN_FAIL_CLOSED si la
+ * clé est renseignée sans aucune entrée valide (épinglage voulu mais inutilisable : on refuse, on ne
+ * désactive pas).
+ * @param {unknown} value - valeur brute du fichier de configuration
+ * @returns {{ fingerprints: string, pinningInvalid: boolean }}
+ */
+function resolvePinnedFingerprints(value) {
+  const valid = sanitizeFingerprints(value);
+  const hasEntries = String(value || '').split(',').some(s => s.trim());
+  if (valid.length === 0 && hasEntries) {
+    log.error('[CONFIG] TRUSTED_CERT_FINGERPRINTS renseigné mais aucune empreinte valide : épinglage maintenu, '
+      + 'connexions au serveur Vault REFUSÉES jusqu\'à correction (formats : hex SHA-256, « sha256/<base64> », '
+      + 'ou la sortie de « openssl x509 -noout -fingerprint -sha256 »)');
+    return { fingerprints: PIN_FAIL_CLOSED, pinningInvalid: true };
+  }
+  return { fingerprints: valid.join(','), pinningInvalid: false };
+}
+
+// ========================================
+// CONFIG-8 : PROTECTION DE %PROGRAMDATA%\RDVAULT
+// ========================================
+// Ce dossier est lu en PRIORITÉ (déploiement machine) ; or l'ACL par défaut de C:\ProgramData laisse tout
+// utilisateur y créer un sous-dossier, en devenir propriétaire et y écrire config.cfg (VAULT_URL vers un faux
+// serveur : vol des identifiants des autres utilisateurs du poste). L'installeur (assets/installer.nsh) crée
+// le dossier et y pose propriétaire + ACL ; en défense en profondeur, un fichier de ce dossier n'est accepté
+// que si NI le dossier NI le fichier ne sont modifiables par un non-administrateur.
+// Lecture : descripteur de sécurité au format SDDL (PowerShell Get-Acl), indépendant de la langue de
+// Windows (icacls affiche des noms traduits — « BUILTIN\Utilisateurs », « VORDEFINIERT\Benutzer »… — et
+// jamais le propriétaire, or un propriétaire peut réécrire l'ACL à sa guise).
+
+const SID_ADMINISTRATORS = 'S-1-5-32-544';
+const SID_SYSTEM = 'S-1-5-18';
+const SID_TRUSTED_INSTALLER = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464';
+// Alias SDDL utiles (les autres alias restent tels quels et sont traités comme non administrateurs)
+const SDDL_SID_ALIASES = {
+  BA: SID_ADMINISTRATORS, SY: SID_SYSTEM, BU: 'S-1-5-32-545', AU: 'S-1-5-11', WD: 'S-1-1-0',
+  IU: 'S-1-5-4', BG: 'S-1-5-32-546', PU: 'S-1-5-32-547', AN: 'S-1-5-7', NU: 'S-1-5-2', RD: 'S-1-5-32-555',
+  CO: 'S-1-3-0', OW: 'S-1-3-4',
+};
+// Comptes autorisés à modifier (et à posséder) le dossier et le fichier : Administrateurs, SYSTEM,
+// TrustedInstaller, compte Administrateur intégré (-500), Admins du domaine (-512), Administrateurs de
+// l'entreprise (-519). CREATOR OWNER / OWNER RIGHTS désignent le propriétaire, lui-même contrôlé.
+const ADMIN_SIDS = new Set([SID_ADMINISTRATORS, SID_SYSTEM, SID_TRUSTED_INSTALLER, 'LA', 'DA', 'EA']);
+const ADMIN_DOMAIN_SID_RE = /^S-1-5-21-\d+-\d+-\d+-(500|512|519)$/;
+const OWNER_PLACEHOLDER_SIDS = new Set(['S-1-3-0', 'S-1-3-4']);
+// Droits d'accès SDDL (fichiers et dossiers) → masque
+const SDDL_RIGHTS = {
+  GA: 0x10000000, GR: 0x80000000, GW: 0x40000000, GX: 0x20000000,
+  FA: 0x1F01FF, FR: 0x120089, FW: 0x120116, FX: 0x1200A0,
+  KA: 0xF003F, KR: 0x20019, KW: 0x20006, KX: 0x20019,
+  RC: 0x20000, SD: 0x10000, WD: 0x40000, WO: 0x80000,
+  CC: 0x1, DC: 0x2, LC: 0x4, SW: 0x8, RP: 0x10, WP: 0x20, DT: 0x40, LO: 0x80, CR: 0x100,
+};
+// Droits qui permettent de remplacer ou de créer la configuration : écriture / ajout de fichier (0x2),
+// ajout / création de sous-dossier (0x4), suppression d'enfant (0x40), suppression (DELETE), WRITE_DAC,
+// WRITE_OWNER, GENERIC_ALL, GENERIC_WRITE, MAXIMUM_ALLOWED. Attributs et attributs étendus (0x10, 0x100)
+// ne suffisent pas.
+const DANGEROUS_RIGHTS = 0x2 | 0x4 | 0x40 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000 | 0x02000000;
+const ALLOW_ACE_TYPES = new Set(['A', 'OA', 'XA', 'ZA']);
+
+/** SID complet d'un SID SDDL (alias à deux lettres traduit quand il est connu) */
+function sddlSid(raw) {
+  const s = String(raw || '').trim().toUpperCase();
+  return SDDL_SID_ALIASES[s] || s;
+}
+
+function isAdminSid(sid) {
+  return ADMIN_SIDS.has(sid) || ADMIN_DOMAIN_SID_RE.test(sid);
+}
+
+/** Masque d'accès d'un champ de droits SDDL (« FA », « 0x1200a9 », « DCLCRPCR »…), ou null s'il est inconnu */
+function sddlRightsMask(field) {
+  const s = String(field || '').trim();
+  if (/^0x[0-9a-f]+$/i.test(s)) return Number.parseInt(s.slice(2), 16) >>> 0;
+  if (!/^([A-Z]{2})*$/.test(s)) return null;
+  let mask = 0;
+  for (let i = 0; i < s.length; i += 2) {
+    const bits = SDDL_RIGHTS[s.slice(i, i + 2)];
+    if (bits === undefined) return null;
+    mask = (mask | bits) >>> 0;
+  }
+  return mask;
+}
+
+/**
+ * Analyse un descripteur de sécurité SDDL (propriétaire et DACL ; la SACL éventuelle est ignorée).
+ * @param {string} sddl
+ * @returns {{ owner: string, nullDacl: boolean, aces: Array<{ type: string, flags: string[], mask: number|null, sid: string }> }|null}
+ *   null si la chaîne n'est pas un SDDL exploitable
+ */
+function parseSddl(sddl) {
+  const s = String(sddl || '').trim();
+  const ownerMatch = /^O:([A-Z]{2}|S-1-[0-9-]+)/i.exec(s);
+  if (!ownerMatch) return null;
+  const dStart = s.indexOf('D:');
+  if (dStart < 0) return null;
+  let i = dStart + 2;
+  const flagsMatch = /^[A-Z_]*/.exec(s.slice(i));
+  const daclFlags = flagsMatch[0];
+  i += daclFlags.length;
+  const aces = [];
+  while (i < s.length && s[i] === '(') {
+    // ACE entre parenthèses équilibrées (les ACE conditionnelles contiennent elles-mêmes des parenthèses)
+    let depth = 0;
+    let j = i;
+    for (; j < s.length; j++) {
+      if (s[j] === '(') depth++;
+      else if (s[j] === ')') { depth--; if (depth === 0) break; }
+    }
+    if (depth !== 0) return null;
+    const inner = s.slice(i + 1, j);
+    const fields = [];
+    let level = 0;
+    let start = 0;
+    for (let k = 0; k <= inner.length; k++) {
+      const c = inner[k];
+      if (c === '(') level++;
+      else if (c === ')') level--;
+      else if ((c === ';' && level === 0) || k === inner.length) { fields.push(inner.slice(start, k)); start = k + 1; }
+    }
+    if (fields.length < 6) return null;
+    aces.push({
+      type: fields[0].toUpperCase(),
+      flags: fields[1].toUpperCase().match(/.{1,2}/g) || [],
+      mask: sddlRightsMask(fields[2]),
+      sid: sddlSid(fields[5]),
+    });
+    i = j + 1;
+  }
+  // Après la DACL : rien, ou la SACL (« S: »)
+  if (i < s.length && !s.startsWith('S:', i)) return null;
+  return { owner: sddlSid(ownerMatch[1]), nullDacl: daclFlags.includes('NO_ACCESS_CONTROL'), aces };
+}
+
+/**
+ * Verdict « modifiable uniquement par des administrateurs » d'un descripteur SDDL : propriétaire
+ * administrateur (Administrateurs, SYSTEM, TrustedInstaller…) et aucune ACE d'autorisation, applicable à
+ * l'objet lui-même (hors « IO », héritage seul), qui donne un droit d'écriture à un autre compte
+ * (Utilisateurs, Utilisateurs authentifiés, Tout le monde, un utilisateur nommé…). Les ACE de refus ne
+ * sont pas prises en compte (vérification plus stricte, jamais plus permissive).
+ * @param {string} sddl
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+function adminOnlyAclVerdict(sddl) {
+  const parsed = parseSddl(sddl);
+  if (!parsed) return { ok: false, reason: 'descripteur de sécurité illisible' };
+  if (!isAdminSid(parsed.owner)) return { ok: false, reason: `propriétaire non administrateur (${parsed.owner})` };
+  if (parsed.nullDacl) return { ok: false, reason: 'DACL nulle (accès total pour tous)' };
+  for (const ace of parsed.aces) {
+    if (!ALLOW_ACE_TYPES.has(ace.type) || ace.flags.includes('IO')) continue;
+    if (ace.mask === null) return { ok: false, reason: 'droits d\'accès non reconnus' };
+    if ((ace.mask & DANGEROUS_RIGHTS) === 0) continue;
+    if (isAdminSid(ace.sid) || OWNER_PLACEHOLDER_SIDS.has(ace.sid)) continue;
+    return { ok: false, reason: `écriture accordée à un non-administrateur (${ace.sid})` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Lit les descripteurs SDDL des chemins (lecture seule : Get-Acl). Chemins passés par variables
+ * d'environnement (aucune interprétation par le shell). Lève une erreur si la lecture échoue.
+ * @param {string[]} paths
+ * @returns {string[]} un SDDL par chemin, dans l'ordre
+ */
+function readSddlWithPowerShell(paths) {
+  const { execFileSync } = require('child_process');
+  const systemRoot = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+  const exe = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const env = { ...process.env };
+  const lines = [];
+  paths.forEach((p, n) => {
+    env[`RDV_ACL_PATH_${n}`] = p;
+    lines.push(`(Get-Acl -LiteralPath $env:RDV_ACL_PATH_${n}).Sddl`);
+  });
+  const out = execFileSync(exe, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    `$ErrorActionPreference='Stop'; ${lines.join('; ')}`], {
+    env, encoding: 'utf8', windowsHide: true, timeout: 20000, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const sddls = out.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (sddls.length !== paths.length) throw new Error('sortie Get-Acl inattendue');
+  return sddls;
+}
+
+/**
+ * true si le fichier ET son dossier ne sont modifiables que par des administrateurs, sans lien
+ * symbolique ni jonction (voir adminOnlyAclVerdict).
+ * @param {string} filePath
+ * @param {{ readSddl?: (paths: string[]) => string[], lstat?: (p: string) => fs.Stats }} [deps] - injectables (tests)
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+function checkAdminOnlyConfigFile(filePath, deps = {}) {
+  const readSddl = deps.readSddl || readSddlWithPowerShell;
+  const lstat = deps.lstat || fs.lstatSync;
+  const dir = path.dirname(filePath);
+  try {
+    for (const p of [dir, filePath]) {
+      if (lstat(p).isSymbolicLink()) return { ok: false, reason: `lien symbolique ou jonction (${p})` };
+    }
+  } catch (err) {
+    return { ok: false, reason: `état du fichier illisible (${err.code || err.message})` };
+  }
+  let sddls;
+  try {
+    sddls = readSddl([dir, filePath]);
+  } catch (err) {
+    // Première ligne utile : erreur de Get-Acl (stderr), sinon code (ENOENT : PowerShell absent ou bloqué)
+    const detail = String((err && (String(err.stderr || '').trim() || err.code || err.message)) || err);
+    return { ok: false, reason: `ACL illisibles (${detail.split(/\r?\n/)[0].slice(0, 160)})` };
+  }
+  const names = ['dossier', 'fichier'];
+  for (let n = 0; n < 2; n++) {
+    const verdict = adminOnlyAclVerdict(sddls[n]);
+    if (!verdict.ok) return { ok: false, reason: `${names[n]} : ${verdict.reason}` };
+  }
+  return { ok: true };
 }
 
 /**
@@ -242,9 +469,10 @@ function loadConfig() {
   const configPaths = [];
   if (app.isPackaged) {
     const programData = process.env.PROGRAMDATA || 'C:\\ProgramData';
-    // 1. Déploiement machine (dossier protégé par ACL administrateur)
-    configPaths.push({ path: path.join(programData, 'RDVAULT', 'config.cfg'), type: 'cfg' });
-    configPaths.push({ path: path.join(programData, 'RDVAULT', 'config.json'), type: 'json' });
+    // 1. Déploiement machine : accepté seulement si dossier et fichier sont réservés aux administrateurs
+    //    (CONFIG-8 : sinon n'importe quel utilisateur du poste pourrait y imposer sa configuration)
+    configPaths.push({ path: path.join(programData, 'RDVAULT', 'config.cfg'), type: 'cfg', adminOnly: true });
+    configPaths.push({ path: path.join(programData, 'RDVAULT', 'config.json'), type: 'json', adminOnly: true });
     // 2. Dossier d'installation
     configPaths.push({ path: path.join(path.dirname(process.execPath), 'config.cfg'), type: 'cfg' });
     configPaths.push({ path: path.join(path.dirname(process.execPath), 'config.json'), type: 'json' });
@@ -266,13 +494,28 @@ function loadConfig() {
 /**
  * Charge la configuration depuis le premier fichier lisible de la liste (ordre de priorité), valeurs validées ;
  * à défaut, la configuration par défaut. Sans cache ni dépendance à Electron (testable sous Node).
- * @param {Array<{ path: string, type: 'cfg'|'json' }>} configPaths
+ * Une entrée `adminOnly` (%PROGRAMDATA%\RDVAULT) n'est lue que si checkAdminOnlyConfigFile l'accepte ;
+ * sinon elle est ignorée (avertissement journalisé) au profit du fichier suivant.
+ * @param {Array<{ path: string, type: 'cfg'|'json', adminOnly?: boolean }>} configPaths
+ * @param {{ checkAdminOnly?: (filePath: string) => { ok: boolean, reason?: string } }} [options] - injectable (tests)
  * @returns {object}
  */
-function loadConfigFromPaths(configPaths) {
+function loadConfigFromPaths(configPaths, options = {}) {
+  const checkAdminOnly = options.checkAdminOnly || checkAdminOnlyConfigFile;
   for (const configEntry of configPaths) {
     try {
       if (!fs.existsSync(configEntry.path)) continue;
+      if (configEntry.adminOnly) {
+        const verdict = checkAdminOnly(configEntry.path);
+        if (!verdict || !verdict.ok) {
+          // SÉCURITÉ (CONFIG-8) : jamais lu ; seule la raison (SID, pas de valeur de configuration) est tracée
+          log.warn(`[CONFIG] ${configEntry.path} IGNORÉ : modifiable par des non-administrateurs `
+            + `(${(verdict && verdict.reason) || 'vérification impossible'}). Réservez le dossier aux administrateurs `
+            + '(réinstallation de RDVAULT, ou icacls "<dossier>" /setowner *S-1-5-32-544 puis /inheritance:r '
+            + '/grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX)');
+          continue;
+        }
+      }
       // STARTUP-25 : encodage détecté (UTF-8 avec ou sans BOM, UTF-16 LE/BE), voir readConfigFile
       const config = readConfigFile(configEntry.path, configEntry.type);
       if (!config || typeof config !== 'object') continue;
@@ -303,15 +546,19 @@ function loadConfigFromPaths(configPaths) {
         ? String(config.LANG).toLowerCase()
         : DEFAULT_CONFIG.LANG;
 
+      // SÉCURITÉ (CONFIG-3) : épinglage renseigné mais inutilisable → refus (sentinelle), jamais désactivé
+      const pins = resolvePinnedFingerprints(config.TRUSTED_CERT_FINGERPRINTS);
+
       const result = {
         VAULT_URL: appMode === 'local' ? 'http://127.0.0.1:0' : validVaultUrl,
         LDAP_AUTH_PATH: safeLdapPath,
         TRUSTED_DOMAINS: trustedDomains,
-        TRUSTED_CERT_FINGERPRINTS: sanitizeFingerprints(config.TRUSTED_CERT_FINGERPRINTS).join(','),
+        TRUSTED_CERT_FINGERPRINTS: pins.fingerprints,
         RBI_PROXY_URL: safeRbiUrl,
         APP_MODE: appMode,
         LANG: lang
       };
+      if (pins.pinningInvalid) result.PINNING_INVALID = true;
 
       // SÉCURITÉ: Ne pas logger les valeurs de configuration (IPs/domaines internes)
       log.info(`[CONFIG] Configuration chargée depuis: ${configEntry.path} (format: ${configEntry.type})`);
@@ -365,5 +612,11 @@ module.exports = {
   sanitizeTrustedDomains,
   sanitizeHttpsUrl,
   sanitizeFingerprints,
+  resolvePinnedFingerprints,
+  PIN_FAIL_CLOSED,
+  parseSddl,
+  adminOnlyAclVerdict,
+  checkAdminOnlyConfigFile,
+  readSddlWithPowerShell,
   DEFAULT_CONFIG
 };

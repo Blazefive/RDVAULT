@@ -132,6 +132,8 @@ export default function VersionHistoryModal({
                 onClick={() => loadVersionData(v.version)}
                 className={selectedVersion === v.version ? 'version-item selected' : 'version-item'}
                 type="button"
+                // UI-38 : version affichée exposée aux technologies d'assistance (pas seulement la bordure)
+                aria-current={selectedVersion === v.version ? 'true' : undefined}
                 disabled={v.destroyed}
                 style={{
                   padding: 'var(--sp-3)',

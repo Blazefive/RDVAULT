@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT (Vault direct)"
   },
   "extDescription": {
     "message": "Auto-remplissage de formulaires avec HashiCorp Vault"
@@ -115,5 +115,20 @@
   },
   "bgErrInternal": {
     "message": "Erreur interne"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Identifiants Vault disponibles : $COUNT$. Flèche bas pour choisir, Échap pour fermer.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "Non connecté à Vault : ouvrez la fenêtre de l'extension pour vous connecter."
+  },
+  "bgErrVaultUnreachable": {
+    "message": "Vault injoignable ou session expirée : reconnectez-vous depuis la fenêtre de l'extension."
   }
 }

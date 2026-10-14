@@ -65,6 +65,17 @@ function sharedWebsite(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= 2048 && !/[\x00-\x1F\x7F]/.test(value) ? value : undefined;
 }
 
+/**
+ * Format d'un ID de partage (contrat DEPLOYMENT.md, étape 8) : lettres, chiffres, « - » ou « _ », 128
+ * caractères au plus. Même règle à l'ÉMISSION (réponse de /create-share) et à la RÉCEPTION (ID collé).
+ */
+const SHARE_ID_RE = /^[a-zA-Z0-9\-_]{1,128}$/;
+
+/** true si la valeur est un ID de partage conforme au contrat */
+export function isValidShareId(value) {
+  return typeof value === 'string' && SHARE_ID_RE.test(value);
+}
+
 /** URL de partage reçue : http(s) uniquement (sinon null) */
 function sharedHttpUrl(value) {
   if (typeof value !== 'string' || !value) return null;
@@ -194,9 +205,17 @@ export default function ShareRbiModal({
         { headers: { 'Content-Type': 'application/json', 'X-Vault-Token': token }, timeout: 15000 }
       );
 
-      const id = proxyRes.data?.shareId;
-      if (!id) {
+      const rawId = proxyRes.data?.shareId;
+      if (!rawId) {
         throw new Error(t('share.errNoShareId'));
+      }
+      // DOCS-17 : format contrôlé dès l'ÉMISSION. Avant, tout shareId non vide était affiché tel quel et seul
+      // le destinataire le refusait (« ID invalide ») : partage inutilisable découvert trop tard. Même règle
+      // qu'à la réception, y compris le retrait des espaces de bord que le destinataire appliquait déjà : tout
+      // ID utilisable jusqu'ici reste accepté. Refus → wrapping token consommé (catch), message explicite.
+      const id = typeof rawId === 'string' ? rawId.trim() : rawId;
+      if (!isValidShareId(id)) {
+        throw Object.assign(new Error(t('share.errProxyInvalidShareId')), { code: 'RDV_INVALID_SHARE_ID' });
       }
 
       // Partage enregistré : le wrapping token appartient désormais au proxy
@@ -209,7 +228,9 @@ export default function ShareRbiModal({
         pendingWrappingToken = null;
         await discardWrappingToken(orphan);
       }
-      if (err.code === 'ECONNREFUSED' || err.code === 'ERR_NETWORK') {
+      if (err.code === 'RDV_INVALID_SHARE_ID') {
+        setError(t('share.errProxyInvalidShareId'));
+      } else if (err.code === 'ECONNREFUSED' || err.code === 'ERR_NETWORK') {
         setError(t('share.errProxyUnreachable'));
       } else {
         setError(t('share.errGenerate'));
@@ -239,8 +260,8 @@ export default function ShareRbiModal({
   const handleReceiveShare = async () => {
     const id = pastedId.trim();
     if (!id) return;
-    // SÉCURITÉ: Valider le format du shareId (alphanumeric + hyphens, max 128 chars)
-    if (!/^[a-zA-Z0-9\-_]{1,128}$/.test(id)) {
+    // SÉCURITÉ: Valider le format du shareId (lettres, chiffres, - et _, 128 caractères au plus)
+    if (!isValidShareId(id)) {
       setError(t('share.errInvalidId'));
       return;
     }

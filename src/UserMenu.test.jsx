@@ -69,6 +69,21 @@ describe('A11Y-33 — menu utilisateur', () => {
     expect(document.activeElement).toBe(items[0]);
   });
 
+  test('« Générateur de mot de passe » : présent après Paramètres et ouvre le générateur', () => {
+    const onOpenPasswordGenerator = jest.fn();
+    const { handlers } = mount({ onOpenPasswordGenerator });
+    trigger().focus();
+    act(() => { trigger().click(); });
+    const items = Array.from(dropdown().querySelectorAll('[role="menuitem"]'));
+    expect(items.map(i => i.textContent.trim())).toEqual([
+      en.toolbar.settings, en.passwordGenerator.title, en.user.passwordHealth, en.user.passkeys, en.toolbar.logout,
+    ]);
+    act(() => { items[1].click(); });
+    expect(onOpenPasswordGenerator).toHaveBeenCalledTimes(1);
+    expect(handlers.onOpenSettings).not.toHaveBeenCalled();
+    expect(dropdown()).toBeNull();
+  });
+
   test('Échap ferme le menu et rend le focus au déclencheur', () => {
     mount();
     trigger().focus();

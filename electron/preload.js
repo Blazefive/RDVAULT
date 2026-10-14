@@ -574,6 +574,19 @@ contextBridge.exposeInMainWorld('electronExport', {
 });
 
 // ========================================
+// API EXTENSION — Extension navigateur livrée avec l'application
+// ========================================
+// info() : { available, folder, id, version } ; copy() n'accepte qu'une valeur d'une liste fermée
+contextBridge.exposeInMainWorld('electronExtension', {
+  info: () => ipcRenderer.invoke('extension-info'),
+  openFolder: () => ipcRenderer.invoke('extension-open-folder'),
+  copy: (what) => {
+    if (!['folder', 'chrome', 'edge', 'brave'].includes(what)) return Promise.resolve({ success: false });
+    return ipcRenderer.invoke('extension-copy', what);
+  },
+});
+
+// ========================================
 // Permet au renderer de contrôle la fenêtre (minimiser, maximiser, fermer)
 // et de basculer entre mode login (compact) et mode principal (1280x800)
 contextBridge.exposeInMainWorld('electronWindow', {

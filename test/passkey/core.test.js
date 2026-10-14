@@ -154,9 +154,23 @@ test('attestation "packed" (self) : signature de l\'attestation valide', async (
   const ok = nodeCrypto.verify('sha256', Buffer.from(concat(authData, clientDataHash)), { key: pub, dsaEncoding: 'der' }, Buffer.from(sig));
   assert.equal(ok, true, 'la signature d\'auto-attestation est valide');
 
-  // AAGUID doit être nul pour une auto-attestation
-  const aaguid = authData.slice(37, 53);
-  assert.ok(aaguid.every(b => b === 0), 'AAGUID nul (self attestation)');
+  // AAGUID propre à RDVAULT (une auto-attestation sans x5c ne contraint pas l'AAGUID)
+  const aaguid = Buffer.from(authData.slice(37, 53)).toString('hex');
+  assert.equal(aaguid, core.AAGUID_HEX, 'AAGUID RDVAULT');
+  assert.equal(aaguid, '1c80936c3d174ec8acaf40e1e6a081cd');
+});
+
+test('Drapeaux de sauvegarde BE/BS : seulement sur demande (backupEligible: true), à la création comme à l\'assertion', async () => {
+  const plain = await core.createCredential({ rpId: RP_ID, origin: ORIGIN, challenge: nodeCrypto.randomBytes(32) });
+  assert.equal(cborDecode(b64urlDecode(plain.attestationObjectB64u)).get('authData')[32] & 0x18, 0, 'sans demande : ni BE ni BS');
+  assert.equal(plain.backupEligible, false);
+  const synced = await core.createCredential({ rpId: RP_ID, origin: ORIGIN, challenge: nodeCrypto.randomBytes(32), backupEligible: true });
+  assert.equal(cborDecode(b64urlDecode(synced.attestationObjectB64u)).get('authData')[32], 0x59, 'UP | BE | BS | AT');
+  assert.equal(synced.backupEligible, true);
+  const a1 = await core.getAssertion({ rpId: RP_ID, origin: ORIGIN, challenge: nodeCrypto.randomBytes(32), privateKeyJwk: synced.privateKeyJwk, credentialId: synced.credentialId, backupEligible: true });
+  assert.equal(b64urlDecode(a1.authenticatorDataB64u)[32], 0x19, 'assertion : UP | BE | BS');
+  const a2 = await core.getAssertion({ rpId: RP_ID, origin: ORIGIN, challenge: nodeCrypto.randomBytes(32), privateKeyJwk: plain.privateKeyJwk, credentialId: plain.credentialId });
+  assert.equal(b64urlDecode(a2.authenticatorDataB64u)[32], 0x01, 'passkey sans BE : UP seul');
 });
 
 test('attestation "none" par défaut (format none)', async () => {

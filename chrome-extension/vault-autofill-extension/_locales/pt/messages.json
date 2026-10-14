@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT"
   },
   "extDescription": {
     "message": "Preenchimento automático de formulários e passkeys com o RDVAULT (requer o aplicativo de desktop)"
@@ -9,7 +9,7 @@
     "message": "Verificando..."
   },
   "popupInfoRequiresDesktop": {
-    "message": "Esta extensão requer que o aplicativo de desktop Vault esteja aberto e conectado."
+    "message": "Esta extensão requer que o aplicativo RDVAULT esteja aberto e desbloqueado."
   },
   "popupDesktopUnavailable": {
     "message": "Aplicativo de desktop indisponível"
@@ -43,6 +43,12 @@
   },
   "popupPairingDeniedDetail": {
     "message": "O pareamento desta extensão foi recusado no aplicativo. Uma nova solicitação será possível em um minuto."
+  },
+  "popupPairingExpiredTitle": {
+    "message": "Pedido de emparelhamento expirado: reabra a extensão para tentar novamente"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "O pedido não recebeu resposta no RDVAULT (prazo: 60 segundos). Feche e reabra esta janela para enviar um novo pedido."
   },
   "popupDisconnectedDetail": {
     "message": "Abra o aplicativo de desktop e faça login para usar o preenchimento automático."
@@ -194,5 +200,26 @@
   },
   "bgErrClearCredential": {
     "message": "Erro ao excluir a credencial"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Credenciais do RDVAULT disponíveis: $COUNT$. Seta para baixo para escolher, Esc para fechar.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "O RDVAULT está bloqueado: desbloqueie o aplicativo e tente novamente."
+  },
+  "bgErrVaultClosed": {
+    "message": "O RDVAULT está fechado ou inacessível: abra o aplicativo e tente novamente."
+  },
+  "bgErrRateLimited": {
+    "message": "Solicitações demais enviadas ao RDVAULT: tente novamente em instantes."
+  },
+  "pkVaultUnavailable": {
+    "message": "O RDVAULT está fechado ou bloqueado: abra-o e desbloqueie-o para continuar, ou use outro dispositivo."
   }
 }

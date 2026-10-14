@@ -1,4 +1,10 @@
-# Vault Autofill - Extension Chrome (version simple)
+# RDVAULT (Vault direct) - Extension Chrome (version simple)
+
+Dans `chrome://extensions`, cette extension s'appelle **RDVAULT (Vault direct)** (nom traduit selon la langue du
+navigateur) ; la version enrichie s'appelle **RDVAULT**. Sans connexion à Vault, ou si Vault ne répond plus, le
+menu d'autoremplissage l'indique (« Non connecté à Vault… », « Vault injoignable ou session expirée… ») au lieu de
+« Aucun identifiant trouvé pour ce site ». Le menu s'utilise au clavier (Flèche bas pour entrer dans la liste,
+Entrée pour remplir, Échap pour fermer, Alt+Flèche bas pour rouvrir) et avec un lecteur d'écran.
 
 Extension Chrome (Manifest V3) pour auto-remplir les formulaires web avec vos identifiants stockés dans
 HashiCorp Vault. Cette version parle **directement** à Vault (authentification LDAP) ; la version enrichie,

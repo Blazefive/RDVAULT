@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT (Vault напрямую)"
   },
   "extDescription": {
     "message": "Автозаполнение форм с HashiCorp Vault"
@@ -115,5 +115,20 @@
   },
   "bgErrInternal": {
     "message": "Внутренняя ошибка"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Учётные данные Vault: $COUNT$. Стрелка вниз — выбрать, Esc — закрыть.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "Вход в Vault не выполнен: откройте окно расширения, чтобы войти."
+  },
+  "bgErrVaultUnreachable": {
+    "message": "Vault недоступен или сеанс истёк: войдите снова в окне расширения."
   }
 }

@@ -1,14 +1,16 @@
 /**
- * popup.js - Interface popup pour Vault Autofill
+ * popup.js - Interface popup de l'extension RDVAULT
  *
  * Affiche le statut de connexion avec l'application Desktop RDVAULT.
+ * Les changements d'état sont annoncés aux lecteurs d'écran (#statusCard, région « status »).
  * Actualise automatiquement toutes les 10 secondes (2 s pendant l'appairage).
  *
  * @author Vault Autofill Team
  * @version 2.1.0
  */
 
-'use strict';
+/* global chrome */ // API d'extension (page de la popup)
+'use strict'; // eslint-disable-line strict -- script classique de la popup, pas un module ES
 
 /** Intervalle de vérification du statut (ms) */
 const STATUS_POLL_INTERVAL_MS = 10000;
@@ -65,6 +67,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statusDetails = document.getElementById('statusDetails');
 
   let pollTimer = null;
+
+  /** Dernier état affiché (voir stateChanged) : « Vérification... » au chargement */
+  let lastStateKey = 'checking';
+
+  /**
+   * Demande d'appairage expirée sans réponse dans RDVAULT pendant que la popup est ouverte (EXT-25) :
+   * signalée par le service worker sur le port 'rdvault-popup'. Reste affichée jusqu'à la fermeture de la
+   * popup ; sa réouverture (nouveau port) autorise une nouvelle demande.
+   */
+  let pairingExpired = false;
 
   // ============================================================================
   // UTILITAIRES
@@ -142,6 +154,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (response && response.authenticated) {
         showConnected(response);
+      } else if (pairingExpired || (response && response.pairing === 'expired')) {
+        showPairingExpired();
+      } else if (response && response.pairing === 'connecting') {
+        // Demande de token en cours, sans réponse encore : ni « appairage envoyé » ni « indisponible »
+        showChecking();
+        nextDelay = PAIRING_POLL_INTERVAL_MS;
       } else if (response && response.pairing === 'pending') {
         showPairingPending();
         nextDelay = PAIRING_POLL_INTERVAL_MS;
@@ -160,11 +178,35 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /**
+   * Annonce aux lecteurs d'écran (#statusCard : role="status", aria-live="polite") : le contenu
+   * n'est réécrit que si l'état affiché change, sinon chaque rafraîchissement (10 s) serait relu.
+   *
+   * @param {string} key - Identifiant de l'état affiché (type + détails)
+   * @returns {boolean} true si l'état a changé et doit être affiché
+   */
+  function stateChanged(key) {
+    if (key === lastStateKey) return false;
+    lastStateKey = key;
+    return true;
+  }
+
+  /**
+   * Affiche « Vérification... » (demande en cours auprès de RDVAULT)
+   */
+  function showChecking() {
+    if (!stateChanged('checking')) return;
+    statusIcon.className = 'status-icon pending';
+    statusText.textContent = msg('popupStatusChecking', 'Vérification...');
+    clearElement(statusDetails);
+  }
+
+  /**
    * Affiche l'état connecté
    *
    * @param {Object} data - Données de connexion (username, vaultUrl)
    */
   function showConnected(data) {
+    if (!stateChanged(JSON.stringify(['connected', data.username || '', data.vaultUrl || '']))) return;
     statusIcon.className = 'status-icon connected';
     statusText.textContent = msg('popupDesktopConnected', 'Desktop connecté');
 
@@ -192,6 +234,7 @@ document.addEventListener('DOMContentLoaded', async () => {
    * Affiche l'état "appairage en attente de confirmation dans RDVAULT"
    */
   function showPairingPending() {
+    if (!stateChanged('pending')) return;
     statusIcon.className = 'status-icon pending';
     statusText.textContent = msg('popupPairingPendingTitle', 'Confirmez l\'accès dans l\'application RDVAULT');
 
@@ -206,6 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
    * Affiche l'état "accès refusé dans RDVAULT"
    */
   function showPairingDenied() {
+    if (!stateChanged('denied')) return;
     statusIcon.className = 'status-icon disconnected';
     statusText.textContent = msg('popupPairingDeniedTitle', 'Accès refusé dans RDVAULT');
 
@@ -217,11 +261,48 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /**
+   * Affiche l'état "demande d'appairage expirée" (boîte de RDVAULT fermée sans réponse, EXT-25)
+   */
+  function showPairingExpired() {
+    if (!stateChanged('expired')) return;
+    statusIcon.className = 'status-icon disconnected';
+    statusText.textContent = msg('popupPairingExpiredTitle', 'Demande d\'appairage expirée : rouvrez l\'extension pour réessayer');
+
+    clearElement(statusDetails);
+
+    statusDetails.appendChild(createElement('p', {
+      style: { color: '#b45309' }
+    }, msg('popupPairingExpiredDetail', 'La demande n\'a pas reçu de réponse dans RDVAULT (délai : 60 secondes). Fermez puis rouvrez cette fenêtre pour envoyer une nouvelle demande.')));
+  }
+
+  /**
+   * Ouvre le port 'rdvault-popup' vers le service worker : sa connexion signale la (ré)ouverture de la
+   * popup (une demande d'appairage expirée peut être renouvelée) ; il transporte l'état « expiré » (EXT-25).
+   * Sans service worker récent (port refusé), la popup fonctionne comme avant.
+   */
+  function connectPopupPort() {
+    try {
+      if (typeof chrome === 'undefined' || !chrome.runtime || typeof chrome.runtime.connect !== 'function') return;
+      const port = chrome.runtime.connect({ name: 'rdvault-popup' });
+      port.onMessage.addListener((message) => {
+        if (message && message.type === 'PAIRING_STATE' && message.state === 'expired') {
+          pairingExpired = true;
+          showPairingExpired();
+          scheduleNextCheck(STATUS_POLL_INTERVAL_MS);
+        }
+      });
+    } catch (err) {
+      // Port indisponible : affichage habituel
+    }
+  }
+
+  /**
    * Affiche l'état déconnecté
    *
    * @param {string} message - Message de statut
    */
   function showDisconnected(message) {
+    if (!stateChanged(JSON.stringify(['disconnected', message]))) return;
     statusIcon.className = 'status-icon disconnected';
     statusText.textContent = message;
 
@@ -235,6 +316,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ============================================================================
   // INITIALISATION
   // ============================================================================
+
+  // Port vers le service worker AVANT la première vérification : une demande d'appairage expirée est
+  // renouvelable dès cette ouverture (EXT-25)
+  connectPopupPort();
 
   // Vérifier au démarrage (programme ensuite les vérifications suivantes)
   await checkDesktopStatus();

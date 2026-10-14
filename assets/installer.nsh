@@ -25,6 +25,14 @@
 ;   RMDir /r $INSTDIR, avec --updated), fichiers de l'application, puis customInstall ;
 ; - un.install (uninstaller.nsh) : customUnInstall, RMDir /r $INSTDIR, puis DeleteRegKey SHELL_CONTEXT.
 ; Tests : test/installer/installer-nsis.test.js (banc makensis sur ces macros).
+;
+; CONFIG-8 : %PROGRAMDATA%\RDVAULT\config.cfg est lu EN PRIORITE par l'application. L'ACL par defaut de
+; C:\ProgramData laisse tout utilisateur y creer ce dossier et y imposer sa configuration a tous les
+; utilisateurs du poste. Installation par machine (et chaque mise a jour) : le dossier est cree, un lien
+; (jonction) a sa place est supprime, puis icacls pose proprietaire Administrateurs et ACL (Administrateurs
+; et SYSTEM : controle total ; Utilisateurs : lecture ; heritage coupe ; ACE explicites anterieures
+; retirees). Les fichiers deja presents ne changent PAS de proprietaire : celui d'un fichier depose par un
+; utilisateur reste l'utilisateur, et electron/configLoader.js le refuse.
 
 ; ========================================
 ; VARIABLES
@@ -70,6 +78,8 @@ Var RDV_VALUE
 !define RDV_BASE_COPY "$PLUGINSDIR\rdvault-config.base"
 !define RDV_JSON_COPY "$PLUGINSDIR\rdvault-config.json.keep"
 !define RDV_PAIRED_COPY "$PLUGINSDIR\rdvault-paired-extensions.json"
+; Dossier de configuration machine (%PROGRAMDATA%\RDVAULT) : $APPDATA avec SetShellVarContext all
+!define RDV_MACHINE_CONFIG_DIR "$APPDATA\RDVAULT"
 
 !include "FileFunc.nsh"
 !include "TextFunc.nsh"
@@ -548,6 +558,49 @@ Function RdvWriteDefaultConfig
   Pop $0
 FunctionEnd
 
+; ========================================
+; CONFIG-8 : PROTECTION DE %PROGRAMDATA%\RDVAULT
+; ========================================
+; Lance icacls (sans fenetre) ; code de sortie dans $R9. Bloc remplace par une simulation dans le banc
+; d'essai (test/installer/nsis-bench.js), qui verifie la ligne de commande sans jamais l'executer.
+; >>> RDV-BENCH-EXEC-BEGIN
+!macro RdvRunIcacls ARGS
+  nsExec::ExecToLog '"$SYSDIR\icacls.exe" ${ARGS}'
+  Pop $R9
+!macroend
+; <<< RDV-BENCH-EXEC-END
+
+; Installation par machine uniquement (droits administrateur) : une installation par utilisateur ne doit
+; ni creer ce dossier (l'utilisateur en deviendrait proprietaire) ni pouvoir en fixer l'ACL.
+!macro RdvProtectMachineConfigDir
+  ${If} $installMode == "all"
+    SetShellVarContext all
+    ; Jonction ou lien symbolique cree par un utilisateur a la place du dossier : RMDir (sans /r) le
+    ; supprime sans toucher a sa cible ; un vrai dossier non vide est conserve. Un fichier du meme nom
+    ; (qui empecherait la creation du dossier) est supprime.
+    RMDir "${RDV_MACHINE_CONFIG_DIR}"
+    Delete "${RDV_MACHINE_CONFIG_DIR}"
+    CreateDirectory "${RDV_MACHINE_CONFIG_DIR}"
+    ${If} ${FileExists} "${RDV_MACHINE_CONFIG_DIR}\*.*"
+      ; 1. Proprietaire : Administrateurs (dossier seul : le proprietaire des fichiers existants est conserve)
+      !insertmacro RdvRunIcacls '"${RDV_MACHINE_CONFIG_DIR}" /setowner *S-1-5-32-544 /C /Q'
+      StrCpy $R8 $R9
+      ; 2. ACE explicites anterieures (ajoutees par celui qui a cree le dossier) retirees
+      !insertmacro RdvRunIcacls '"${RDV_MACHINE_CONFIG_DIR}" /reset /C /Q'
+      StrCpy $R8 "$R8 $R9"
+      ; 3. Heritage coupe ; SYSTEM et Administrateurs : controle total ; Utilisateurs : lecture et execution
+      !insertmacro RdvRunIcacls '"${RDV_MACHINE_CONFIG_DIR}" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /C /Q'
+      StrCpy $R8 "$R8 $R9"
+      ${If} $R8 != "0 0 0"
+        DetailPrint "RDVAULT : ACL de ${RDV_MACHINE_CONFIG_DIR} non appliquee (codes icacls : $R8) ; l'application ignorera la configuration de ce dossier tant qu'il restera modifiable par des non-administrateurs"
+      ${EndIf}
+    ${Else}
+      DetailPrint "RDVAULT : creation de ${RDV_MACHINE_CONFIG_DIR} impossible"
+    ${EndIf}
+  ${EndIf}
+  ClearErrors
+!macroend
+
 ; Mode valide dans la page de mode (pile : "local" ou "enterprise") : remplacera APP_MODE
 Function RdvModeChosen
   Exch $R0
@@ -736,6 +789,9 @@ FunctionEnd
     CopyFiles /SILENT "${RDV_PAIRED_COPY}" "$APPDATA\RDVAULT\paired-extensions.json"
   ${EndIf}
   ClearErrors
+
+  ; CONFIG-8 : %PROGRAMDATA%\RDVAULT reserve aux administrateurs (a chaque installation et mise a jour)
+  !insertmacro RdvProtectMachineConfigDir
 
   ; Raccourcis
   ${if} $installMode == "all"

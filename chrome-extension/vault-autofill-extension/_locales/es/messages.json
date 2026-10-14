@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT"
   },
   "extDescription": {
     "message": "Autocompletado de formularios y passkeys con RDVAULT (requiere la aplicación de escritorio)"
@@ -9,7 +9,7 @@
     "message": "Comprobando..."
   },
   "popupInfoRequiresDesktop": {
-    "message": "Esta extensión requiere que la aplicación de escritorio Vault esté abierta y conectada."
+    "message": "Esta extensión requiere que la aplicación RDVAULT esté abierta y desbloqueada."
   },
   "popupDesktopUnavailable": {
     "message": "Aplicación de escritorio no disponible"
@@ -43,6 +43,12 @@
   },
   "popupPairingDeniedDetail": {
     "message": "La vinculación de esta extensión se ha rechazado en la aplicación. Podrá enviar una nueva solicitud dentro de un minuto."
+  },
+  "popupPairingExpiredTitle": {
+    "message": "Solicitud de emparejamiento caducada: vuelva a abrir la extensión para reintentarlo"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "La solicitud no recibió respuesta en RDVAULT (plazo: 60 segundos). Cierre y vuelva a abrir esta ventana para enviar una nueva solicitud."
   },
   "popupDisconnectedDetail": {
     "message": "Abra la aplicación de escritorio e inicie sesión para usar el autocompletado."
@@ -194,5 +200,26 @@
   },
   "bgErrClearCredential": {
     "message": "Error al eliminar la credencial"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Credenciales de RDVAULT disponibles: $COUNT$. Flecha abajo para elegir, Esc para cerrar.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "RDVAULT está bloqueado: desbloquee la aplicación y vuelva a intentarlo."
+  },
+  "bgErrVaultClosed": {
+    "message": "RDVAULT está cerrado o no responde: abra la aplicación y vuelva a intentarlo."
+  },
+  "bgErrRateLimited": {
+    "message": "Demasiadas solicitudes enviadas a RDVAULT: vuelva a intentarlo en un momento."
+  },
+  "pkVaultUnavailable": {
+    "message": "RDVAULT está cerrado o bloqueado: ábralo y desbloquéelo para continuar, o use otro dispositivo."
   }
 }

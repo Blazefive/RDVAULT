@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT"
   },
   "extDescription": {
     "message": "RDVAULT ile form otomatik doldurma ve passkey'ler (masaüstü uygulaması gerekir)"
@@ -9,7 +9,7 @@
     "message": "Kontrol ediliyor..."
   },
   "popupInfoRequiresDesktop": {
-    "message": "Bu uzantı, Vault masaüstü uygulamasının çalışıyor ve bağlı olmasını gerektirir."
+    "message": "Bu uzantı, RDVAULT uygulamasının çalışıyor ve kilidinin açık olmasını gerektirir."
   },
   "popupDesktopUnavailable": {
     "message": "Masaüstü uygulaması kullanılamıyor"
@@ -43,6 +43,12 @@
   },
   "popupPairingDeniedDetail": {
     "message": "Bu uzantının eşleştirilmesi uygulamada reddedildi. Bir dakika sonra yeni bir istek gönderebilirsiniz."
+  },
+  "popupPairingExpiredTitle": {
+    "message": "Eşleştirme isteğinin süresi doldu: yeniden denemek için uzantıyı tekrar açın"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "İstek RDVAULT içinde yanıtlanmadı (süre: 60 saniye). Yeni bir istek göndermek için bu pencereyi kapatıp yeniden açın."
   },
   "popupDisconnectedDetail": {
     "message": "Otomatik doldurmayı kullanmak için masaüstü uygulamasını başlatıp oturum açın."
@@ -194,5 +200,26 @@
   },
   "bgErrClearCredential": {
     "message": "Kimlik bilgisi silinirken hata oluştu"
+  },
+  "autofillMenuAnnounce": {
+    "message": "RDVAULT kimlik bilgileri: $COUNT$. Seçmek için Aşağı ok, kapatmak için Esc.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "RDVAULT kilitli: uygulamanın kilidini açın ve yeniden deneyin."
+  },
+  "bgErrVaultClosed": {
+    "message": "RDVAULT kapalı veya erişilemiyor: uygulamayı açın ve yeniden deneyin."
+  },
+  "bgErrRateLimited": {
+    "message": "RDVAULT'a çok fazla istek gönderildi: biraz sonra yeniden deneyin."
+  },
+  "pkVaultUnavailable": {
+    "message": "RDVAULT kapalı veya kilitli: devam etmek için açıp kilidini açın ya da başka bir cihaz kullanın."
   }
 }

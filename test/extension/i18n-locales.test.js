@@ -166,7 +166,7 @@ function loadBridge({ locale = null, passkeys = [] } = {}) {
   // Monde isolé simulé : globalThis du contexte = { window, document, chrome, RDVaultPasskeyCore… }
   vm.runInNewContext(BRIDGE_SRC, {
     window: win, document: w.document, chrome, RDVaultPasskeyCore: core,
-    getComputedStyle: () => ({}), performance, console,
+    getComputedStyle: () => ({}), performance, console, setTimeout, clearTimeout,
   }, { filename: path.join(ENRICHED, 'passkey-bridge.js') });
   let seq = 0;
   const send = (op, data) => listeners.forEach((fn) => fn({ source: win, data: { source: 'rdvault-passkey', dir: 'req', id: 'r' + (++seq), op, data } }));
@@ -293,7 +293,7 @@ test('popup de l\'extension enrichie : textes traduits, français d\'origine san
   for (const s of states) {
     const fr = await loadPopup(ENRICHED, { reply: () => s.reply });
     assert.equal(fr.d.getElementById('statusText').textContent, s.fr);
-    assert.equal(norm(fr.d.querySelector('.info-box').textContent), 'Cette extension nécessite que l\'application Desktop Vault soit lancée et connectée.');
+    assert.equal(norm(fr.d.querySelector('.info-box').textContent), 'Cette extension nécessite que l\'application RDVAULT soit lancée et déverrouillée.');
     if (s.key === 'popupDesktopConnected') {
       assert.deepEqual(paragraphs(fr.d), ['Utilisateur: alice', 'Serveur: https://v', '✓ Auto-remplissage actif']);
     }
@@ -389,4 +389,179 @@ test('service worker simple : erreurs traduites', async () => {
     assert.equal((await call({ type: 'SELECT_CREDENTIAL', name: 'x' }, { tab: { url: 'http://site-a.com/' } })).error, exp('bgErrInsecurePage'), String(loc));
     assert.equal((await call({ type: 'LOGIN', vaultUrl: 'http://vault' }, {})).error, exp('bgErrInvalidVaultUrl'), String(loc));
   }
+});
+
+// ---------- EXT-29 : noms des deux extensions ----------
+test('EXT-29 : l\'extension enrichie s\'appelle « RDVAULT » partout, la simple a un nom distinct qui commence par RDVAULT', () => {
+  for (const loc of LOCALES) {
+    const e = readMessages(ENRICHED, loc);
+    const s = readMessages(SIMPLE, loc);
+    assert.equal(e.extName.message, 'RDVAULT', `${loc} : nom de l'extension enrichie`);
+    assert.ok(/^RDVAULT\b/.test(s.extName.message) && s.extName.message !== 'RDVAULT', `${loc} : nom de l'extension simple (${s.extName.message})`);
+    assert.ok(!/Vault Autofill/.test(e.extName.message + s.extName.message), `${loc} : ancien nom « Vault Autofill »`);
+    assert.ok(!/Desktop Vault|Vault desktop|Vault-Desktop|Vault 桌面|Vault デスクトップ|Vault 데스크톱|Vault لسطح/.test(e.popupInfoRequiresDesktop.message), `${loc} : la popup parle encore de l'application « Vault »`);
+    assert.ok(e.popupInfoRequiresDesktop.message.includes('RDVAULT'), `${loc} : popup sans « RDVAULT »`);
+  }
+  assert.equal(readMessages(SIMPLE, 'fr').extName.message, 'RDVAULT (Vault direct)');
+  assert.equal(readMessages(ENRICHED, 'fr').extDescription.message, 'Auto-remplissage de formulaires et passkeys avec RDVAULT (nécessite l\'application de bureau RDVAULT)');
+  // Popups : titre RDVAULT (plus « Vault Autofill »)
+  for (const dir of [ENRICHED, SIMPLE]) {
+    const html = fs.readFileSync(path.join(dir, 'popup.html'), 'utf8');
+    assert.ok(!html.includes('Vault Autofill'), path.relative(ROOT, dir) + ' : popup encore titrée « Vault Autofill »');
+  }
+});
+
+// ---------- EXT-23 : RDVAULT verrouillé / fermé, messages explicites ----------
+/** background.js de l'extension enrichie dans un contexte vm ; `fetchImpl(url)` simule authenticatedFetch */
+function loadEnrichedBackground(fetchImpl, { locale = null, pairingDenied = false } = {}) {
+  const BG = path.join(ENRICHED, 'background.js');
+  const ctx = {
+    console: { log() {}, info() {}, warn() {}, error() {}, debug() {} },
+    URL, URLSearchParams, setTimeout, clearTimeout, setInterval, clearInterval,
+    importScripts() {
+      ctx.authManager = { start: async () => {}, authenticatedFetch: async (url) => fetchImpl(url), isPairingDenied: () => pairingDenied };
+    },
+  };
+  if (locale) ctx.chrome = { i18n: fakeI18n(ENRICHED, locale) };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(BG, 'utf8'), ctx, { filename: BG });
+  return (name) => vm.runInContext(name, ctx);
+}
+const httpReply = (status, body = {}) => async () => ({ ok: status < 300, status, json: async () => body });
+const refused = async () => { throw new TypeError('Failed to fetch'); };
+const LOCKED_FR = 'RDVAULT est verrouillé : déverrouillez l\'application, puis réessayez.';
+const CLOSED_FR = 'RDVAULT est fermé ou injoignable : ouvrez l\'application, puis réessayez.';
+
+test('EXT-23 : identifiant choisi avec RDVAULT verrouillé (401) ou fermé → « RDVAULT est verrouillé / fermé », plus « Erreur HTTP 401 »', async () => {
+  const sender = { tab: { url: 'https://site-a.com/login' }, frameId: 0 };
+  assert.equal((await loadEnrichedBackground(httpReply(401))('getSecretForHost')('site-a.com', 'e', 'n')).error, LOCKED_FR);
+  assert.equal((await loadEnrichedBackground(refused)('getSecretForHost')('site-a.com', 'e', 'n')).error, CLOSED_FR);
+  assert.equal((await loadEnrichedBackground(httpReply(429))('getSecretForHost')('site-a.com', 'e', 'n')).error, 'Trop de demandes envoyées à RDVAULT : réessayez dans un instant.');
+  assert.equal((await loadEnrichedBackground(refused, { pairingDenied: true })('getSecretForHost')('site-a.com', 'e', 'n')).error, 'Accès refusé dans RDVAULT');
+  // Liste du site : échec signalé comme tel, avec la raison (le menu ne dit plus « aucun identifiant »)
+  const locked = await loadEnrichedBackground(httpReply(401))('handleGetCredentials')(sender);
+  assert.equal(locked.success, false);
+  assert.equal(locked.error, LOCKED_FR);
+  const closed = await loadEnrichedBackground(refused)('handleGetCredentials')(sender);
+  assert.equal(closed.success, false);
+  assert.equal(closed.error, CLOSED_FR);
+  // Traduit (anglais)
+  assert.equal((await loadEnrichedBackground(httpReply(401), { locale: 'en' })('getSecretForHost')('site-a.com', 'e', 'n')).error, tr(ENRICHED, 'en', 'bgErrVaultLocked'));
+  assert.equal(tr(ENRICHED, 'en', 'bgErrVaultLocked'), 'RDVAULT is locked: unlock the app, then try again.');
+});
+
+test('EXT-26 : PASSKEY_STATUS (fenêtre passkey) → prêt seulement si RDVAULT est ouvert ET déverrouillé', async () => {
+  const status = async (impl) => JSON.parse(JSON.stringify(await loadEnrichedBackground(impl)('handlePasskeyStatus')()));
+  assert.deepEqual(await status(httpReply(200, { connected: true, vaultUrl: 'v', username: 'u' })), { success: true, ready: true });
+  assert.deepEqual(await status(httpReply(200, { connected: false })), { success: true, ready: false }, 'verrouillé');
+  assert.deepEqual(await status(refused), { success: true, ready: false }, 'fermé');
+  assert.deepEqual(await status(httpReply(401)), { success: true, ready: false });
+});
+
+test('EXT-23 : extension simple — non connectée à Vault ou Vault injoignable → échec explicite, plus une liste vide', async () => {
+  const BG = path.join(SIMPLE, 'background.js');
+  const src = fs.readFileSync(BG, 'utf8');
+  const load = (client) => {
+    let handler = null;
+    const chrome = {
+      runtime: { id: 'ext', onMessage: { addListener: (fn) => { handler = fn; } }, onStartup: { addListener() {} } },
+      alarms: { create() {}, onAlarm: { addListener() {} } },
+      storage: { session: { get: async () => (client ? { vaultUrl: 'https://vault', vaultToken: 't' } : {}), set: async () => {}, clear: async () => {} }, local: { remove: async () => {} } },
+    };
+    const ctx = { console: { log() {}, info() {}, warn() {}, error() {} }, URL, setTimeout, clearTimeout, chrome, importScripts() { ctx.VaultClient = client || function () {}; } };
+    vm.createContext(ctx);
+    vm.runInContext(src, ctx, { filename: BG });
+    return (req) => new Promise((resolve) => handler(req, { id: 'ext', tab: { url: 'https://site-a.com/login' } }, resolve));
+  };
+  const notLogged = await load(null)({ type: 'GET_CREDENTIALS' });
+  assert.equal(notLogged.success, false);
+  assert.equal(notLogged.error, 'Non connecté à Vault : ouvrez la fenêtre de l\'extension pour vous connecter.');
+  function Failing() { this.getAllSecrets = async () => { throw new Error('403'); }; }
+  const unreachable = await load(Failing)({ type: 'GET_CREDENTIALS' });
+  assert.equal(unreachable.success, false);
+  assert.equal(unreachable.error, 'Vault injoignable ou session expirée : reconnectez-vous depuis la fenêtre de l\'extension.');
+  const sel = await load(Failing)({ type: 'SELECT_CREDENTIAL', name: 'x', engine: '' });
+  assert.equal(sel.error, unreachable.error, 'sélection : même explication, plus « identifiant introuvable »');
+  function Working() { this.getAllSecrets = async () => [{ name: 'a', engine: 'kv', username: 'u', password: 'p', url: 'https://site-a.com' }]; }
+  const ok = await load(Working)({ type: 'GET_CREDENTIALS' });
+  assert.equal(ok.success, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(ok.credentials)), [{ name: 'a', engine: 'kv', username: 'u' }]);
+});
+
+// ---------- EXT-25 : appairage annoncé seulement s'il est réellement en attente ----------
+function loadAuthManager(fetchImpl) {
+  const FILE = path.join(ENRICHED, 'auth-manager.js');
+  const ctx = {
+    console: { log() {}, info() {}, warn() {}, error() {}, debug() {} },
+    setTimeout, clearTimeout, setInterval, clearInterval, AbortController, Error, Promise, Date,
+    fetch: fetchImpl,
+    chrome: {
+      runtime: { id: 'ext', getPlatformInfo() {} },
+      storage: { session: { get: async () => ({}), set: async () => {}, remove: async () => {} } },
+      alarms: { create: async () => {}, clear: async () => {}, onAlarm: { addListener() {} } },
+    },
+    module: { exports: {} },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(FILE, 'utf8'), ctx, { filename: FILE });
+  return ctx.module.exports.authManager || vm.runInContext('authManager', ctx);
+}
+
+test('EXT-25 : RDVAULT fermé (connexion refusée) → jamais « demande d\'appairage envoyée » ; boîte d\'appairage ouverte (> 1 s) → en attente', { timeout: 20000 }, async () => {
+  const closed = loadAuthManager(async () => { throw new TypeError('Failed to fetch'); });
+  const states = new Set();
+  const sampler = setInterval(() => states.add(closed.getPairingState()), 20);
+  const ok = await closed._fetchNewToken();
+  clearInterval(sampler);
+  assert.equal(ok, false);
+  assert.ok(!states.has('pending'), 'jamais « en attente d\'appairage » : ' + [...states].join(', '));
+  assert.ok(states.has('unavailable'), 'indisponible entre deux tentatives');
+  assert.equal(closed.getPairingState(), 'unavailable');
+
+  // Boîte d'appairage affichée dans RDVAULT : la requête reste ouverte → « en attente » après ~1 s
+  const pairing = loadAuthManager(() => new Promise((resolve) => setTimeout(() => resolve({ ok: true, status: 200, json: async () => ({ token: 'tok' }) }), 1600)));
+  const p = pairing._fetchNewToken();
+  await sleep(300);
+  assert.equal(pairing.getPairingState(), 'connecting', 'connexion en cours');
+  assert.equal(pairing.isPairingPending(), false);
+  await sleep(1000);
+  assert.equal(pairing.isPairingPending(), true, 'requête toujours ouverte après 1 s : appairage en attente');
+  assert.equal(await p, true);
+  assert.equal(pairing.getPairingState(), 'ok');
+});
+
+test('EXT-25 / EXT-27 : popup enrichie — état « connexion en cours », région annoncée (role=status), pas de réannonce sans changement', { timeout: 15000 }, async () => {
+  let reply = { authenticated: false, pairing: 'pending', reachable: true };
+  const p = await loadPopup(ENRICHED, { reply: () => reply });
+  const card = p.d.getElementById('statusCard');
+  assert.equal(card.getAttribute('role'), 'status');
+  assert.equal(card.getAttribute('aria-live'), 'polite');
+  assert.equal(card.getAttribute('aria-atomic'), 'true');
+  assert.equal(p.d.querySelector('h1').textContent, 'RDVAULT');
+  assert.equal(p.d.title, 'RDVAULT');
+  assert.equal(p.d.getElementById('statusText').textContent, 'Confirmez l\'accès dans l\'application RDVAULT');
+  // Même état au rafraîchissement suivant (2 s pendant l'appairage) : contenu non réécrit, rien de réannoncé
+  let mutations = 0;
+  new p.dom.window.MutationObserver((list) => { mutations += list.length; }).observe(card, { childList: true, subtree: true, characterData: true, attributes: true });
+  await sleep(2200);
+  assert.equal(mutations, 0, 'aucune mutation de la région annoncée sans changement d\'état');
+  // Demande de token sans réponse encore : « Vérification... », pas « demande d'appairage envoyée »
+  reply = { authenticated: false, pairing: 'connecting', reachable: null };
+  await sleep(2200);
+  assert.equal(p.d.getElementById('statusText').textContent, 'Vérification...');
+  assert.equal(p.d.getElementById('statusDetails').textContent, '');
+});
+
+test('EXT-27 : popup simple — erreur annoncée (role=alert) et conservée jusqu\'à l\'action suivante, succès (role=status) masqué après 3 s', { timeout: 15000 }, async () => {
+  const reply = (m) => (m.type === 'CHECK_AUTH' ? { authenticated: false } : { success: false, error: 'x' });
+  const p = await loadPopup(SIMPLE, { reply });
+  const d = p.d;
+  assert.equal(d.querySelector('h1').textContent, 'RDVAULT (Vault direct)');
+  d.getElementById('loginBtn').click();
+  await sleep(10);
+  const status = d.getElementById('status');
+  assert.equal(status.getAttribute('role'), 'alert');
+  assert.equal(status.textContent, 'Veuillez remplir tous les champs obligatoires');
+  await sleep(3300);
+  assert.equal(status.classList.contains('hidden'), false, 'erreur toujours affichée après 3 s');
 });

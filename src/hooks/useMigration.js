@@ -153,10 +153,14 @@ export function useMigration({
     }
   };
 
-  // Fin d'opération : rafraîchir le coffre AFFICHÉ (SECRETS-32), selon la case « Afficher les supprimés »
-  const refreshShownEngine = async () => {
+  // Fin d'opération : rafraîchir le coffre AFFICHÉ (SECRETS-32), selon la case « Afficher les supprimés ».
+  // PERFORMANCE : seules les entrées écrites ou supprimées dans ce coffre sont relues (`touched` : nom du
+  // coffre → noms), plus celles notées par le journal des écritures ; avant, tout le coffre était relu.
+  const refreshShownEngine = async (touched) => {
     const shown = selectedEngineRef.current;
-    if (shown) await fetchSecretsRef.current?.(shown);
+    if (!shown) return;
+    const names = touched && touched.get(shown.name);
+    await fetchSecretsRef.current?.(shown, undefined, { incremental: true, touched: names ? Array.from(names) : [] });
   };
 
   // Toast de fin d'opération (renommages et entrées refusées pour TOTP précisés entre parenthèses)
@@ -180,7 +184,7 @@ export function useMigration({
       showToast(t('migrate.destinationUnlisted', { engine: targetEngine?.name || '', reason }), 'error', 10000);
       return;
     }
-    await refreshShownEngine();
+    await refreshShownEngine(result.touched);
     clearSelection();
     if (syncExtension) syncExtensionRef.current?.();
     reportResult(successKey, result);
@@ -195,7 +199,13 @@ export function useMigration({
    * @param {boolean} move - Déplacement (source supprimée) ou copie
    */
   const transferAll = async (sourceEngine, targetEngine, names, targetPathOf, move) => {
-    const result = { done: 0, failed: 0, renamed: 0, locked: 0 };
+    // touched : entrées écrites (destination) ou supprimées (source d'un déplacement), par coffre
+    const touched = new Map();
+    const touch = (engine, name) => {
+      if (!touched.has(engine.name)) touched.set(engine.name, new Set());
+      touched.get(engine.name).add(name);
+    };
+    const result = { done: 0, failed: 0, renamed: 0, locked: 0, touched };
     // Noms pris relus au début de l'opération, DANS la file (une opération précédente a pu en ajouter).
     // Listage impossible : opération INTERROMPUE avant toute écriture (aucun doublon détectable).
     let takenNames;
@@ -214,6 +224,8 @@ export function useMigration({
           result.locked++;
           continue;
         }
+        touch(targetEngine, target.name);
+        if (move) touch(sourceEngine, name);
         if (await transferEntry(sourceEngine, name, targetEngine, target.name, move)) {
           takenNames.add(target.name);
           if (target.renamed) result.renamed++;

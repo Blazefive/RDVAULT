@@ -7,6 +7,7 @@
 // - La liste envoyée au content script ne contient JAMAIS de mot de passe :
 //   le mot de passe n'est renvoyé qu'à la sélection (SELECT_CREDENTIAL), depuis le cache
 
+/* global chrome, importScripts, VaultClient */ // API d'extension et service worker « classique » ; VaultClient vient de vault-client.js
 importScripts('vault-client.js');
 
 let vaultClient = null;
@@ -104,12 +105,14 @@ async function refreshSecretsCache() {
   }
 }
 
-// Trouver les secrets (complets, en mémoire du background) pour un hostname
+// Trouver les secrets (complets, en mémoire du background) pour un hostname.
+// Un ÉCHEC renvoie { error } (message traduit), à distinguer d'une liste vide (« aucun identifiant
+// pour ce site ») : le menu d'autoremplissage explique alors pourquoi rien n'est proposé.
 async function getSecretsForHostname(hostname) {
   if (!vaultClient) {
     const initialized = await initVaultClient();
     if (!initialized) {
-      return [];
+      return { error: i18nMessage('bgErrNotLoggedIn', 'Non connecté à Vault : ouvrez la fenêtre de l\'extension pour vous connecter.') };
     }
   }
 
@@ -124,7 +127,7 @@ async function getSecretsForHostname(hostname) {
     return filterSecretsByHostname(cachedSecrets, hostname);
   } catch (err) {
     console.error('Error getting credentials');
-    return [];
+    return { error: i18nMessage('bgErrVaultUnreachable', 'Vault injoignable ou session expirée : reconnectez-vous depuis la fenêtre de l\'extension.') };
   }
 }
 
@@ -211,6 +214,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           }
 
           const matches = await getSecretsForHostname(hostname);
+          if (!Array.isArray(matches)) {
+            sendResponse({ success: false, credentials: [], error: matches.error });
+            break;
+          }
           sendResponse({ success: true, credentials: matches.map(toCredentialSummary) });
           break;
         }
@@ -231,6 +238,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           }
 
           const matches = await getSecretsForHostname(hostname);
+          if (!Array.isArray(matches)) {
+            sendResponse({ success: false, error: matches.error });
+            break;
+          }
           const secret = matches.find(s => s.name === name && (s.engine || '') === engine);
 
           if (!secret) {

@@ -33,7 +33,6 @@ import { useTranslation } from './i18n';                 // Internationalisation
 import './AppStyles.css';
 import { sanitizeErrorMessage } from './utils/security';
 import { rbiLaunchErrorMessage, rbiWebsiteOption } from './utils/urlHandler';
-import { readAllSecrets } from './utils/readAllSecrets';
 import { createVaultApi } from './services/vaultApi';
 import { useToast, Toast } from './hooks/useToast';
 import { useClipboard } from './hooks/useClipboard';
@@ -62,7 +61,8 @@ import ModalOrchestrator from './components/ModalOrchestrator';
 // ========================================
 // IMPORTS DES MODULES DE SÉCURITÉ
 // ========================================
-import { useSessionTimeout, DEFAULT_LOCKED_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS } from './useSessionTimeout';
+import { useSessionTimeout, DEFAULT_LOCKED_TIMEOUT_MS } from './useSessionTimeout';
+import { useIdleTimeoutMs } from './hooks/useIdleTimeout';
 import { useDebounce } from './useRateLimit';
 import secureLogger from './secureLogger';
 
@@ -135,6 +135,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);      // Modal paramètres
   const [showPasswordHealth, setShowPasswordHealth] = useState(false); // Modal audit de santé des mots de passe
   const [showPasskeys, setShowPasskeys] = useState(false); // Modal gestion des passkeys
+  const [showPasswordGenerator, setShowPasswordGenerator] = useState(false); // Générateur autonome (menu utilisateur)
   // discoveredTags moved to useTags hook
   const [shareRbiSecret, setShareRbiSecret] = useState(null);   // Secret à partager via RBI wrapping
   const [receiveShareOpen, setReceiveShareOpen] = useState(false); // Modal réception partage RBI
@@ -205,8 +206,13 @@ export default function App() {
   // sessionTokenRef est mis à jour de façon synchrone par useAuth.
   const sessionChanged = (start) => !start || sessionTokenRef.current !== start;
 
-  // Service Vault API (recréé quand les credentials changent)
-  const vaultApi = useMemo(() => createVaultApi(vaultUrl, token, vaultNs), [vaultUrl, token, vaultNs]);
+  // Service Vault API (recréé quand les credentials changent). Mode local (serveur du coffre local sur
+  // 127.0.0.1) : lecture groupée des entrées (route propre au coffre local) ; jamais contre un Vault distant.
+  const localVaultServer = appMode === 'local' && /^http:\/\/127\.0\.0\.1:\d+$/.test(String(vaultUrl || ''));
+  const vaultApi = useMemo(
+    () => createVaultApi(vaultUrl, token, vaultNs, { batchRead: localVaultServer }),
+    [vaultUrl, token, vaultNs, localVaultServer]
+  );
   vaultApiRef.current = vaultApi;
 
   // ========================================
@@ -289,6 +295,8 @@ export default function App() {
     versionHistory, setVersionHistory,
     loadingAllSecrets, setLoadingAllSecrets,
     fetchSecrets,
+    readEnginesWithCache,
+    invalidateEngines,
     confirmDeleteSecret,
     deleteSecret,
     undeleteSecret,
@@ -313,7 +321,12 @@ export default function App() {
     checkTotpExists: (...args) => checkTotpExistsRef.current?.(...args),
     totpEngineName: totpEngineNameRef.current,
     showToast, t,
+    // Coffre local : l'application est seule à y écrire (écritures suivies par le journal) ; Vault
+    // distant partagé : liste gardée relue entièrement au-delà de 2 min (écritures d'autres clients)
+    cacheMaxAgeMs: localVaultServer ? 30 * 60 * 1000 : 2 * 60 * 1000,
   });
+  const readEnginesWithCacheRef = useRef(null);
+  readEnginesWithCacheRef.current = readEnginesWithCache;
 
   // Colonnes effectives : si coffre entièrement RBI-Only, seules name, url et tags sont visibles.
   // Lignes affichées contenant un secret RBI-Only (secret désigné par la policy, ou résultat
@@ -358,7 +371,8 @@ export default function App() {
       }
 
       setFolderContextMenu(null);
-      await fetchSecrets(selectedEngine);
+      // Seuls les marqueurs supprimés sont relus (et non tout le coffre)
+      await fetchSecrets(selectedEngine, undefined, { incremental: true, touched: allPlaceholders.map(ph => ph.name) });
       syncExtensionRef.current?.();
       showToast(t('toast.folderDeleted'), 'success');
     } catch (err) {
@@ -374,6 +388,9 @@ export default function App() {
     if (!sessionTokenRef.current || !Array.isArray(engineNames) || engineNames.length === 0) return;
     const shown = selectedEngine;
     const others = engineNames.filter(name => name !== shown?.name);
+    // Listes gardées de ces coffres relues entièrement à leur prochaine ouverture (import : écritures
+    // massives, entrées existantes écrasées)
+    invalidateEngines(engineNames);
     if (shown && others.length < engineNames.length) fetchSecretsRef.current?.(shown);
     if (others.length) syncExtensionRef.current?.({ invalidate: others });
   };
@@ -395,9 +412,11 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // SÉCURITÉ: Session Timeout — 15 min d'inactivité, 3 h si le PC est verrouillé
+  // SÉCURITÉ: Session Timeout — inactivité (délai choisi dans Paramètres › Sécurité, 15 min par
+  // défaut), 3 h si le PC est verrouillé. Un nouveau délai réarme aussitôt le minuteur.
   // (handleSessionExpired est mémoïsé dans useAuth : pas de réinitialisation des timers à chaque rendu)
-  const { isLocked } = useSessionTimeout(handleSessionExpired, DEFAULT_LOCKED_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS, !!token);
+  const idleTimeoutMs = useIdleTimeoutMs();
+  const { isLocked } = useSessionTimeout(handleSessionExpired, DEFAULT_LOCKED_TIMEOUT_MS, idleTimeoutMs, !!token);
 
   // ========================================
   // DEEP LINK - Réception de liens rdvault://share/TOKEN
@@ -607,6 +626,7 @@ export default function App() {
     selectedEngine, secretEngines, multiVaultSearch,
     vaultApi, fetchSecretsRef,
     setAllVaultSecrets, setLoadingAllSecrets,
+    readEnginesRef: readEnginesWithCacheRef,
     showToast, t
   });
   setDiscoveredTagsRef.current = setDiscoveredTags;
@@ -940,6 +960,7 @@ export default function App() {
     setShowSettings(false);
     setShowPasswordHealth(false);
     setShowPasskeys(false);
+    setShowPasswordGenerator(false);
     setShareRbiSecret(null);
     setReceiveShareOpen(false);
     setShowCreateFolderModal(false);
@@ -962,8 +983,19 @@ export default function App() {
   // Les tags sont maintenant découverts automatiquement depuis les secrets
   // Pas besoin de fonctions add/remove/refresh
 
+  // Dernière lecture déclenchée par l'effet ci-dessous : distingue la bascule « Afficher les supprimés »
+  // (même coffre, même session) d'un changement de coffre ou de session
+  const lastShownReadRef = useRef({ engine: null, token: null, showDeleted });
   useEffect(() => {
-    if (selectedEngine && token) fetchSecrets(selectedEngine, showDeleted);
+    // Liste gardée en cache réutilisée (changement de coffre, bascule « Afficher les supprimés ») : seules
+    // les entrées nouvelles, écrites depuis ou dont l'état manque sont lues (nouvelle session : tout est lu).
+    // Bascule « Afficher les supprimés » : demande explicite de l'état des suppressions → revalidate (coffre
+    // local : tout est relu par lots, une suppression faite hors de cette fenêtre — API, CLI — est vue ;
+    // Vault distant : relecture incrémentale bornée par l'âge du cache, voir engineReadCache).
+    const last = lastShownReadRef.current;
+    const toggledDeleted = last.engine === selectedEngine?.name && last.token === token && last.showDeleted !== showDeleted;
+    lastShownReadRef.current = { engine: selectedEngine?.name ?? null, token, showDeleted };
+    if (selectedEngine && token) fetchSecrets(selectedEngine, showDeleted, { incremental: true, revalidate: toggledDeleted });
     // Rechargement uniquement au changement de coffre, de session ou de filtre « supprimés » :
     // fetchSecrets (useSecrets) est recréée à chaque rendu et relancerait la lecture en boucle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -978,7 +1010,9 @@ export default function App() {
     syncExtensionRef, totpRateLimit,
     showToast,
     sessionTokenRef,
-    isSecretRbiOnly: isSecretRbiOnlyFn
+    isSecretRbiOnly: isSecretRbiOnlyFn,
+    // Lectures de fond de l'extension par les listes gardées du tableau (une lecture par entrée et par session)
+    readEnginesRef: readEnginesWithCacheRef,
   });
 
   // Stockage des passkeys WebAuthn de l'extension dans le coffre chiffré
@@ -1026,7 +1060,9 @@ export default function App() {
       setLoadingAllSecrets(true);
 
       try {
-        const result = await readAllSecrets(vaultApi, secretEngines, { signal });
+        // Listes gardées en cache réutilisées : seuls les coffres jamais lus (ou leurs entrées écrites
+        // depuis) sont lus ; les coffres lus ici ne seront pas relus à leur ouverture
+        const result = await readEnginesWithCacheRef.current(secretEngines, { signal });
         const allSecrets = result.secrets;
         if (result.aborted || signal.aborted) return;
         // Lectures en échec (réseau, délai, 5xx) après relances : signalées, jamais ignorées en silence.
@@ -1135,6 +1171,7 @@ export default function App() {
                   onOpenSettings={() => setShowSettings(true)}
                   onOpenPasswordHealth={() => setShowPasswordHealth(true)}
                   onOpenPasskeys={() => setShowPasskeys(true)}
+                  onOpenPasswordGenerator={() => setShowPasswordGenerator(true)}
                   onLogout={handleLogout}
                 />
                 <WindowControls />
@@ -1354,6 +1391,7 @@ export default function App() {
         receiveShareOpen={receiveShareOpen} setReceiveShareOpen={setReceiveShareOpen}
         showPasswordHealth={showPasswordHealth} setShowPasswordHealth={setShowPasswordHealth} vaultApi={vaultApi}
         showPasskeys={showPasskeys} setShowPasskeys={setShowPasskeys} authUser={authUser}
+        showPasswordGenerator={showPasswordGenerator} setShowPasswordGenerator={setShowPasswordGenerator}
         restoreFocus={restoreFocus} showToast={showToast} t={t}
       />
       )}

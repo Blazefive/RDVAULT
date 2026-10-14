@@ -73,7 +73,8 @@
     "dropHere": "Drop here",
     "rightClickToAddTag": "Right-click to add",
     "dragCountOne": "{{count}} entry",
-    "dragCountMany": "{{count}} entries"
+    "dragCountMany": "{{count}} entries",
+    "rowSelected": "selected"
   },
   "contextMenu": {
     "copyUsername": "Copy username",
@@ -150,7 +151,8 @@
     "totpDeleteConfirm": "Confirmation required: choose “{{action}}” again within {{seconds}} s to permanently destroy the TOTP key of “{{name}}” (this cannot be undone).",
     "secretDeletedTotpKept": "Entry deleted. Its TOTP key was kept: “{{action}}” brings the entry back with its TOTP code.",
     "secretDeletedTotpKeptOrphan": "Entry permanently deleted. Its TOTP key was kept: it will be attached to an entry recreated under the same name.",
-    "secretSavedTotpAttached": "Secret saved. A TOTP key already existed under this name: it is now attached to this entry."
+    "secretSavedTotpAttached": "Secret saved. A TOTP key already existed under this name: it is now attached to this entry.",
+    "secretSavedMerged": "Secret saved. The entry had been changed elsewhere in the meantime: only the fields you changed were replaced, the other changes are kept."
   },
   "error": {
     "tooManyEntries": "Too many entries (max 500)",
@@ -257,7 +259,8 @@
     "listTooDeepPartial": "Folders are nested more than {{max}} levels deep: only {{count}} entries are shown, the list is incomplete.",
     "extensionSyncTruncated": "Browser extension sync incomplete: {{count}} entry(ies) beyond the limit of {{max}} were not sent to the extension.",
     "syncServerUnavailable": "The link with the browser extension could not be opened ({{code}}): browser autofill is not connected to your vault. Another RDVAULT session or another program is probably using its port; close it, then restart RDVAULT.",
-    "secretNameReserved": "“{{name}}” is reserved for RDVAULT's internal storage. Choose another name."
+    "secretNameReserved": "“{{name}}” is reserved for RDVAULT's internal storage. Choose another name.",
+    "secretChangedElsewhere": "The entry \"{{name}}\" was changed or deleted elsewhere since it was displayed: nothing was saved. It has just been reloaded; start again from the current version (close and reopen the form if needed)."
   },
   "settings": {
     "title": "Settings",
@@ -276,7 +279,17 @@
     "lockedColumn": "Required column",
     "close": "Close",
     "selectLanguage": "Select a language",
-    "languageDesc": "Choose the display language for the application"
+    "languageDesc": "Choose the display language for the application",
+    "security": "Security",
+    "autoLockTitle": "Automatic lock",
+    "autoLockDesc": "After this period with no activity in RDVAULT, the session is closed and you must sign in again.",
+    "autoLockLabel": "Lock after",
+    "autoLockMinute": "1 minute",
+    "autoLockMinutes": "{{count}} minutes",
+    "autoLockHour": "1 hour",
+    "autoLockHours": "{{count}} hours",
+    "autoLockDefault": "default",
+    "autoLockLockedNote": "While the Windows session is locked, the RDVAULT session is closed after 3 hours regardless of this setting."
   },
   "cli": {
     "title": "CLI Access (mvault)",
@@ -528,7 +541,8 @@
       "noLinkedPolicy": "No policy linked to this vault",
       "infoTitle": "Information:",
       "infoText": "The policies listed above grant access to {{path}}. Manage policies and their AD groups in the \"Policies\" tab.",
-      "selectPrompt": "Select a vault to manage its policies"
+      "selectPrompt": "Select a vault to manage its policies",
+      "deleteNamed": "Delete vault {{path}}"
     },
     "policy": {
       "available": "Available policies",
@@ -601,7 +615,8 @@
       "selectPrompt": "Select an audit device to view its logs",
       "selectHint": "Click a device in the list on the left to display its audit logs.",
       "enablePrompt": "Enable an audit device to start recording logs",
-      "enableHint": "Audit logs record every operation performed in Vault: who, when, which action, on which resource."
+      "enableHint": "Audit logs record every operation performed in Vault: who, when, which action, on which resource.",
+      "disableNamed": "Disable audit device {{path}}"
     },
     "tags": {
       "title": "Tag management",
@@ -907,10 +922,12 @@
     "importOverwrite": "overwrite duplicates",
     "partialSuccess": "Export completed: {{count}} secret(s) exported, {{failed}} could not be read",
     "importPartial": "Import completed: {{count}} secret(s) imported, {{failed}} failed or skipped",
-    "contentNote": "The file contains all entry data in plain text (passwords, custom fields, attachments): keep it somewhere safe. Passkeys and TOTP keys are not exported."
+    "contentNote": "The file contains all entry data in plain text (passwords, custom fields, attachments): keep it somewhere safe. Passkeys and TOTP keys are not exported.",
+    "importLongValues": "{{count}} entry(ies) contain notes or fields longer than 10000 characters: imported in full; shorten them before saving from the editor."
   },
   "clipboard": {
-    "clearNow": "Clear now"
+    "clearNow": "Clear now",
+    "autoClear": "The clipboard will be cleared in {{seconds}} seconds."
   },
   "window": {
     "minimize": "Minimize",
@@ -992,7 +1009,8 @@
     "errMaxUses": "Maximum number of uses reached",
     "errExpired": "Share expired",
     "errReceive": "Error retrieving the share",
-    "errUnauthorized": "Share refused: your Vault session is not authorized"
+    "errUnauthorized": "Share refused: your Vault session is not authorized",
+    "errProxyInvalidShareId": "The proxy returned a share ID in an invalid format (letters, digits, - and _ only, 128 characters at most): no share was created. Contact the RBI proxy administrator."
   },
   "passwordHealth": {
     "title": "Password health",
@@ -1065,5 +1083,24 @@
     "title": "An unexpected error occurred",
     "message": "The interface stopped displaying. Reload it to continue; you will be asked to sign in again.",
     "reload": "Reload the interface"
+  },
+  "extensionTab": {
+    "tab": "Extension",
+    "title": "RDVAULT browser extension",
+    "intro": "The extension fills in your credentials and manages your passkeys in Chrome, Edge and Brave. It ships with RDVAULT, but Chrome does not allow it to be installed automatically: load it once by following these steps.",
+    "folderLabel": "Extension folder",
+    "openFolder": "Open folder",
+    "copyPath": "Copy path",
+    "copied": "Copied",
+    "stepsTitle": "Installation (once)",
+    "step1": "Copy the address of your browser's extensions page and paste it into the address bar:",
+    "step2": "Turn on “Developer mode”.",
+    "step3": "Click “Load unpacked” and select the folder above.",
+    "step4": "Open the extension (RDVAULT icon in the toolbar): RDVAULT asks you to approve the pairing, once.",
+    "update": "After each RDVAULT update, click “Reload” on the extension in the extensions page.",
+    "idLabel": "Extension ID",
+    "versionLabel": "Version",
+    "unavailable": "The extension was not found in this installation. Reinstall RDVAULT or load the chrome-extension/vault-autofill-extension folder from the source code.",
+    "sharedWarning": "Do not install it on a shared-session server (Remote Desktop, Citrix)."
   }
 }

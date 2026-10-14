@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT"
   },
   "extDescription": {
     "message": "Compilazione automatica dei moduli e passkey con RDVAULT (richiede l'app desktop)"
@@ -9,7 +9,7 @@
     "message": "Verifica in corso..."
   },
   "popupInfoRequiresDesktop": {
-    "message": "Questa estensione richiede che l'app desktop Vault sia avviata e connessa."
+    "message": "Questa estensione richiede che l'app RDVAULT sia avviata e sbloccata."
   },
   "popupDesktopUnavailable": {
     "message": "App desktop non disponibile"
@@ -43,6 +43,12 @@
   },
   "popupPairingDeniedDetail": {
     "message": "L'associazione di questa estensione è stata rifiutata nell'app. Potrai inviare una nuova richiesta tra un minuto."
+  },
+  "popupPairingExpiredTitle": {
+    "message": "Richiesta di associazione scaduta: riapri l'estensione per riprovare"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "La richiesta non ha ricevuto risposta in RDVAULT (limite: 60 secondi). Chiudi e riapri questa finestra per inviare una nuova richiesta."
   },
   "popupDisconnectedDetail": {
     "message": "Avvia l'app desktop e accedi per usare la compilazione automatica."
@@ -194,5 +200,26 @@
   },
   "bgErrClearCredential": {
     "message": "Errore durante l'eliminazione della credenziale"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Credenziali RDVAULT disponibili: $COUNT$. Freccia giù per scegliere, Esc per chiudere.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "RDVAULT è bloccato: sblocca l'app, quindi riprova."
+  },
+  "bgErrVaultClosed": {
+    "message": "RDVAULT è chiuso o non raggiungibile: apri l'app, quindi riprova."
+  },
+  "bgErrRateLimited": {
+    "message": "Troppe richieste inviate a RDVAULT: riprova tra un istante."
+  },
+  "pkVaultUnavailable": {
+    "message": "RDVAULT è chiuso o bloccato: aprilo e sbloccalo per continuare, oppure usa un altro dispositivo."
   }
 }

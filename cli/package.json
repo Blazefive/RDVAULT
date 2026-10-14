@@ -6,7 +6,7 @@
     "mvault": "./mvault.js"
   },
   "author": "Blazefive",
-  "license": "PRIVATE",
+  "license": "MIT",
   "engines": {
     "node": ">=16.0.0"
   }

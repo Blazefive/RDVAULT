@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT (Vault 직접 연결)"
   },
   "extDescription": {
     "message": "HashiCorp Vault를 이용한 양식 자동 완성"
@@ -115,5 +115,20 @@
   },
   "bgErrInternal": {
     "message": "내부 오류"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Vault 로그인 정보: $COUNT$개. 아래쪽 화살표로 선택하고 Esc로 닫습니다.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "Vault에 로그인되어 있지 않습니다. 확장 프로그램 창을 열어 로그인하세요."
+  },
+  "bgErrVaultUnreachable": {
+    "message": "Vault에 연결할 수 없거나 세션이 만료되었습니다. 확장 프로그램 창에서 다시 로그인하세요."
   }
 }

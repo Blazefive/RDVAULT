@@ -7,7 +7,7 @@
 
 import React, { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import Modal from './Modal';
+import Modal, { getFocusableElements } from './Modal';
 import ConfirmModal from '../../ConfirmModal';
 import { I18nProvider } from '../../i18n';
 
@@ -111,6 +111,46 @@ describe('Modal — focus initial et piège de focus', () => {
     btn('Supprimer').focus();
     press('Tab');
     expect(document.activeElement.textContent).toBe('Annuler');
+  });
+
+  // J1-a : tabIndex itinérant (onglets). Avant, seul le sélecteur générique excluait tabindex="-1" :
+  // un <button tabIndex={-1}> comptait comme premier / dernier élément du cycle, si bien que Tab
+  // depuis le vrai dernier élément atteignable (ou Maj+Tab depuis le vrai premier) n'était pas
+  // intercepté et le navigateur sortait de la modale.
+  test('les éléments tabIndex=-1 (onglets inactifs) ne sont ni premier ni dernier du cycle', () => {
+    mount(
+      <Modal title="T" onClose={() => {}}>
+        <button type="button" tabIndex={-1}>Onglet A</button>
+        <button type="button">Onglet B</button>
+        <button type="button" tabIndex={-1}>Onglet C</button>
+        <input aria-label="champ" />
+        <button type="button" tabIndex={-1}>Masqué du Tab</button>
+      </Modal>
+    );
+    const field = document.querySelector('input[aria-label="champ"]');
+    field.focus();
+    const ev = press('Tab');
+    expect(ev.defaultPrevented).toBe(true);
+    expect(document.activeElement.textContent).toBe('Onglet B');
+    const ev2 = press('Tab', { shiftKey: true });
+    expect(ev2.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(field);
+  });
+
+  test('getFocusableElements exclut tabindex="-1" pour chaque type d\'élément', () => {
+    mount(
+      <Modal title="T" onClose={() => {}}>
+        <button type="button" tabIndex={-1}>b</button>
+        <a href="#x" tabIndex={-1}>a</a>
+        <input aria-label="i" tabIndex={-1} />
+        <select aria-label="s" tabIndex={-1}><option>o</option></select>
+        <textarea aria-label="t" tabIndex={-1} />
+        <div contentEditable suppressContentEditableWarning tabIndex={-1}>c</div>
+        <button type="button">gardé</button>
+      </Modal>
+    );
+    const items = getFocusableElements(document.querySelector('.modal-panel'));
+    expect(items.map(el => el.textContent)).toEqual(['gardé']);
   });
 });
 

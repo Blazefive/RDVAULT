@@ -1,4 +1,5 @@
 // popup.js
+/* global chrome */ // API d'extension (page de la popup)
 // Logique de l'interface popup
 
 // Texte traduit dans la langue du navigateur (chrome.i18n, _locales/<langue>/messages.json,
@@ -51,15 +52,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   const refreshBtn = document.getElementById('refreshBtn');
   const currentUser = document.getElementById('currentUser');
 
-  // Afficher un message de statut
+  // Afficher un message de statut, annoncé aux lecteurs d'écran : une erreur (role="alert") reste
+  // affichée jusqu'à l'action suivante ; un succès (role="status") disparaît après 3 s
+  const hideTimers = new Map();
   function showStatus(message, type = 'info', container = status) {
+    clearTimeout(hideTimers.get(container));
+    container.setAttribute('role', type === 'error' ? 'alert' : 'status');
     container.textContent = message;
     container.className = `status status-${type}`;
     container.classList.remove('hidden');
 
-    setTimeout(() => {
-      container.classList.add('hidden');
-    }, 3000);
+    if (type !== 'error') {
+      hideTimers.set(container, setTimeout(() => {
+        container.classList.add('hidden');
+      }, 3000));
+    }
   }
 
   // Vérifier l'état d'authentification

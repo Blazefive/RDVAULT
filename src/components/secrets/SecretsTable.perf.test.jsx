@@ -5,10 +5,14 @@
 // de glisser-déposer, redimensionnement de colonne, toast) re-rendait TOUTES les lignes
 // (plus d'une seconde de gel à 5 000 entrées). Mesure : getTagColor est appelée une fois par
 // tag pendant le rendu d'une ligne → nombre d'appels = nombre de lignes re-rendues.
+// Tableau virtualisé (> VIRTUALIZE_THRESHOLD lignes) : seules les lignes visibles (+ marge) sont
+// rendues ; le premier rendu ne monte plus les 2 000 lignes (attente adaptée, comportement identique).
+// La stabilité des clés sur un tableau NON virtualisé est vérifiée par le dernier test (140 lignes).
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import SecretsTable from './SecretsTable';
 import en from '../../locales/en.json';
+import { VIRTUALIZE_THRESHOLD } from './virtualRows';
 
 global.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,7 +50,9 @@ function props(over = {}) {
 // Rendu d'un root React 18 (hors Testing Library)
 const mountInRoot = (reactRoot, element) => reactRoot.render(element);
 const paint = (p) => act(() => { mountInRoot(root, <SecretsTable {...p} />); });
-const rowEl = (name) => Array.from(host.querySelectorAll('tbody tr')).find(r => (r.querySelector('td.cell-name')?.textContent || '').replace('✓', '') === name);
+// Texte visible de la cellule Nom (sans la coche ni l'état « sélectionnée » réservé aux lecteurs d'écran, UI-38)
+const visibleName = (td) => (td?.textContent || '').replace(td?.querySelector('.sr-only')?.textContent || '', '').replace('✓', '');
+const rowEl = (name) => Array.from(host.querySelectorAll('tbody tr')).find(r => visibleName(r.querySelector('td.cell-name')) === name);
 
 beforeEach(() => {
   host = document.createElement('div');
@@ -54,7 +60,10 @@ beforeEach(() => {
   root = createRoot(host);
   tagColorCalls = 0;
   paint(props());
-  expect(tagColorCalls).toBe(N); // premier rendu : toutes les lignes
+  // Premier rendu : les lignes de la zone visible seulement (avant virtualisation : les 2 000)
+  expect(tagColorCalls).toBeGreaterThan(0);
+  expect(tagColorCalls).toBeLessThan(N / 20);
+  expect(host.querySelectorAll('tbody tr[aria-rowindex]').length).toBeLessThan(N / 20);
   tagColorCalls = 0;
 });
 afterEach(() => {
@@ -109,9 +118,21 @@ test('les lignes non re-rendues appellent toujours les DERNIERS callbacks (pas d
   expect(tagColorCalls).toBe(0);
 });
 
-test('liste filtrée puis rétablie : les lignes conservées ne sont pas re-rendues (clés stables)', () => {
-  paint(props({ filteredSecrets: SECRETS.slice(0, 101) }));
-  expect(tagColorCalls).toBe(0); // avant : clés avec index → lignes remontées
+test('liste filtrée puis rétablie (tableau virtualisé) : les lignes rendues ne sont pas re-rendues', () => {
+  paint(props({ filteredSecrets: SECRETS.slice(0, 1001) }));
+  expect(tagColorCalls).toBe(0);
   paint(props());
-  expect(tagColorCalls).toBe(N - 100); // seules les lignes réapparues sont montées
+  expect(tagColorCalls).toBe(0);
+});
+
+test('liste filtrée puis rétablie (sous le seuil, rendu complet) : les lignes conservées ne sont pas re-rendues (clés stables)', () => {
+  const SMALL = SECRETS.slice(0, 141);
+  expect(SMALL.length).toBeLessThanOrEqual(VIRTUALIZE_THRESHOLD);
+  paint(props({ filteredSecrets: SMALL, secrets: SMALL }));
+  expect(host.querySelectorAll('tbody tr').length).toBe(141); // toutes les lignes, aucun espaceur
+  tagColorCalls = 0;
+  paint(props({ filteredSecrets: SMALL.slice(0, 41), secrets: SMALL }));
+  expect(tagColorCalls).toBe(0); // avant : clés avec index → lignes remontées
+  paint(props({ filteredSecrets: SMALL, secrets: SMALL }));
+  expect(tagColorCalls).toBe(100); // seules les lignes réapparues sont montées
 });

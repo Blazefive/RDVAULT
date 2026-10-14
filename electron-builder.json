@@ -28,12 +28,24 @@
     {
       "from": "chrome-rbi",
       "to": "chrome-rbi",
-      "filter": ["**/*"]
+      "filter": [
+        "**/*"
+      ]
     },
     {
       "from": "cli",
       "to": "cli",
-      "filter": ["**/*"]
+      "filter": [
+        "**/*"
+      ]
+    },
+    {
+      "from": "chrome-extension/vault-autofill-extension",
+      "to": "chrome-extension",
+      "filter": [
+        "**/*",
+        "!**/*.md"
+      ]
     }
   ],
   "extraMetadata": {
@@ -42,7 +54,9 @@
   "protocols": [
     {
       "name": "RDVAULT Share",
-      "schemes": ["rdvault"]
+      "schemes": [
+        "rdvault"
+      ]
     }
   ],
   "publish": [

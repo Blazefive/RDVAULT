@@ -63,7 +63,7 @@ Mode is selected at install time or via `APP_MODE` in `config.cfg`.
 - Local mode first run: the administrator account is only created once the master password is confirmed (enforced by the local server, detected through `GET /v1/sys/init`)
 - Local mode: destroyed data (entry destroyed with all its versions, deleted vault, deleted or replaced TOTP seed, old versions of internal blobs such as passkeys) is zeroed (`secure_delete`) and flushed out of the SQLite WAL journal
 - Chrome extension pairing: the desktop app asks for explicit approval the first time an extension ID connects
-- Security response headers on all HTTP servers (nosniff, no-store, DENY)
+- Security response headers: nosniff, no-store and `X-Frame-Options: DENY` on the extension sync server and the local vault server; nosniff and no-store on the CLI server (JSON only, never rendered in a page)
 - 9 security audits: the 9th (September 2026) fixed the remaining critical findings (see `CHANGELOG.md`)
 
 ### Chrome Extension
@@ -71,7 +71,7 @@ Mode is selected at install time or via `APP_MODE` in `config.cfg`.
 - **Two versions included**: simple (direct Vault connection) and enriched (syncs with desktop app)
 - Syncs with the desktop app over `127.0.0.1:45678`; the desktop keeps the sync state **in memory only**
 - **Pairing**: the first time an extension connects, the desktop app shows its extension ID and asks for approval
-- Only the secrets matching the current tab's hostname are sent, **without passwords**; the password is fetched only when the user picks an entry
+- Only the secrets matching the hostname of the page or frame that hosts the form are sent, **without passwords**; the password is fetched only when the user picks an entry. The extension's service worker takes that hostname from what Chrome reports about the sender (`sender.tab.url` for the page; `sender.url` for a form inside an iframe, so an iframe gets the entries of its own domain, never those of the tab). It never uses a value supplied by the page or the content script
 - TOTP code relay from desktop to extension
 - Manifest V3 compliant, minimal permissions (`storage`, `alarms`, `127.0.0.1:45678` only)
 - Hostname matching done by the desktop app (public-suffix aware, no bare TLD matching). Multi-tenant hosting suffixes (SharePoint, Microsoft 365, Atlassian Cloud, Salesforce, Okta, Auth0, OneLogin, Zendesk, ServiceNow, Azure VMs, OVHcloud VPS…) are treated as public suffixes: a tenant only matches itself, and a tenant's entry is also offered on its brand's login pages, never the reverse (see `SECURITY.md` for the full list)
@@ -82,11 +82,15 @@ Mode is selected at install time or via `APP_MODE` in `config.cfg`.
 - The sync port is fixed and shared by all Windows sessions on a machine: do not use the enriched extension on multi-session hosts (Remote Desktop, Citrix); see `SECURITY.md`
 
 #### Installation
-1. Open `chrome://extensions` in Chrome
+The installer ships the extension in `C:\Program Files\RDVAULT\resources\chrome-extension`. Browsers do not let an application install an extension by itself (outside the Chrome Web Store), so it is loaded once; **Settings › Extension** in RDVAULT shows the folder and copies the addresses needed below.
+1. In RDVAULT, open **Settings › Extension** and click `chrome://extensions` (or `edge://extensions`, `brave://extensions`) to copy the address, then paste it into the browser's address bar
 2. Enable **Developer mode**
-3. Click **Load unpacked** and select the `chrome-extension/vault-autofill-extension/` folder
-4. The RDVAULT icon appears in the toolbar
-5. Open the popup: the desktop app asks you to approve the extension ID (once)
+3. Click **Load unpacked** and select the folder shown in RDVAULT (`chrome-extension/vault-autofill-extension/` when running from source)
+4. The "RDVAULT" extension appears in the extensions list (the simple version is listed as "RDVAULT (direct Vault)"); pin it to the toolbar
+5. Open the popup: the desktop app asks you to approve the extension (once; the pairing is kept across restarts and updates). The request stays open 60 s; if nobody answers, it expires (an open popup says so) and the extension sends no new request until you reopen the popup
+6. After each RDVAULT update, click **Reload** on the extension in the extensions page
+
+The manifest carries a public key, so the extension has the same ID on every machine (`cndjkmkhndclfcpcgeocmfdjnefhhhba`). The matching private key is kept outside the repository; it is only needed to pack a `.crx` or to keep this ID on a first Chrome Web Store upload. Full French guide: `chrome-extension/INSTRUCTIONS.md`.
 
 #### How it works
 ```
@@ -94,7 +98,8 @@ Web page → Content script detects login form
                     ↓
          Background service worker
                     ↓
-  GET /api/secrets?host=<tab hostname>  (port 45678, Bearer token, paired origin)
+  GET /api/secrets?host=<hostname reported by Chrome: sender.tab.url, or sender.url in an iframe>
+                    (port 45678, Bearer token, paired extension)
                     ↓
      Desktop app filters its in-memory list → names + usernames only
                     ↓
@@ -130,7 +135,7 @@ See [`cli/README.md`](cli/README.md) for full documentation including host key s
 ### Remote Access
 - **RBI** (Remote Browser Isolation): open URLs in secure sandboxed Chromium with auto-injected credentials. Credentials and TOTP codes are only typed into pages, frames or popups of the entry's own domain; the ephemeral browser profile is deleted when the session closes
 - SSH launcher (PuTTY), RDP launcher (mstsc), SFTP launcher (FileZilla / WinSCP)
-- RBI session sharing via Vault wrapping tokens (enterprise mode): authenticated proxy calls, the proxy only ever holds the wrapping token, at most 5 uses and 24 h (API contract in `DEPLOYMENT.md`)
+- RBI session sharing via Vault wrapping tokens (enterprise mode): authenticated proxy calls, the proxy only ever holds the wrapping token, at most 5 uses and 24 h, share ID format checked by the same rule when it is created and when it is received (API contract in `DEPLOYMENT.md`)
 - URL protocol routing: SSH, RDP, SFTP, FTP, VNC, UNC paths, HTTP/HTTPS
 
 ### Admin Panel
@@ -169,7 +174,7 @@ Configurable via Settings UI or `LANG` in `config.cfg` for mass deployment. The 
 
 Download `RDVAULT Setup x.x.x.exe` from [Releases](../../releases/latest). The installer lets you choose between **Enterprise** and **Local** mode.
 
-The installer is **per-machine** (Program Files, administrator rights required) so that `config.cfg` cannot be altered by a standard user.
+The installer is **per-machine** (Program Files, administrator rights required) so that `config.cfg` cannot be altered by a standard user. Each install and upgrade also creates `%PROGRAMDATA%\RDVAULT` (the machine configuration folder, read first) and locks it down: owner Administrators, full control for SYSTEM and Administrators, read-only for Users, no inherited permissions. Without this, any local user could create that folder and impose a `config.cfg` on every user of the machine.
 
 Silent install:
 ```bash
@@ -187,7 +192,7 @@ Upgrades, silent or interactive, keep the existing `config.cfg` byte for byte, i
 
 Local vaults created by earlier versions stay readable and their accounts log in as before (pre-1.7 accounts keep PBKDF2; no re-encryption is forced). A vault created by 1.5.0 reads back identically (entries, versions, TOTP keys, passkeys); this was checked with vaults recreated by the 1.5.0 local vault server.
 
-Uninstalling removes `config.cfg`, the CLI session and the extension pairing. It keeps the encrypted local vault (`%APPDATA%\RDVAULT\local-vault.db`).
+Uninstalling removes `config.cfg`, the CLI session and the extension pairing of the user who uninstalls. It keeps the rest of `%APPDATA%\RDVAULT`: the encrypted local vault (`local-vault.db` and its `-wal` / `-shm` files), the CLI audit log and its key, `known_hosts.json` and the app profile (preferences, remembered username). To remove all local data, delete that folder in each user profile after uninstalling (full list in [`PRIVACY.md`](PRIVACY.md)).
 
 ### From source
 
@@ -202,6 +207,8 @@ npm install
 npm start          # React dev server (port 3000)
 npm run electron   # Electron app (in another terminal)
 ```
+
+> Electron loads `build/index.html` whenever it exists, and only uses the dev server (`http://localhost:3000`, or `ELECTRON_START_URL` if it points to `localhost` / `127.0.0.1`) when there is no build. After `npm run build`, `npm run dist` or an e2e run (they need a build), delete or rename `build/` before `npm run electron`, otherwise you are testing the old build and your changes do not show.
 
 **Tests and lint:**
 ```bash
@@ -256,11 +263,13 @@ APP_MODE=enterprise
 LANG=en
 ```
 
-Lookup order: `%PROGRAMDATA%\RDVAULT\config.cfg` (recommended for enterprise deployment, admin-writable only), then next to the executable, then `%APPDATA%\RDVAULT\`. Every value is validated at startup; invalid values fall back to safe defaults.
+Lookup order: `%PROGRAMDATA%\RDVAULT\config.cfg` (recommended for enterprise deployment), then next to the executable, then `%APPDATA%\RDVAULT\`. Every value is validated at startup; invalid values fall back to safe defaults.
 
+- A file in `%PROGRAMDATA%\RDVAULT` is only used if neither the folder nor the file can be changed by a non-administrator: owner Administrators, SYSTEM or TrustedInstaller, no write permission for anyone else, no symbolic link or junction. The installer sets up the folder this way. Otherwise the file is refused: it is ignored, with a warning in the log, and the next location applies. A file copied there from an elevated prompt is normally owned by Administrators; if it is ignored, fix it from an elevated command prompt with `icacls "%ProgramData%\RDVAULT\config.cfg" /setowner *S-1-5-32-544`. Reinstalling RDVAULT resets the folder, not the owner of a file already there (details in `DEPLOYMENT.md`, step 9).
 - Save the file as UTF-8 (recommended, with or without BOM). A UTF-16 file, little or big endian, with or without BOM (Notepad "Unicode", the default output of `Out-File` and `>` in Windows PowerShell 5.1), is read too, with a warning in the log. A non-empty file in which no key is recognized is reported in the log and the defaults apply.
 - `VAULT_URL` and `RBI_PROXY_URL` must be `https://` without credentials. They are normalized: trailing slash, query and fragment removed; a `/v1` suffix on `VAULT_URL` is removed too (the app adds it).
 - With `TRUSTED_CERT_FINGERPRINTS` set, a renewed Vault certificate has a new fingerprint and would be rejected: add it to the list before deploying the certificate (see `DEPLOYMENT.md`, Maintenance).
+- `TRUSTED_CERT_FINGERPRINTS` accepts hex SHA-256 (with or without colons), `sha256/<base64>`, or the whole line printed by the `openssl` command above (`sha256 Fingerprint=AB:CD:…`). If the key is set but holds no valid fingerprint, pinning stays on (fail-closed) and every certificate of the `VAULT_URL` host is refused until it is fixed: an error is logged and a translated warning dialog is shown once at startup, explaining that Vault connections will be refused and how to fix the key. The dialog does not block startup. Pinning is never silently turned off.
 
 ---
 
@@ -289,7 +298,7 @@ src/
                                   SecretsTable, SecretContextMenu, ModalOrchestrator)
   utils/                        — Security utilities, URL handler, tag manager
   locales/                      — 12 language files
-  App.jsx                       — Orchestrator (~1000 lines)
+  App.jsx                       — Orchestrator (session, vault selection, modal wiring)
 
 electron/
   main.js                       — Window management, IPC, sync server
@@ -342,7 +351,7 @@ Extension (paired) → HTTP (port 45678) → sync server → in-memory state ←
 | Clipboard | Auto-clear after 12s, Windows clipboard history wipe, cleared on quit |
 | CLI | Serialized confirmation popup, burst detection (15/min), segment-based auto-approve rules, audit log with rotation |
 | RBI | Chromium sandbox enabled, normal TLS validation, credentials typed only on the entry's domain, all resource types filtered after login, ephemeral profile deleted on close, no zombie process on failure |
-| HTTP servers | X-Content-Type-Options: nosniff, Cache-Control: no-store, X-Frame-Options: DENY |
+| HTTP servers | X-Content-Type-Options: nosniff and Cache-Control: no-store on all three local servers; X-Frame-Options: DENY on the sync and local vault servers |
 | Export | File permissions 0o600, CSV formula injection protection, import field sanitization |
 | Chrome extension | Explicit pairing per extension ID, hostname filtering by the desktop app, passwords sent only on selection, trusted-event-only UI in a closed shadow root |
 
@@ -368,14 +377,14 @@ Extension (paired) → HTTP (port 45678) → sync server → in-memory state ←
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes
-4. Test with `npm start` + `npm run electron`
+4. Test with `npm start` + `npm run electron` (without a `build/` folder, see [Development](#from-source)), then `npm test` and `npm run lint`
 5. Submit a pull request
 
 ---
 
 ## License
 
-MIT
+MIT, see [`LICENSE`](LICENSE).
 
 ---
 

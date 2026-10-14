@@ -514,6 +514,7 @@ module.exports = {
   writeKeyCheck,
   toIsoUtc,
   checkpointWal,
+  isHiddenBlobKey,
   KEYCHECK_SECRET_KEY,
   CAS_MISMATCH,
 };

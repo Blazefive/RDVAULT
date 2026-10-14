@@ -9,7 +9,7 @@
 // (site/honeypot-sronly.html).
 // Lancement : E2E_BROWSER=<chrome.exe de Chrome for Testing> node --test test/extension/honeypot-visibility.test.js
 // Sans E2E_BROWSER, le test est ignoré (skip).
-'use strict';
+'use strict'; // eslint-disable-line strict -- script CommonJS exécuté par node --test, pas un module ES
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

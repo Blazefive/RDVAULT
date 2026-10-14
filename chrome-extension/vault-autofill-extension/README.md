@@ -1,4 +1,7 @@
-# Vault Autofill (version enrichie) - Extension Chrome
+# RDVAULT (version enrichie) - Extension Chrome
+
+Dans `chrome://extensions`, l'extension s'appelle **RDVAULT** (dans toutes les langues) ; la version simple
+(`chrome-extension/`, qui parle directement à un serveur Vault) s'appelle **RDVAULT (Vault direct)**.
 
 Extension Chrome (Manifest V3) d'auto-remplissage de formulaires de connexion avec les identifiants
 stockés dans HashiCorp Vault, **via l'application Desktop RDVAULT**.
@@ -13,6 +16,8 @@ Desktop (`http://127.0.0.1:45678`). Le token Vault reste dans le Desktop, jamais
 - Liste des identifiants du site courant **sans mot de passe** ; le mot de passe n'est récupéré qu'à la sélection
 - Remplissage des codes TOTP (même page ou page suivante)
 - Interface (icône « V » + menu) isolée dans un shadow root fermé, inaccessible aux scripts de la page
+- Menu et fenêtre passkey utilisables au clavier et avec un lecteur d'écran (voir « Clavier et lecteurs d'écran »)
+- Messages explicites quand RDVAULT est verrouillé ou fermé (« RDVAULT est verrouillé… », « RDVAULT est fermé ou injoignable… »)
 - Popup d'état de la connexion Desktop
 - Interface en 12 langues (voir « Langues »)
 
@@ -53,14 +58,19 @@ E2E_BROWSER=<chrome.exe> node --test test/extension/i18n-browser.test.js   # vra
 d'approbation identifiant l'extension par son ID (`chrome-extension://<id>`). Vous disposez de 60 secondes
 pour accepter.
 
-- Pendant l'attente, le popup affiche **« Confirmez l'accès dans l'application RDVAULT »**
+- Pendant l'attente, le popup affiche **« Confirmez l'accès dans l'application RDVAULT »** (seulement si la demande
+  reste ouverte plus d'une seconde, c'est-à-dire si la boîte d'appairage est réellement affichée ; RDVAULT fermé,
+  la popup indique « Desktop non disponible » et jamais une demande d'appairage qui n'a pas été reçue)
 - Si vous refusez, le popup affiche **« Accès refusé dans RDVAULT »** ; une nouvelle demande est possible après une minute
 - Une fois accepté, le token est conservé en `chrome.storage.session` (effacé à la fermeture du navigateur)
 
 Le token est vérifié toutes les minutes via `chrome.alarms` (compatible avec la mise en veille du service worker MV3).
 
-Si le Desktop est redémarré, l'appairage est perdu : le serveur répond `403 {error:'pairing_required'}`,
-l'extension oublie son token et redemande automatiquement un appairage (nouvelle boîte de dialogue dans RDVAULT).
+L'appairage est **mémorisé** par le Desktop (`paired-extensions.json`, rechargé à chaque démarrage). Si le Desktop
+est redémarré, seul le token de session change : l'ancien token reçoit `401`, et l'extension en obtient un nouveau
+par `GET /auth/token`, **sans nouvelle boîte de dialogue**. Le serveur ne répond `403 {error:'pairing_required'}`
+que si l'identifiant de l'extension n'est plus appairé (fichier d'appairage supprimé, par exemple par une
+désinstallation) : l'extension oublie alors son token et redemande un appairage (boîte de dialogue dans RDVAULT).
 
 ## Flux de fonctionnement
 
@@ -84,8 +94,9 @@ content.js remplit username + password, puis surveille un champ TOTP
 
 Points clés :
 
-- Le **hostname** transmis au Desktop est toujours celui de l'onglet (`sender.tab.url`), jamais une valeur
-  fournie par la page ou le content script.
+- Le **hostname** transmis au Desktop est celui de la **frame émettrice**, fourni par Chrome (`sender.url` pour une
+  iframe, `sender.tab.url` pour la page principale), jamais une valeur fournie par la page ou le content script :
+  une iframe tierce n'obtient que les entrées de son propre domaine.
 - Le **matching site ↔ secrets est effectué côté Desktop** (paramètre `host` obligatoire). L'extension ne
   contient plus de logique de comparaison de domaines.
 - Le content script ne reçoit jamais la liste des mots de passe : il ne demande que celui de l'entrée sélectionnée
@@ -101,9 +112,9 @@ Points clés :
 
 | Endpoint | Auth | Rôle |
 |---|---|---|
-| `GET /auth/token` | En-têtes `X-Vault-Extension-Id` (identifiant de l'extension) + `X-Vault-Extension: rdvault` | Obtention du token (déclenche l'appairage la première fois). Réponses : 200 `{token}`, 403 `{error:'pairing_denied'|'pairing_required'}`, 503 `{error:'Token not ready'}` |
-| `GET /sync` | Bearer | État de connexion (`connected`, `vaultUrl`, `username`) |
-| `GET /api/secrets?host=<hostname>` | Bearer | Liste des secrets correspondant au site, sans mot de passe ni notes |
+| `GET /auth/token` | En-têtes `X-Vault-Extension-Id` (identifiant de l'extension) + `X-Vault-Extension: rdvault` | Obtention du token (déclenche l'appairage la première fois). Réponses : 200 `{token}`, 403 `{error:'pairing_denied'}`, 503 `{error:'Token not ready'}`. (`403 {error:'pairing_required'}` vient des AUTRES routes, quand l'extension n'est plus appairée) |
+| `GET /sync` | Bearer | État de connexion (`connected`, `vaultUrl`, `username`) ; sert aussi à la fenêtre passkey pour savoir si RDVAULT est ouvert et déverrouillé |
+| `GET /api/secrets?host=<hostname de la frame>` | Bearer | Liste des secrets correspondant au site, sans mot de passe ni notes |
 | `GET /api/secret?host=&engine=&name=` | Bearer | Secret complet (404 si non lié au site) |
 | `GET /api/totp/<keyName>` | Bearer | Code TOTP |
 
@@ -122,6 +133,28 @@ RDVAULT. Si le chargement échoue (RDVAULT verrouillé ou injoignable, limite de
 l'échec n'est pas mémorisé comme « aucun identifiant » : de nouvelles tentatives sont faites pendant
 environ 2 min 30 (2 s, 4 s, 8 s, 15 s, 30 s, 30 s, 60 s), si bien qu'une page de connexion ouverte avant
 le déverrouillage de RDVAULT propose ses identifiants dès le déverrouillage, sans rechargement.
+
+RDVAULT verrouillé ou fermé : le menu ne dit plus « Aucun identifiant trouvé pour ce site » ni « Erreur HTTP 401 »,
+mais **« RDVAULT est verrouillé : déverrouillez l'application, puis réessayez. »** (401 du serveur local),
+**« RDVAULT est fermé ou injoignable : ouvrez l'application, puis réessayez. »** (application injoignable) ou
+**« Trop de demandes envoyées à RDVAULT : réessayez dans un instant. »** (limite de débit, 429).
+
+### Clavier et lecteurs d'écran
+
+- Le menu est une liste (`role="listbox"`, nommée « Identifiants RDVAULT ») d'entrées `role="option"` nommées
+  « nom, identifiant » ; son ouverture est annoncée (« Identifiants RDVAULT disponibles : 2. Flèche bas pour
+  choisir, Échap pour fermer. »), les erreurs aussi (`role="alert"`). L'icône est un bouton nommé.
+- Depuis le champ : **Flèche bas / haut** entre dans la liste ; **Alt+Flèche bas** rouvre le menu.
+- Dans la liste : **Flèches**, **Origine / Fin** ; **Entrée** ou **Espace** remplit (sans soumettre le
+  formulaire vide) ; **Échap** ferme et rend le focus au champ ; **Tab** ferme et poursuit la navigation.
+- Le menu se ferme dès que le focus part ailleurs dans la page : il ne la masque plus pendant la navigation.
+- La fenêtre passkey est une boîte de dialogue modale nommée « RDVAULT » : elle prend le focus à l'ouverture
+  (jamais sur le bouton qui crée ou signe), **Tab / Maj+Tab** restent dans la fenêtre, **Échap** annule, et le
+  focus revient à l'élément de la page. Voir `PASSKEYS.md`.
+
+```bash
+E2E_BROWSER=<chrome.exe> node --test test/extension/menu-a11y.test.js   # menu au clavier, arbre d'accessibilité, les deux extensions
+```
 
 ### Formulaires pris en charge
 
@@ -187,6 +220,9 @@ ou a été rechargée, l'état servi à l'extension est effacé aussitôt (mesur
 RDVAULT ; après un plantage, relancez d'abord l'application.
 
 **« Confirmez l'accès dans l'application RDVAULT »** : une demande d'appairage attend votre réponse dans le Desktop.
+
+**« RDVAULT est verrouillé… » / « RDVAULT est fermé ou injoignable… »** dans le menu : déverrouillez (ou ouvrez)
+RDVAULT ; les identifiants du site sont proposés de nouveau sans recharger la page.
 
 **« Accès refusé dans RDVAULT »** : l'appairage a été refusé ; attendez une minute et relancez la demande
 (ouvrez à nouveau le popup) puis acceptez dans le Desktop.

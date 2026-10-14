@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT (Vault diretto)"
   },
   "extDescription": {
     "message": "Compilazione automatica dei moduli con HashiCorp Vault"
@@ -115,5 +115,20 @@
   },
   "bgErrInternal": {
     "message": "Errore interno"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Credenziali Vault disponibili: $COUNT$. Freccia giù per scegliere, Esc per chiudere.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "Accesso a Vault non effettuato: apri la finestra dell'estensione per accedere."
+  },
+  "bgErrVaultUnreachable": {
+    "message": "Vault non raggiungibile o sessione scaduta: accedi di nuovo dalla finestra dell'estensione."
   }
 }

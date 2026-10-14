@@ -68,16 +68,19 @@ Vault écoute en HTTPS. Vous avez besoin d'un certificat pour votre nom DNS.
 
 ### Option A : Certificat auto-signé (lab/test)
 
+`/etc/vault-ssl` a été créé par `sudo mkdir` à l'étape 1 : il appartient à root et n'est pas modifiable par un autre compte. Les commandes `openssl` qui y écrivent sont donc lancées avec `sudo`.
+
 ```bash
-# Générer une CA racine
-openssl genrsa -out /etc/vault-ssl/ca.key 2048
-openssl req -x509 -new -nodes -key /etc/vault-ssl/ca.key \
+# Générer une CA racine (clé lisible par root seul)
+sudo openssl genrsa -out /etc/vault-ssl/ca.key 2048
+sudo chmod 600 /etc/vault-ssl/ca.key
+sudo openssl req -x509 -new -nodes -key /etc/vault-ssl/ca.key \
   -sha256 -days 3650 -out /etc/vault-ssl/ca.pem \
   -subj "/CN=Vault Root CA"
 
 # Générer le certificat serveur
-openssl genrsa -out /etc/vault-ssl/vault.key 2048
-openssl req -new -key /etc/vault-ssl/vault.key \
+sudo openssl genrsa -out /etc/vault-ssl/vault.key 2048
+sudo openssl req -new -key /etc/vault-ssl/vault.key \
   -out /etc/vault-ssl/vault.csr \
   -subj "/CN=vault.example.com"
 
@@ -90,7 +93,7 @@ extendedKeyUsage = serverAuth, clientAuth
 subjectAltName = DNS:vault.example.com
 EOF
 
-openssl x509 -req -in /etc/vault-ssl/vault.csr \
+sudo openssl x509 -req -in /etc/vault-ssl/vault.csr \
   -CA /etc/vault-ssl/ca.pem -CAkey /etc/vault-ssl/ca.key \
   -CAcreateserial -out /etc/vault-ssl/vault.crt \
   -days 365 -sha256 -extfile /tmp/vault-ext.cnf
@@ -344,8 +347,9 @@ RDVAULT utilise 5 niveaux de droits, chacun mappé à une policy Vault et un gro
 │              │ Peut créer/modifier/supprimer des secrets.   │
 ├──────────────┼──────────────────────────────────────────────┤
 │ RO (lecture) │ Lecture seule sur un coffre. Voit les secrets│
-│              │ mais ne peut pas les modifier. Marqué "RO?"  │
-│              │ dans l'UI RDVAULT.                           │
+│              │ mais ne peut pas les modifier : dans RDVAULT,│
+│              │ le bouton « + Nouvelle entrée » est désactivé│
+│              │ (aucun badge dans la liste des coffres).     │
 ├──────────────┼──────────────────────────────────────────────┤
 │ Self-service │ Chaque utilisateur peut créer/gérer ses      │
 │              │ propres coffres sous users/<username>/.      │
@@ -581,14 +585,14 @@ Le proxy manipule des identifiants en clair et détient un token Vault privilég
 1. **TLS obligatoire** : servir en HTTPS avec un certificat valide pour les postes clients (CA d'entreprise), ou derrière un reverse proxy TLS (nginx/caddy). Jamais `NODE_TLS_REJECT_UNAUTHORIZED=0` : installer la CA dans le magasin système du serveur (`/usr/local/share/ca-certificates/` + `update-ca-certificates`) ou utiliser `NODE_EXTRA_CA_CERTS=/etc/rbi-proxy/vault-ca.crt`.
 2. **Authentification de chaque appel** : `POST /create-share` et `POST /unwrap-rbi` doivent exiger un token Vault du demandeur (header `X-Vault-Token`) que le proxy vérifie par `GET /v1/auth/token/lookup-self` avant d'agir. Aucun endpoint anonyme.
 3. **Aucune persistance des identifiants** : le proxy ne doit jamais unwrap le token de partage à la création. Il stocke uniquement le wrapping token et le rend au destinataire authentifié, qui unwrap lui-même auprès de Vault. Le wrapping token Vault est à usage unique : cela garantit qu'un partage ne peut être consommé qu'une fois.
-4. **Limites** : `maxUses` plafonné à 5 (pas d'illimité), TTL maximal 24 h, `shareId` généré avec `crypto.randomBytes(32)`, limitation de débit par IP et par token.
+4. **Limites** : `maxUses` plafonné à 5 (pas d'illimité), TTL maximal 24 h, `shareId` généré avec `crypto.randomBytes(32)` et encodé en hexadécimal ou en base64url (format du contrat ci-dessous), limitation de débit par IP et par token.
 5. **Token du proxy** : policy Vault minimale (`sys/wrapping/lookup` et `sys/wrapping/unwrap` uniquement si le point 3 l'exige, sinon aucun accès aux secrets) ; ne jamais lui donner `TOTP/code/*`.
 6. **Journalisation** sans identifiants : consigner `shareId`, demandeur (entity), horodatage, résultat.
 7. **Code versionné** : `server.js` doit être dans un dépôt revu, avec les mêmes exigences d'audit que le client.
 
 ### Contrat d'API attendu par le client RDVAULT
 
-Le client applique ces règles de son côté et refuse un proxy qui ne les suit pas.
+Le client envoie toujours des requêtes conformes à ce contrat. Côté réponses, il refuse une `RBI_PROXY_URL` qui n'est pas en `https://` et un `/unwrap-rbi` qui ne renvoie pas `{ wrappingToken }` (voir ci-dessous). Le format du `shareId` est contrôlé par la même règle à l'émission et à la réception (lettres, chiffres, `-` ou `_`, 128 caractères au plus, espaces de début et de fin retirés). Si `/create-share` renvoie un identifiant hors format, l'émetteur n'affiche aucun ID : il signale que le proxy a renvoyé un ID de partage invalide et consomme le wrapping token, qui ne reste pas utilisable dans Vault. Un `shareId` tiré de `crypto.randomBytes(32)` doit donc être encodé en hexadécimal ou en base64url (le base64 classique contient `+`, `/` et `=`, refusés) ; un UUID convient aussi.
 
 | Appel | En-têtes | Corps envoyé | Réponse attendue |
 |---|---|---|---|
@@ -670,7 +674,23 @@ sudo systemctl start rbi-proxy
 
 ## Étape 9 — Configuration du client RDVAULT
 
-L'installeur est **par machine** (Program Files, droits administrateur). Pour un déploiement de masse, déposer la configuration dans `%PROGRAMDATA%\RDVAULT\config.cfg` (lu en priorité, modifiable uniquement par les administrateurs) ; sinon dans le dossier d'installation via `/CONFIG=`. Chaque valeur est validée au démarrage et remplacée par un défaut sûr si elle est invalide.
+L'installeur est **par machine** (Program Files, droits administrateur). Pour un déploiement de masse, déposer la configuration dans `%PROGRAMDATA%\RDVAULT\config.cfg` (lu en priorité) ; sinon dans le dossier d'installation via `/CONFIG=`. Chaque valeur est validée au démarrage et remplacée par un défaut sûr si elle est invalide.
+
+**Protection de `%PROGRAMDATA%\RDVAULT`** : l'ACL par défaut de `C:\ProgramData` laisse tout utilisateur y créer un dossier et en devenir propriétaire. Pour qu'un utilisateur standard ne puisse pas imposer sa configuration (un `VAULT_URL` vers son propre serveur, par exemple) à tous les utilisateurs du poste, deux mécanismes s'appliquent :
+
+- **L'installeur** (installation par machine, à chaque installation et mise à jour) crée le dossier, supprime une jonction ou un lien qui aurait pris sa place, puis pose avec `icacls` : propriétaire Administrateurs, contrôle total pour SYSTEM et Administrateurs, lecture seule pour Utilisateurs, héritage coupé et anciennes autorisations explicites retirées. Les fichiers déjà présents gardent leur propriétaire. Un échec est signalé dans le détail de l'installation.
+- **L'application** n'utilise un fichier de ce dossier que si ni le dossier ni le fichier ne sont modifiables par un non-administrateur : propriétaire Administrateurs, SYSTEM ou TrustedInstaller (ou Administrateur intégré, Admins du domaine, Administrateurs de l'entreprise), aucune autorisation d'écriture pour un autre compte, ni lien symbolique ni jonction. Sinon le fichier est ignoré, avec un avertissement dans le journal, et l'emplacement suivant (dossier d'installation) s'applique.
+
+Un fichier copié depuis une invite administrateur appartient en principe au groupe Administrateurs et hérite de l'ACL du dossier. S'il est ignoré (propriétaire resté un utilisateur, par exemple), corrigez-le depuis une invite PowerShell administrateur (première commande pour le fichier, les suivantes pour le dossier). Réinstaller RDVAULT remet le dossier en état, mais ne change pas le propriétaire d'un fichier déjà présent : vérifiez-le, ou supprimez le fichier et déposez-en un nouveau.
+
+```powershell
+icacls "$env:ProgramData\RDVAULT\config.cfg" /setowner *S-1-5-32-544
+icacls "$env:ProgramData\RDVAULT" /setowner *S-1-5-32-544
+icacls "$env:ProgramData\RDVAULT" /reset
+icacls "$env:ProgramData\RDVAULT" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX"
+```
+
+(Sous PowerShell, les autorisations `(OI)(CI)…` doivent être entre guillemets.)
 
 **Extension enrichie et postes multi-sessions** : la liaison avec l'extension utilise le port local fixe `45678`, commun à toutes les sessions Windows d'un poste (bureau à distance, Citrix, changement rapide d'utilisateur). Seule la première instance RDVAULT l'écoute ; les suivantes affichent un avertissement, et l'extension d'une autre session joindrait l'application de la première. Ne déployez pas l'extension enrichie sur des serveurs de sessions partagés (voir `SECURITY.md`).
 
@@ -706,7 +726,7 @@ Remarques :
 
 - **Encodage** : enregistrez `config.cfg` de préférence en **UTF-8** (avec ou sans BOM). Un fichier UTF-16 (petit ou grand boutiste, avec ou sans BOM : Bloc-notes « Unicode », sortie par défaut de `Out-File` et de la redirection `>` sous Windows PowerShell 5.1) est lu aussi, avec un avertissement dans le journal. Un fichier non vide dont aucune clé n'est reconnue est signalé dans le journal, et l'application démarre avec les valeurs par défaut. Sous PowerShell 5.1, `Set-Content -Encoding UTF8` ou `Out-File -Encoding utf8` produisent de l'UTF-8.
 - **`VAULT_URL` et `RBI_PROXY_URL`** : `https://` obligatoire, sans identifiants. L'application les normalise au démarrage : barre finale, paramètres (`?…`) et fragment (`#…`) retirés, préfixe de chemin d'un proxy inverse conservé. Pour `VAULT_URL`, un suffixe `/v1` collé par erreur est retiré (l'application l'ajoute) ; la correction est journalisée.
-- **`TRUSTED_CERT_FINGERPRINTS`** : liste d'empreintes séparées par des virgules. Si elle est renseignée, tout certificat présenté par l'hôte exact de `VAULT_URL` doit y figurer, **même s'il est reconnu par le magasin Windows** (CA publique, CA d'entreprise, boîtier d'inspection TLS) : un boîtier d'inspection TLS qui intercepte le trafic Vault est alors refusé. Pour les autres hôtes, seuls les certificats jugés invalides (auto-signés) sont contrôlés : un certificat auto-signé d'un autre hôte de `TRUSTED_DOMAINS` (proxy RBI, par exemple) doit lui aussi figurer dans la liste ; un certificat valide d'un autre hôte suit la seule confiance du magasin Windows. Vide : confiance du magasin Windows, plus `TRUSTED_DOMAINS` pour les certificats auto-signés. **Au renouvellement d'un certificat épinglé, ajoutez sa nouvelle empreinte avant de le déployer** (voir « Maintenance »), sinon les postes refusent le serveur.
+- **`TRUSTED_CERT_FINGERPRINTS`** : liste d'empreintes séparées par des virgules. Si elle est renseignée, tout certificat présenté par l'hôte exact de `VAULT_URL` doit y figurer, **même s'il est reconnu par le magasin Windows** (CA publique, CA d'entreprise, boîtier d'inspection TLS) : un boîtier d'inspection TLS qui intercepte le trafic Vault est alors refusé. Pour les autres hôtes, seuls les certificats jugés invalides (auto-signés) sont contrôlés : un certificat auto-signé d'un autre hôte de `TRUSTED_DOMAINS` (proxy RBI, par exemple) doit lui aussi figurer dans la liste ; un certificat valide d'un autre hôte suit la seule confiance du magasin Windows. Vide : confiance du magasin Windows, plus `TRUSTED_DOMAINS` pour les certificats auto-signés. **Au renouvellement d'un certificat épinglé, ajoutez sa nouvelle empreinte avant de le déployer** (voir « Maintenance »), sinon les postes refusent le serveur. Formats acceptés : hexadécimal SHA-256 (avec ou sans `:`), `sha256/<base64>`, ou la ligne entière affichée par la commande `openssl` ci-dessus (`sha256 Fingerprint=AB:CD:…`). Une valeur renseignée sans aucune empreinte valide n'annule pas l'épinglage (fail-closed) : tout certificat de l'hôte de `VAULT_URL` est alors refusé jusqu'à correction. L'erreur est journalisée et, au démarrage, une boîte d'avertissement traduite (langue de `LANG`) l'annonce une fois : elle explique que les connexions à Vault seront refusées et comment corriger la clé (formats ci-dessus, ou suppression de la clé pour désactiver l'épinglage) avant de redémarrer RDVAULT. Cette boîte ne bloque pas le démarrage.
 - **Installation silencieuse** : `/S /CONFIG=chemin\config.cfg` copie le fichier tel quel dans le dossier d'installation (toutes les clés), `/MODE=local|enterprise` ne remplace que `APP_MODE`. Fichier illisible ou mode invalide : arrêt avec le code `2`, rien n'est modifié.
 - **Mise à jour du client** : silencieuse ou interactive, elle conserve `config.cfg` à l'octet près (épinglage et langue compris) et l'appairage de l'extension. Pendant une mise à jour, `/CONFIG=` remplace la configuration et `/MODE=` seulement `APP_MODE`.
 
@@ -733,9 +753,21 @@ vault status
 vault auth list
 vault secrets list
 
-# Depuis un poste client (PowerShell)
-curl -k https://vault.example.com:8200/v1/sys/health
 ```
+
+Depuis un poste client Windows (PowerShell) : sous Windows PowerShell 5.1, `curl` est un alias d'`Invoke-WebRequest`, qui ne connaît pas les options de curl. Appelez `curl.exe` (livré avec Windows 10 1803 et suivants) :
+
+```powershell
+# CA d'entreprise déployée dans le magasin Windows (cas recommandé)
+curl.exe https://vault.example.com:8200/v1/sys/health
+# ou, sans curl.exe
+Invoke-RestMethod https://vault.example.com:8200/v1/sys/health
+
+# CA de l'étape 2, option A, copiée sur le poste (pas encore dans le magasin Windows)
+curl.exe --cacert C:\chemin\ca.pem https://vault.example.com:8200/v1/sys/health
+```
+
+Ces commandes vérifient le certificat, comme RDVAULT. N'utilisez `curl.exe -k` (ou `Invoke-RestMethod -SkipCertificateCheck` sous PowerShell 7) que pour un diagnostic ponctuel en laboratoire : elles désactivent la vérification TLS et ne prouvent pas que RDVAULT acceptera le certificat.
 
 ---
 

@@ -38,10 +38,19 @@ mvault status                               # Vérifier que RDVault est actif
 
 Alias : `-s` = `--secret`, `-p` = `--port`, `-k` = `--key`.
 
-Sans `-k` ni `--reveal`, les clés `password`, `pass`, `secret`, `token`, `key` et `private_key`
-(insensible à la casse) sont affichées sous la forme `********`, pour éviter de laisser des mots de passe
-dans l'historique du terminal. Les règles d'auto-approbation se modifient uniquement dans RDVault
-(Paramètres > CLI).
+Sans `-k` ni `--reveal`, les valeurs sensibles sont affichées sous la forme `********`, pour éviter de
+laisser des mots de passe dans l'historique du terminal, avec les mêmes règles que l'interface :
+
+- les clés `password`, `pass`, `secret`, `token`, `key` et `private_key` (insensible à la casse) ;
+- la **valeur** des champs personnalisés protégés (`customFields[].value` quand `protected` vaut `true`),
+  ainsi que celle d'un champ dont le nom est l'une des clés ci-dessus ; le **nom** du champ
+  (`customFields[].key`) reste affiché ;
+- pour une entrée de type clé SSH (`entryType: "ssh"`), la phrase de passe de la clé, stockée dans
+  `username` (la clé privée, dans `password`, est déjà masquée) ;
+- le contenu des pièces jointes (`attachments[].data`) ; leur nom, type et taille restent affichés.
+
+`--reveal` affiche tout en clair ; `-k <champ>` renvoie la valeur brute d'un champ (ex. `-k username`).
+Les règles d'auto-approbation se modifient uniquement dans RDVault (Paramètres > CLI).
 
 ## Connexion SSH avec mvault
 
@@ -118,8 +127,9 @@ acceptée, la vérification ayant lieu pendant l'échange de clés, avant l'auth
 dépassement → `Délai d'exécution SSH dépassé`. Les méthodes `plink`/`sshpass` ci-dessous restent utilisables
 si vous préférez piloter le client vous-même.
 
-**Code de sortie** (commande via le broker, et `mvault winrm`) : celui de la commande distante ; `128 + n` si
-elle a été tuée par un signal (ex. 137 pour `KILL`) ; `1` si aucun statut n'a été reçu (jamais `0` par défaut).
+**Code de sortie** (commande via le broker) : celui de la commande distante ; `128 + n` si elle a été tuée
+par un signal (ex. 137 pour `KILL`) ; `1` si aucun statut n'a été reçu (jamais `0` par défaut). Pour
+`mvault winrm`, voir [plus bas](#windows-à-distance--winrm--powershell-remoting).
 
 **Fin d'un shell interactif** : quand la socket se ferme, `mvault` demande à RDVault la raison de la fin
 (`POST /ssh/status`) avant de quitter :
@@ -172,6 +182,23 @@ RDVAULT exécute `Invoke-Command` avec l'identifiant du coffre (mot de passe tra
 **stdin**, jamais en argument) et ne renvoie que la sortie. Nécessite un listener WinRM configuré côté
 serveur (`Enable-PSRemoting`) et PowerShell côté client. `--auth` : `Default`, `Negotiate`, `Kerberos`,
 `Basic` ou `CredSSP` ; `--ssl` pour HTTPS (port 5986).
+
+**Code de sortie de `mvault winrm`** : la commande s'exécute dans une session PowerShell distante
+(`New-PSSession`), puis RDVault relit `$LASTEXITCODE` **dans cette session** :
+
+| Situation | Code de sortie |
+|---|---|
+| Dernier exécutable lancé à distance terminé avec un code non nul (`$LASTEXITCODE`, ex. `cmd /c exit 7`, `robocopy`) | ce code (7) |
+| Sinon, erreur PowerShell distante (`Write-Error`, cmdlet en échec, `throw`) | `1` |
+| Sinon | `0` |
+| Erreur locale : connexion, authentification, délai PowerShell (30 s) | `1` (ou erreur HTTP 502) |
+| `exit N` dans la commande distante | `1`, avec un message : `exit` ferme la session distante et PowerShell Remoting ne transmet pas `N` |
+
+Pour signaler un échec avec un code précis, terminez la commande par un exécutable (`cmd /c exit N`) plutôt
+que par `exit N` ; pour un échec simple, `throw` suffit (code `1`). Une erreur distante non bloquante n'arrête
+pas la commande (comme dans une console distante) : les instructions suivantes s'exécutent et l'erreur est
+affichée sur stderr. Comme dans PowerShell, `$LASTEXITCODE` garde le code du **dernier** exécutable : un
+exécutable en échec suivi de cmdlets réussies donne quand même son code.
 
 ### Par mot de passe, en pilotant le client soi-même (plink / sshpass)
 

@@ -73,7 +73,8 @@
     "dropHere": "Soltar aquí",
     "rightClickToAddTag": "Clic derecho para añadir",
     "dragCountOne": "{{count}} entrada",
-    "dragCountMany": "{{count}} entradas"
+    "dragCountMany": "{{count}} entradas",
+    "rowSelected": "seleccionada"
   },
   "contextMenu": {
     "copyUsername": "Copiar nombre de usuario",
@@ -150,7 +151,8 @@
     "totpDeleteConfirm": "Confirmación necesaria: elija de nuevo «{{action}}» antes de {{seconds}} s para destruir definitivamente la clave TOTP de «{{name}}» (irreversible).",
     "secretDeletedTotpKept": "Entrada eliminada. Su clave TOTP se ha conservado: «{{action}}» recupera la entrada con su código TOTP.",
     "secretDeletedTotpKeptOrphan": "Entrada eliminada definitivamente. Su clave TOTP se ha conservado: se asociará a una entrada que se vuelva a crear con el mismo nombre.",
-    "secretSavedTotpAttached": "Secreto guardado. Ya existía una clave TOTP con este nombre: ahora está asociada a esta entrada."
+    "secretSavedTotpAttached": "Secreto guardado. Ya existía una clave TOTP con este nombre: ahora está asociada a esta entrada.",
+    "secretSavedMerged": "Secreto guardado. La entrada se había modificado en otro lugar mientras tanto: solo se han sustituido los campos que usted cambió y se conservan las demás modificaciones."
   },
   "error": {
     "tooManyEntries": "Demasiadas entradas (máx. 500)",
@@ -257,7 +259,8 @@
     "listTooDeepPartial": "Hay carpetas anidadas en más de {{max}} niveles: solo se muestran {{count}} entradas, la lista está incompleta.",
     "extensionSyncTruncated": "Sincronización de la extensión del navegador incompleta: {{count}} entrada(s) por encima del límite de {{max}} no se enviaron a la extensión.",
     "syncServerUnavailable": "No se pudo abrir el vínculo con la extensión del navegador ({{code}}): el autorrelleno del navegador no está conectado a su bóveda. Probablemente otra sesión de RDVAULT u otro programa está usando su puerto; ciérrelo y reinicie RDVAULT.",
-    "secretNameReserved": "«{{name}}» está reservado para el almacenamiento interno de RDVAULT. Elija otro nombre."
+    "secretNameReserved": "«{{name}}» está reservado para el almacenamiento interno de RDVAULT. Elija otro nombre.",
+    "secretChangedElsewhere": "La entrada «{{name}}» se modificó o eliminó en otro lugar desde que se mostró: no se ha guardado nada. Se acaba de volver a leer; vuelva a empezar desde la versión actual (cierre y vuelva a abrir el formulario si es necesario)."
   },
   "settings": {
     "title": "Configuración",
@@ -276,7 +279,17 @@
     "lockedColumn": "Columna obligatoria",
     "close": "Cerrar",
     "selectLanguage": "Seleccione un idioma",
-    "languageDesc": "Elija el idioma de visualización de la aplicación"
+    "languageDesc": "Elija el idioma de visualización de la aplicación",
+    "security": "Seguridad",
+    "autoLockTitle": "Bloqueo automático",
+    "autoLockDesc": "Tras este tiempo sin actividad en RDVAULT, la sesión se cierra y debe volver a iniciar sesión.",
+    "autoLockLabel": "Bloquear después de",
+    "autoLockMinute": "1 minuto",
+    "autoLockMinutes": "{{count}} minutos",
+    "autoLockHour": "1 hora",
+    "autoLockHours": "{{count}} horas",
+    "autoLockDefault": "predeterminado",
+    "autoLockLockedNote": "Con la sesión de Windows bloqueada, la sesión de RDVAULT se cierra a las 3 horas, sea cual sea este ajuste."
   },
   "cli": {
     "title": "Acceso CLI (mvault)",
@@ -528,7 +541,8 @@
       "noLinkedPolicy": "Ninguna política vinculada a esta bóveda",
       "infoTitle": "Información:",
       "infoText": "Las políticas indicadas arriba dan acceso a {{path}}. Gestione las políticas y sus grupos AD en la pestaña «Políticas».",
-      "selectPrompt": "Seleccione una bóveda para gestionar sus políticas"
+      "selectPrompt": "Seleccione una bóveda para gestionar sus políticas",
+      "deleteNamed": "Eliminar la bóveda {{path}}"
     },
     "policy": {
       "available": "Políticas disponibles",
@@ -601,7 +615,8 @@
       "selectPrompt": "Seleccione un dispositivo de auditoría para ver sus registros",
       "selectHint": "Haga clic en un dispositivo de la lista de la izquierda para mostrar sus registros de auditoría.",
       "enablePrompt": "Active un dispositivo de auditoría para empezar a registrar",
-      "enableHint": "Los registros de auditoría guardan todas las operaciones realizadas en Vault: quién, cuándo, qué acción y sobre qué recurso."
+      "enableHint": "Los registros de auditoría guardan todas las operaciones realizadas en Vault: quién, cuándo, qué acción y sobre qué recurso.",
+      "disableNamed": "Desactivar el dispositivo de auditoría {{path}}"
     },
     "tags": {
       "title": "Gestión de etiquetas",
@@ -907,10 +922,12 @@
     "importOverwrite": "sobrescribir duplicados",
     "partialSuccess": "Exportación finalizada: {{count}} secreto(s) exportado(s), {{failed}} no se pudieron leer",
     "importPartial": "Importación finalizada: {{count}} secreto(s) importado(s), {{failed}} con error u omitido(s)",
-    "contentNote": "El archivo contiene todos los datos de las entradas en texto plano (contraseñas, campos personalizados, adjuntos): guárdelo en un lugar seguro. Las passkeys y las claves TOTP no se exportan."
+    "contentNote": "El archivo contiene todos los datos de las entradas en texto plano (contraseñas, campos personalizados, adjuntos): guárdelo en un lugar seguro. Las passkeys y las claves TOTP no se exportan.",
+    "importLongValues": "{{count}} entrada(s) contienen notas o campos de más de 10000 caracteres: importados por completo; acórtelos antes de guardarlos desde el editor."
   },
   "clipboard": {
-    "clearNow": "Borrar ahora"
+    "clearNow": "Borrar ahora",
+    "autoClear": "El portapapeles se vaciará en {{seconds}} segundos."
   },
   "window": {
     "minimize": "Minimizar",
@@ -992,7 +1009,8 @@
     "errMaxUses": "Número máximo de usos alcanzado",
     "errExpired": "Compartición caducada",
     "errReceive": "Error al recuperar la compartición",
-    "errUnauthorized": "Compartición rechazada: su sesión de Vault no está autorizada"
+    "errUnauthorized": "Compartición rechazada: su sesión de Vault no está autorizada",
+    "errProxyInvalidShareId": "El proxy devolvió un ID de compartición con formato no válido (solo letras, cifras, - y _, 128 caracteres como máximo): no se ha creado ninguna compartición. Póngase en contacto con el administrador del proxy RBI."
   },
   "passwordHealth": {
     "title": "Salud de las contraseñas",
@@ -1065,5 +1083,24 @@
     "title": "Se ha producido un error inesperado",
     "message": "La interfaz dejó de mostrarse. Vuelva a cargarla para continuar; se le pedirá que inicie sesión de nuevo.",
     "reload": "Recargar la interfaz"
+  },
+  "extensionTab": {
+    "tab": "Extensión",
+    "title": "Extensión de navegador RDVAULT",
+    "intro": "La extensión rellena sus credenciales y gestiona sus claves de acceso en Chrome, Edge y Brave. Se incluye con RDVAULT, pero Chrome no permite instalarla automáticamente: cárguela una vez siguiendo estos pasos.",
+    "folderLabel": "Carpeta de la extensión",
+    "openFolder": "Abrir la carpeta",
+    "copyPath": "Copiar la ruta",
+    "copied": "Copiado",
+    "stepsTitle": "Instalación (una sola vez)",
+    "step1": "Copie la dirección de la página de extensiones de su navegador y péguela en la barra de direcciones:",
+    "step2": "Active el «Modo de desarrollador».",
+    "step3": "Haga clic en «Cargar extensión sin empaquetar» y seleccione la carpeta indicada arriba.",
+    "step4": "Abra la extensión (icono de RDVAULT en la barra de herramientas): RDVAULT le pedirá aprobar el emparejamiento una sola vez.",
+    "update": "Tras cada actualización de RDVAULT, haga clic en «Volver a cargar» en la extensión, en la página de extensiones.",
+    "idLabel": "Identificador de la extensión",
+    "versionLabel": "Versión",
+    "unavailable": "No se encontró la extensión en esta instalación. Reinstale RDVAULT o cargue la carpeta chrome-extension/vault-autofill-extension del código fuente.",
+    "sharedWarning": "No la instale en un servidor de sesiones compartidas (Escritorio remoto, Citrix)."
   }
 }

@@ -73,7 +73,8 @@
     "dropHere": "여기에 놓기",
     "rightClickToAddTag": "마우스 오른쪽 버튼으로 추가",
     "dragCountOne": "항목 {{count}}개",
-    "dragCountMany": "항목 {{count}}개"
+    "dragCountMany": "항목 {{count}}개",
+    "rowSelected": "선택됨"
   },
   "contextMenu": {
     "copyUsername": "사용자 이름 복사",
@@ -150,7 +151,8 @@
     "totpDeleteConfirm": "확인 필요: {{seconds}}초 안에 \"{{action}}\"을(를) 다시 선택하면 \"{{name}}\"의 TOTP 키가 영구적으로 삭제됩니다(되돌릴 수 없음).",
     "secretDeletedTotpKept": "항목이 삭제되었습니다. TOTP 키는 유지되었습니다: \"{{action}}\"을(를) 사용하면 TOTP 코드와 함께 항목이 돌아옵니다.",
     "secretDeletedTotpKeptOrphan": "항목이 영구적으로 삭제되었습니다. TOTP 키는 유지되었습니다: 같은 이름으로 다시 만든 항목에 연결됩니다.",
-    "secretSavedTotpAttached": "시크릿이 저장되었습니다. 이 이름의 TOTP 키가 이미 있었으며 이제 이 항목에 연결됩니다."
+    "secretSavedTotpAttached": "시크릿이 저장되었습니다. 이 이름의 TOTP 키가 이미 있었으며 이제 이 항목에 연결됩니다.",
+    "secretSavedMerged": "비밀이 저장되었습니다. 그 사이 다른 곳에서 항목이 수정되었습니다. 변경한 필드만 교체되었으며 다른 수정 사항은 유지됩니다."
   },
   "error": {
     "tooManyEntries": "항목이 너무 많습니다 (최대 500)",
@@ -257,7 +259,8 @@
     "listTooDeepPartial": "폴더가 {{max}}단계를 넘게 중첩되어 있습니다. 항목 {{count}}개만 표시되며 목록이 불완전합니다.",
     "extensionSyncTruncated": "브라우저 확장 동기화가 완료되지 않았습니다: 한도 {{max}}개를 넘는 항목 {{count}}개가 확장에 전송되지 않았습니다.",
     "syncServerUnavailable": "브라우저 확장과의 연결을 열 수 없습니다({{code}}): 브라우저 자동 완성이 금고에 연결되어 있지 않습니다. 다른 RDVAULT 세션이나 다른 프로그램이 포트를 사용 중일 수 있습니다. 해당 프로그램을 닫은 뒤 RDVAULT를 다시 시작하세요.",
-    "secretNameReserved": "\"{{name}}\"은(는) RDVAULT 내부 저장소용으로 예약된 이름입니다. 다른 이름을 선택하세요."
+    "secretNameReserved": "\"{{name}}\"은(는) RDVAULT 내부 저장소용으로 예약된 이름입니다. 다른 이름을 선택하세요.",
+    "secretChangedElsewhere": "항목 \"{{name}}\"이(가) 표시된 이후 다른 곳에서 수정되거나 삭제되었습니다. 아무것도 저장되지 않았습니다. 방금 다시 불러왔으니 현재 버전에서 다시 시작하세요(필요하면 양식을 닫았다가 다시 여세요)."
   },
   "settings": {
     "title": "설정",
@@ -276,7 +279,17 @@
     "lockedColumn": "필수 열",
     "close": "닫기",
     "selectLanguage": "언어 선택",
-    "languageDesc": "애플리케이션 표시 언어를 선택하세요"
+    "languageDesc": "애플리케이션 표시 언어를 선택하세요",
+    "security": "보안",
+    "autoLockTitle": "자동 잠금",
+    "autoLockDesc": "RDVAULT에서 이 시간 동안 활동이 없으면 세션이 종료되며 다시 로그인해야 합니다.",
+    "autoLockLabel": "잠금까지 시간",
+    "autoLockMinute": "1분",
+    "autoLockMinutes": "{{count}}분",
+    "autoLockHour": "1시간",
+    "autoLockHours": "{{count}}시간",
+    "autoLockDefault": "기본값",
+    "autoLockLockedNote": "Windows 세션이 잠겨 있는 동안에는 이 설정과 관계없이 3시간 후 RDVAULT 세션이 종료됩니다."
   },
   "cli": {
     "title": "CLI 액세스 (mvault)",
@@ -528,7 +541,8 @@
       "noLinkedPolicy": "이 Vault에 연결된 정책이 없습니다",
       "infoTitle": "정보:",
       "infoText": "위에 나열된 정책은 {{path}}에 대한 접근 권한을 부여합니다. 정책과 해당 AD 그룹은 \"정책\" 탭에서 관리하세요.",
-      "selectPrompt": "정책을 관리할 Vault를 선택하세요"
+      "selectPrompt": "정책을 관리할 Vault를 선택하세요",
+      "deleteNamed": "보관소 {{path}} 삭제"
     },
     "policy": {
       "available": "사용 가능한 정책",
@@ -601,7 +615,8 @@
       "selectPrompt": "로그를 보려면 감사 장치를 선택하세요",
       "selectHint": "왼쪽 목록에서 장치를 클릭하면 감사 로그가 표시됩니다.",
       "enablePrompt": "로그 기록을 시작하려면 감사 장치를 활성화하세요",
-      "enableHint": "감사 로그는 Vault에서 수행된 모든 작업(누가, 언제, 어떤 작업을, 어떤 리소스에)을 기록합니다."
+      "enableHint": "감사 로그는 Vault에서 수행된 모든 작업(누가, 언제, 어떤 작업을, 어떤 리소스에)을 기록합니다.",
+      "disableNamed": "감사 장치 {{path}} 비활성화"
     },
     "tags": {
       "title": "태그 관리",
@@ -907,10 +922,12 @@
     "importOverwrite": "중복 항목 덮어쓰기",
     "partialSuccess": "내보내기 완료: 시크릿 {{count}}개 내보냄, {{failed}}개 읽기 실패",
     "importPartial": "가져오기 완료: 시크릿 {{count}}개 가져옴, {{failed}}개 실패 또는 건너뜀",
-    "contentNote": "파일에는 항목의 모든 데이터(비밀번호, 사용자 정의 필드, 첨부 파일)가 평문으로 들어 있습니다. 안전한 곳에 보관하세요. 패스키와 TOTP 키는 내보내지지 않습니다."
+    "contentNote": "파일에는 항목의 모든 데이터(비밀번호, 사용자 정의 필드, 첨부 파일)가 평문으로 들어 있습니다. 안전한 곳에 보관하세요. 패스키와 TOTP 키는 내보내지지 않습니다.",
+    "importLongValues": "{{count}}개 항목에 10000자를 초과하는 메모 또는 필드가 있습니다: 전체를 가져왔습니다. 편집기에서 저장하기 전에 줄이세요."
   },
   "clipboard": {
-    "clearNow": "지금 지우기"
+    "clearNow": "지금 지우기",
+    "autoClear": "클립보드가 {{seconds}}초 후에 지워집니다."
   },
   "window": {
     "minimize": "최소화",
@@ -992,7 +1009,8 @@
     "errMaxUses": "최대 사용 횟수에 도달했습니다",
     "errExpired": "공유가 만료되었습니다",
     "errReceive": "공유 조회 오류",
-    "errUnauthorized": "공유가 거부되었습니다. Vault 세션에 권한이 없습니다"
+    "errUnauthorized": "공유가 거부되었습니다. Vault 세션에 권한이 없습니다",
+    "errProxyInvalidShareId": "프록시가 잘못된 형식의 공유 ID를 반환했습니다(문자, 숫자, - 및 _만, 최대 128자). 공유가 생성되지 않았습니다. RBI 프록시 관리자에게 문의하세요."
   },
   "passwordHealth": {
     "title": "비밀번호 상태",
@@ -1065,5 +1083,24 @@
     "title": "예기치 않은 오류가 발생했습니다",
     "message": "인터페이스 표시가 중단되었습니다. 계속하려면 다시 불러오세요. 다시 로그인해야 합니다.",
     "reload": "인터페이스 다시 불러오기"
+  },
+  "extensionTab": {
+    "tab": "확장 프로그램",
+    "title": "RDVAULT 브라우저 확장 프로그램",
+    "intro": "이 확장 프로그램은 Chrome, Edge, Brave에서 자격 증명을 입력하고 패스키를 관리합니다. RDVAULT와 함께 제공되지만 Chrome은 자동 설치를 허용하지 않으므로 다음 단계에 따라 한 번 불러오세요.",
+    "folderLabel": "확장 프로그램 폴더",
+    "openFolder": "폴더 열기",
+    "copyPath": "경로 복사",
+    "copied": "복사됨",
+    "stepsTitle": "설치(한 번만)",
+    "step1": "브라우저의 확장 프로그램 페이지 주소를 복사하여 주소 표시줄에 붙여 넣으세요:",
+    "step2": "'개발자 모드'를 켭니다.",
+    "step3": "'압축해제된 확장 프로그램을 로드합니다'를 클릭하고 위 폴더를 선택합니다.",
+    "step4": "확장 프로그램(도구 모음의 RDVAULT 아이콘)을 열면 RDVAULT가 페어링 승인을 한 번 요청합니다.",
+    "update": "RDVAULT를 업데이트할 때마다 확장 프로그램 페이지에서 이 확장 프로그램의 '새로고침'을 클릭하세요.",
+    "idLabel": "확장 프로그램 ID",
+    "versionLabel": "버전",
+    "unavailable": "이 설치에서 확장 프로그램을 찾을 수 없습니다. RDVAULT를 다시 설치하거나 소스 코드의 chrome-extension/vault-autofill-extension 폴더를 불러오세요.",
+    "sharedWarning": "공유 세션 서버(원격 데스크톱, Citrix)에는 설치하지 마세요."
   }
 }

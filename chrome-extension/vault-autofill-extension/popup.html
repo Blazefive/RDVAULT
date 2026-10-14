@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vault Autofill</title>
+  <title>RDVAULT</title>
   <style>
     * {
       margin: 0;
@@ -84,18 +84,18 @@
   </style>
 </head>
 <body>
-  <h1>Vault Autofill</h1>
+  <h1>RDVAULT</h1>
 
-  <div id="statusCard" class="status-card">
+  <div id="statusCard" class="status-card" role="status" aria-live="polite" aria-atomic="true">
     <div class="status-header">
-      <div id="statusIcon" class="status-icon disconnected"></div>
+      <div id="statusIcon" class="status-icon disconnected" aria-hidden="true"></div>
       <div id="statusText" class="status-text" data-i18n="popupStatusChecking">Vérification...</div>
     </div>
     <div id="statusDetails" class="status-details"></div>
   </div>
 
   <div class="info-box" data-i18n="popupInfoRequiresDesktop">
-    Cette extension nécessite que l'application Desktop Vault soit lancée et connectée.
+    Cette extension nécessite que l'application RDVAULT soit lancée et déverrouillée.
   </div>
 
   <script src="popup.js"></script>

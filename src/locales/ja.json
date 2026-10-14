@@ -73,7 +73,8 @@
     "dropHere": "ここにドロップ",
     "rightClickToAddTag": "右クリックで追加",
     "dragCountOne": "{{count}} 件のエントリ",
-    "dragCountMany": "{{count}} 件のエントリ"
+    "dragCountMany": "{{count}} 件のエントリ",
+    "rowSelected": "選択済み"
   },
   "contextMenu": {
     "copyUsername": "ユーザー名をコピー",
@@ -150,7 +151,8 @@
     "totpDeleteConfirm": "確認が必要です：{{seconds}} 秒以内にもう一度「{{action}}」を選択すると、「{{name}}」の TOTP キーが完全に削除されます（元に戻せません）。",
     "secretDeletedTotpKept": "エントリを削除しました。TOTP キーは保持されています：「{{action}}」でエントリを TOTP コードごと復元できます。",
     "secretDeletedTotpKeptOrphan": "エントリを完全に削除しました。TOTP キーは保持されています：同じ名前で再作成したエントリに関連付けられます。",
-    "secretSavedTotpAttached": "シークレットを保存しました。この名前の TOTP キーが既に存在していたため、このエントリに関連付けられました。"
+    "secretSavedTotpAttached": "シークレットを保存しました。この名前の TOTP キーが既に存在していたため、このエントリに関連付けられました。",
+    "secretSavedMerged": "シークレットを保存しました。このエントリはその間に別の場所で変更されていました。変更したフィールドのみが置き換えられ、その他の変更は保持されています。"
   },
   "error": {
     "tooManyEntries": "エントリが多すぎます（最大500）",
@@ -257,7 +259,8 @@
     "listTooDeepPartial": "フォルダーが {{max}} 階層を超えて入れ子になっています。{{count}} 件のエントリのみ表示されており、一覧は不完全です。",
     "extensionSyncTruncated": "ブラウザー拡張機能の同期が不完全です：上限 {{max}} 件を超えた {{count}} 件のエントリは拡張機能に送信されませんでした。",
     "syncServerUnavailable": "ブラウザー拡張機能との接続を開けませんでした（{{code}}）：ブラウザーの自動入力は保管庫に接続されていません。別の RDVAULT セッションまたは別のプログラムがポートを使用している可能性があります。それを閉じてから RDVAULT を再起動してください。",
-    "secretNameReserved": "「{{name}}」は RDVAULT の内部ストレージ用に予約されています。別の名前を選んでください。"
+    "secretNameReserved": "「{{name}}」は RDVAULT の内部ストレージ用に予約されています。別の名前を選んでください。",
+    "secretChangedElsewhere": "エントリ「{{name}}」は表示後に別の場所で変更または削除されました。何も保存されていません。再読み込みしたので、現在のバージョンからやり直してください (必要に応じてフォームを閉じて開き直してください)。"
   },
   "settings": {
     "title": "設定",
@@ -276,7 +279,17 @@
     "lockedColumn": "必須列",
     "close": "閉じる",
     "selectLanguage": "言語を選択",
-    "languageDesc": "アプリケーションの表示言語を選択してください"
+    "languageDesc": "アプリケーションの表示言語を選択してください",
+    "security": "セキュリティ",
+    "autoLockTitle": "自動ロック",
+    "autoLockDesc": "RDVAULT でこの時間操作がないと、セッションが終了し、再度サインインが必要になります。",
+    "autoLockLabel": "ロックまでの時間",
+    "autoLockMinute": "1 分",
+    "autoLockMinutes": "{{count}} 分",
+    "autoLockHour": "1 時間",
+    "autoLockHours": "{{count}} 時間",
+    "autoLockDefault": "既定",
+    "autoLockLockedNote": "Windows セッションがロックされている間は、この設定に関係なく 3 時間後に RDVAULT のセッションが終了します。"
   },
   "cli": {
     "title": "CLIアクセス（mvault）",
@@ -528,7 +541,8 @@
       "noLinkedPolicy": "この Vault に関連付けられたポリシーはありません",
       "infoTitle": "情報:",
       "infoText": "上記のポリシーは {{path}} へのアクセスを許可します。ポリシーとその AD グループは「ポリシー」タブで管理してください。",
-      "selectPrompt": "ポリシーを管理する Vault を選択してください"
+      "selectPrompt": "ポリシーを管理する Vault を選択してください",
+      "deleteNamed": "保管庫 {{path}} を削除"
     },
     "policy": {
       "available": "利用可能なポリシー",
@@ -601,7 +615,8 @@
       "selectPrompt": "ログを表示する監査デバイスを選択してください",
       "selectHint": "左側の一覧でデバイスをクリックすると、その監査ログが表示されます。",
       "enablePrompt": "ログの記録を開始するには監査デバイスを有効にしてください",
-      "enableHint": "監査ログには Vault で実行されたすべての操作（誰が、いつ、どの操作を、どのリソースに対して）が記録されます。"
+      "enableHint": "監査ログには Vault で実行されたすべての操作（誰が、いつ、どの操作を、どのリソースに対して）が記録されます。",
+      "disableNamed": "監査デバイス {{path}} を無効化"
     },
     "tags": {
       "title": "タグ管理",
@@ -907,10 +922,12 @@
     "importOverwrite": "重複を上書き",
     "partialSuccess": "エクスポート完了：{{count}}件のシークレットをエクスポート、{{failed}}件は読み取れませんでした",
     "importPartial": "インポート完了：{{count}}件のシークレットをインポート、{{failed}}件は失敗またはスキップされました",
-    "contentNote": "ファイルにはエントリのすべてのデータ（パスワード、カスタムフィールド、添付ファイル）が平文で含まれます。安全な場所に保管してください。パスキーと TOTP キーはエクスポートされません。"
+    "contentNote": "ファイルにはエントリのすべてのデータ（パスワード、カスタムフィールド、添付ファイル）が平文で含まれます。安全な場所に保管してください。パスキーと TOTP キーはエクスポートされません。",
+    "importLongValues": "{{count}}件のエントリに10000文字を超えるメモまたはフィールドがあります：そのままインポートしました。エディターで保存する前に短くしてください。"
   },
   "clipboard": {
-    "clearNow": "今すぐクリア"
+    "clearNow": "今すぐクリア",
+    "autoClear": "クリップボードは {{seconds}} 秒後に消去されます。"
   },
   "window": {
     "minimize": "最小化",
@@ -992,7 +1009,8 @@
     "errMaxUses": "最大使用回数に達しました",
     "errExpired": "共有が期限切れです",
     "errReceive": "共有の取得エラー",
-    "errUnauthorized": "共有が拒否されました。Vault セッションに権限がありません"
+    "errUnauthorized": "共有が拒否されました。Vault セッションに権限がありません",
+    "errProxyInvalidShareId": "プロキシが無効な形式の共有IDを返しました (英字・数字・- と _ のみ、最大 128 文字)。共有は作成されていません。RBI プロキシの管理者に連絡してください。"
   },
   "passwordHealth": {
     "title": "パスワードの健全性",
@@ -1065,5 +1083,24 @@
     "title": "予期しないエラーが発生しました",
     "message": "インターフェイスの表示が中断されました。続行するには再読み込みしてください。再度サインインが必要です。",
     "reload": "インターフェイスを再読み込み"
+  },
+  "extensionTab": {
+    "tab": "拡張機能",
+    "title": "RDVAULT ブラウザー拡張機能",
+    "intro": "この拡張機能は Chrome、Edge、Brave で資格情報を入力し、パスキーを管理します。RDVAULT に同梱されていますが、Chrome では自動インストールできないため、次の手順で一度だけ読み込んでください。",
+    "folderLabel": "拡張機能のフォルダー",
+    "openFolder": "フォルダーを開く",
+    "copyPath": "パスをコピー",
+    "copied": "コピーしました",
+    "stepsTitle": "インストール（初回のみ）",
+    "step1": "ブラウザーの拡張機能ページのアドレスをコピーし、アドレスバーに貼り付けます：",
+    "step2": "「デベロッパー モード」をオンにします。",
+    "step3": "「パッケージ化されていない拡張機能を読み込む」をクリックし、上記のフォルダーを選択します。",
+    "step4": "拡張機能（ツールバーの RDVAULT アイコン）を開くと、RDVAULT がペアリングの承認を一度だけ求めます。",
+    "update": "RDVAULT を更新するたびに、拡張機能ページでこの拡張機能の「再読み込み」をクリックしてください。",
+    "idLabel": "拡張機能 ID",
+    "versionLabel": "バージョン",
+    "unavailable": "このインストールでは拡張機能が見つかりませんでした。RDVAULT を再インストールするか、ソースコードの chrome-extension/vault-autofill-extension フォルダーを読み込んでください。",
+    "sharedWarning": "共有セッションのサーバー（リモート デスクトップ、Citrix）にはインストールしないでください。"
   }
 }

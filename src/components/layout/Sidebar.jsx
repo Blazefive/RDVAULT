@@ -110,7 +110,7 @@ export default function Sidebar({
                 outline: isDropTarget ? '2px dashed var(--accent, #3b82f6)' : undefined,
                 background: isDropTarget ? 'var(--bg-selection, rgba(59, 130, 246, 0.15))' : undefined,
                 transform: isDropTarget ? 'scale(1.02)' : undefined,
-                transition: 'all 0.15s ease'
+                transition: 'background-color 0.15s ease, transform 0.15s ease'
               }}
             >
               <span className="engine-name">{displayName}</span>

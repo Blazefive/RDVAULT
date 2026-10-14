@@ -160,8 +160,13 @@ function hostsMatch(secretHost, requestedHost) {
   const secretBase = matchingBaseDomain(secretHost);
   const requestedBase = matchingBaseDomain(requestedHost);
   if (!secretBase || !requestedBase) return false;
-  // Domaine parent : « example.com » couvre « login.example.com » (jamais un suffixe public nu)
-  if (requestedHost.endsWith('.' + secretHost) && secretBase === secretHost) return true;
+  // Domaine parent : « example.com » couvre « login.example.com » (jamais un suffixe public nu).
+  // CONFIG-1 : jamais à travers un suffixe mutualisé situé sous l'entrée (« azure.com » ne couvre pas
+  // « vm.region.cloudapp.azure.com », « ovh.net » ne couvre pas « vps-x.vps.ovh.net ») : l'hôte demandé
+  // doit relever du même suffixe mutualisé que l'entrée (même locataire) ou d'aucun.
+  const requestedSuffix = multiTenantSuffixOf(requestedHost);
+  if (requestedHost.endsWith('.' + secretHost) && secretBase === secretHost
+    && (!requestedSuffix || multiTenantSuffixOf(secretHost) === requestedSuffix)) return true;
   // Même domaine de base, ou domaines de base équivalents
   if (secretBase === requestedBase || areEquivalent(secretBase, requestedBase)) return true;
   // Secret d'un locataire mutualisé : proposé aussi sur les domaines (mono-titulaires) de sa

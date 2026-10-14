@@ -72,9 +72,13 @@ export default function LoginForm({
   const setup = useFirstRunSetup(setupMode, setupRecheck);
   const [confirmPassword, setConfirmPassword] = useState('');
   const fieldId = useId();
+  // UI-36 : libellés reliés (htmlFor/id) : nom accessible = libellé visible, le texte
+  // indicatif reste un simple exemple
+  const usernameId = `${fieldId}-username`;
   const passwordId = `${fieldId}-password`;
   const confirmId = `${fieldId}-confirm`;
   const ruleId = `${fieldId}-rule`;
+  const mismatchId = `${fieldId}-mismatch`;
 
   // Une seule voie d'envoi (bouton, Entrée dans chaque champ) : jamais l'évènement en argument
   const submit = () => {
@@ -108,8 +112,10 @@ export default function LoginForm({
 
           <div className="login-form">
             <div className="form-group-vertical">
-              <label className="form-label-vertical">{t('login.username')}</label>
+              <label className="form-label-vertical" htmlFor={usernameId}>{t('login.username')}</label>
               <input
+                id={usernameId}
+                autoComplete="username"
                 value={authUser}
                 onChange={e => setAuthUser(e.target.value)}
                 placeholder={t('login.placeholderUser')}
@@ -164,10 +170,11 @@ export default function LoginForm({
                   className="form-input-vertical"
                   autoComplete="new-password"
                   aria-invalid={mismatch || undefined}
+                  aria-describedby={mismatch ? mismatchId : undefined}
                   onKeyDown={onEnter}
                 />
                 {mismatch && (
-                  <div role="alert" style={{ fontSize: 'var(--text-xs)', color: 'var(--error)', marginTop: 'var(--sp-2)' }}>
+                  <div id={mismatchId} role="alert" style={{ fontSize: 'var(--text-xs)', color: 'var(--error)', marginTop: 'var(--sp-2)' }}>
                     {t('login.setupMismatchHint')}
                   </div>
                 )}

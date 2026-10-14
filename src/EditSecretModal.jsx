@@ -21,7 +21,7 @@
 
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import PasswordGeneratorModal from './PasswordGeneratorModal';
-import { useDialogA11y } from './components/common/Modal';
+import { useDialogA11y, getFocusableElements } from './components/common/Modal';
 import { analyzePassword, STRENGTH_LABEL_KEYS } from './utils/passwordStrength';
 import { validateSecretName, validateUsername, validatePassword, isValidUrl, translateValidationError } from './validation';
 import { copySecureWithAutoClear } from './utils/clipboard';
@@ -60,9 +60,10 @@ function formatFileSize(bytes, lang, t) {
  * @param {Function} props.onClose - Callback de fermeture
  * @param {Function} props.onSave - Callback de sauvegarde avec les données validées
  * @param {boolean} props.totpExists - Si true, le nom ne peut pas être modifié (TOTP configuré)
+ * @param {boolean} [props.totpPending] - Vérification TOTP en cours : nom d'une entrée existante en lecture seule
  * @param {Function} [props.showToast] - Affichage des messages (remplace alert(), non supporté par Electron)
  */
-export default function EditSecretModal({ initial, onClose, onSave, totpExists = false, existingTags = [], showToast }) {
+export default function EditSecretModal({ initial, onClose, onSave, totpExists = false, totpPending = false, existingTags = [], showToast }) {
   const { t, lang } = useTranslation();
   const [showPasswordGenerator, setShowPasswordGenerator] = useState(false);
   const [passwordStrength, setPasswordStrength] = useState({ entropy: 0, level: '', color: '', percentage: 0 });
@@ -100,7 +101,23 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
     tags: useId(),
     customFields: useId(),
     attachments: useId(),
+    errors: useId(),
   };
+
+  // UI-33 : message d'erreur relié à son champ (aria-describedby) et champ marqué invalide
+  // (aria-invalid) ; sans erreur, aucun attribut (pas d'aria-invalid="false" superflu).
+  const errorId = (key) => `${ids.errors}-${key}`;
+  const fieldErrorProps = (key) => (validationErrors[key]
+    ? { 'aria-invalid': true, 'aria-describedby': errorId(key) }
+    : {});
+
+  // UI-33 : après un enregistrement refusé, focus sur le premier champ en erreur (ordre du
+  // formulaire) : le lecteur d'écran lit son libellé, l'état « invalide » et le message.
+  useEffect(() => {
+    if (Object.keys(validationErrors).length === 0) return;
+    const first = panelRef.current?.querySelector('[aria-invalid="true"]:not([disabled])');
+    if (first) first.focus();
+  }, [validationErrors]);
 
   const isCreate = !initial || !initial.name || initial.name.endsWith('/');
   // Dossier parent (préfixe « a/b/ ») lors d'une création dans un sous-dossier, vide à la racine
@@ -125,6 +142,18 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
     // Focus sur le premier champ quand la modale s'ouvre
     nameRef.current?.focus();
   }, []);
+
+  // Nom verrouillé par un TOTP détecté APRÈS l'ouverture (la fiche s'affiche sans attendre la
+  // vérification) : le champ devient désactivé ; s'il avait le focus, celui-ci passe au premier
+  // élément focalisable de la fiche (comme à une ouverture avec un nom déjà verrouillé).
+  const nameLocked = totpExists && !isCreate;
+  useEffect(() => {
+    if (!nameLocked) return;
+    const active = document.activeElement;
+    if (active !== nameRef.current && active && active !== document.body) return;
+    const [first] = getFocusableElements(panelRef.current);
+    if (first) first.focus();
+  }, [nameLocked]);
 
   // Fermer sur ESC, sans bloquer la saisie normale ; focus initial, piège de focus et retour
   // du focus au déclencheur (hook du squelette commun Modal).
@@ -483,11 +512,13 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
               defaultValue={initial?.name || ''}
               autoComplete="off"
               placeholder={entryType === 'folder' ? t('editSecret.placeholderFolderName') : t('editSecret.placeholderName')}
-              disabled={totpExists && !isCreate}
-              readOnly={totpExists && !isCreate}
+              disabled={nameLocked}
+              readOnly={nameLocked || (totpPending && !isCreate)}
+              aria-required="true"
+              {...fieldErrorProps('name')}
             />
             {validationErrors.name && (
-              <div className="form-hint" style={{ color: 'var(--error)' }}>
+              <div id={errorId('name')} className="form-hint" style={{ color: 'var(--error)' }}>
                 ⚠️ {validationErrors.name}
               </div>
             )}
@@ -514,9 +545,10 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                   style={{ borderColor: validationErrors.username ? 'var(--error)' : undefined }}
                   defaultValue={initial?.username || ''}
                   autoComplete="off"
+                  {...fieldErrorProps('username')}
                 />
                 {validationErrors.username && (
-                  <div className="form-hint" style={{ color: 'var(--error)' }}>
+                  <div id={errorId('username')} className="form-hint" style={{ color: 'var(--error)' }}>
                     ⚠️ {validationErrors.username}
                   </div>
                 )}
@@ -538,6 +570,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                     defaultValue={initial?.password || ''}
                     autoComplete="off"
                     onChange={handlePasswordChange}
+                    {...fieldErrorProps('password')}
                   />
                   <button
                     onClick={() => setShowPasswordGenerator(true)}
@@ -548,7 +581,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                   </button>
                 </div>
                 {validationErrors.password && (
-                  <div className="form-hint" style={{ color: 'var(--error)' }}>
+                  <div id={errorId('password')} className="form-hint" style={{ color: 'var(--error)' }}>
                     ⚠️ {validationErrors.password}
                   </div>
                 )}
@@ -586,9 +619,10 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                   style={{ borderColor: validationErrors.url ? 'var(--error)' : undefined }}
                   defaultValue={initial?.url || ''}
                   autoComplete="off"
+                  {...fieldErrorProps('url')}
                 />
                 {validationErrors.url && (
-                  <div className="form-hint" style={{ color: 'var(--error)' }}>
+                  <div id={errorId('url')} className="form-hint" style={{ color: 'var(--error)' }}>
                     ⚠️ {validationErrors.url}
                   </div>
                 )}
@@ -615,6 +649,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                       minHeight: '120px',
                       borderColor: validationErrors.privateKey ? 'var(--error)' : undefined
                     }}
+                    {...fieldErrorProps('privateKey')}
                   />
                   <button
                     onClick={() => copyToClipboard(privateKeyRef.current?.value)}
@@ -628,7 +663,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                   </button>
                 </div>
                 {validationErrors.privateKey && (
-                  <div className="form-hint" style={{ color: 'var(--error)' }}>
+                  <div id={errorId('privateKey')} className="form-hint" style={{ color: 'var(--error)' }}>
                     ⚠️ {validationErrors.privateKey}
                   </div>
                 )}
@@ -670,9 +705,10 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                   autoComplete="off"
                   placeholder={t('sshKey.passphrasePlaceholder')}
                   style={{ borderColor: validationErrors.passphrase ? 'var(--error)' : undefined }}
+                  {...fieldErrorProps('passphrase')}
                 />
                 {validationErrors.passphrase && (
-                  <div className="form-hint" style={{ color: 'var(--error)' }}>
+                  <div id={errorId('passphrase')} className="form-hint" style={{ color: 'var(--error)' }}>
                     ⚠️ {validationErrors.passphrase}
                   </div>
                 )}
@@ -691,9 +727,10 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                   className="modal-textarea"
                   defaultValue={initial?.notes || ''}
                   style={{ borderColor: validationErrors.notes ? 'var(--error)' : undefined }}
+                  {...fieldErrorProps('notes')}
                 />
                 {validationErrors.notes && (
-                  <div className="form-hint" style={{ color: 'var(--error)' }}>
+                  <div id={errorId('notes')} className="form-hint" style={{ color: 'var(--error)' }}>
                     ⚠️ {validationErrors.notes}
                   </div>
                 )}
@@ -789,6 +826,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                             style={{ flex: '1', marginBottom: 0, borderColor: validationErrors[`customField_${index}_key`] ? 'var(--error)' : undefined }}
                             placeholder={t('editSecret.fieldKey')}
                             aria-label={t('editSecret.fieldKey')}
+                            {...fieldErrorProps(`customField_${index}_key`)}
                             value={field.key}
                             onChange={(e) => updateCustomField(index, 'key', e.target.value)}
                           />
@@ -798,6 +836,7 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                             type={field.protected ? 'password' : 'text'}
                             placeholder={t('editSecret.fieldValue')}
                             aria-label={t('editSecret.fieldValue')}
+                            {...fieldErrorProps(`customField_${index}_value`)}
                             value={field.value}
                             onChange={(e) => updateCustomField(index, 'value', e.target.value)}
                           />
@@ -821,12 +860,12 @@ export default function EditSecretModal({ initial, onClose, onSave, totpExists =
                         </div>
                         {/* Erreurs de validation de la ligne (sans affichage, Enregistrer échouait en silence) */}
                         {validationErrors[`customField_${index}_key`] && (
-                          <div className="form-hint" style={{ color: 'var(--error)' }}>
+                          <div id={errorId(`customField_${index}_key`)} className="form-hint" style={{ color: 'var(--error)' }}>
                             ⚠️ {validationErrors[`customField_${index}_key`]}
                           </div>
                         )}
                         {validationErrors[`customField_${index}_value`] && (
-                          <div className="form-hint" style={{ color: 'var(--error)' }}>
+                          <div id={errorId(`customField_${index}_value`)} className="form-hint" style={{ color: 'var(--error)' }}>
                             ⚠️ {validationErrors[`customField_${index}_value`]}
                           </div>
                         )}

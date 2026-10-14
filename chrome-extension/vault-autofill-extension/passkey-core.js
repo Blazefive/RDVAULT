@@ -9,8 +9,10 @@
 // Réimplémentation indépendante de la spec W3C WebAuthn / CTAP2 — aucun code tiers copié.
 //
 // Format : attestation "none" (pas d'attestation matérielle), algorithme ES256 (-7),
-// AAGUID à zéro (authentificateur logiciel non identifiable, comportement recommandé
-// pour un gestionnaire de passkeys).
+// AAGUID propre à RDVAULT (RDVAULT_AAGUID). L'ancien AAGUID nul faisait passer les passkeys
+// RDVAULT pour des passkeys Apple (« Trousseau iCloud » chez Google), dont les premières
+// versions utilisaient aussi un AAGUID nul. Les passkeys déjà créées gardent leur AAGUID d'origine
+// (l'AAGUID n'apparaît qu'à la création).
 
 /* global globalThis */ // objet global ES2020 (navigateur et Node)
 (function (root, factory) {
@@ -95,8 +97,18 @@
       : concat(rpIdHash, new Uint8Array([flags]), sc);
   }
 
-  const FLAG_UP = 0x01, FLAG_UV = 0x04, FLAG_AT = 0x40;
-  const AAGUID = new Uint8Array(16); // authentificateur logiciel : AAGUID nul
+  const FLAG_UP = 0x01, FLAG_UV = 0x04, FLAG_BE = 0x08, FLAG_BS = 0x10, FLAG_AT = 0x40;
+  // AAGUID RDVAULT : 1c80936c-3d17-4ec8-acaf-40e1e6a081cd (identifiant de fabricant de l'authentificateur)
+  const RDVAULT_AAGUID_HEX = '1c80936c3d174ec8acaf40e1e6a081cd';
+  const AAGUID = new Uint8Array(RDVAULT_AAGUID_HEX.match(/../g).map((h) => parseInt(h, 16)));
+
+  // Drapeaux de sauvegarde (WebAuthn §6.1.3) : BE = passkey « synchronisable », BS = sauvegardée.
+  // Une passkey RDVAULT vit dans le coffre (sauvegardé et synchronisé avec lui), pas dans ce poste :
+  // c'est la déclaration des gestionnaires de passkeys du marché. BE est FIGÉ pour toute la vie
+  // de la passkey (un site peut refuser une assertion dont BE diffère de l'enregistrement) :
+  // il n'est posé que si l'appelant le demande (p.backupEligible === true) — le pont le demande
+  // pour les nouvelles passkeys et le mémorise ; les passkeys créées sans BE restent sans BE.
+  const backupFlags = (p) => (p && p.backupEligible === true ? FLAG_BE | FLAG_BS : 0);
 
   // Drapeaux de l'authenticatorData. UV (« utilisateur vérifié » : PIN, biométrie, mot de passe)
   // n'est posé que si l'appelant atteste qu'une vérification a eu lieu (p.userVerified === true) ;
@@ -144,14 +156,14 @@
     const cose = coseKeyFromXY(x, y);
     const credIdLen = new Uint8Array([(credentialId.length >> 8) & 0xff, credentialId.length & 0xff]);
     const attestedCredData = concat(AAGUID, credIdLen, credentialId, cose);
-    const authData = buildAuthData(rpIdHash, ceremonyFlags(p) | FLAG_AT, 0, attestedCredData);
+    const authData = buildAuthData(rpIdHash, ceremonyFlags(p) | backupFlags(p) | FLAG_AT, 0, attestedCredData);
 
     // Format d'attestation selon la préférence demandée par le site
     const wantsAttestation = ['direct', 'enterprise', 'indirect'].includes(String(p.attestation || 'none'));
     let attestationObject;
     if (wantsAttestation) {
       // Auto-attestation « packed » : signature de (authData || clientDataHash) par la clé de la passkey,
-      // alg ES256 (-7), sans x5c (pas de chaîne de certificats → AAGUID nul, obligatoire pour self).
+      // alg ES256 (-7), sans x5c (pas de chaîne de certificats ; l'AAGUID n'est contraint qu'avec x5c).
       const rawSig = new Uint8Array(await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, kp.privateKey, concat(authData, clientDataHash)));
       const attStmt = new Map([['alg', -7], ['sig', rawSignatureToDer(rawSig)]]);
       attestationObject = cborEncode(new Map([['fmt', 'packed'], ['attStmt', attStmt], ['authData', authData]]));
@@ -166,6 +178,7 @@
       authenticatorDataB64u: b64urlEncode(authData),
       publicKeySpkiB64u: b64urlEncode(publicKeySpki),
       privateKeyJwk, publicKeyJwk, rpId: p.rpId, signCount: 0,
+      backupEligible: p.backupEligible === true, // à mémoriser avec la passkey (BE figé, voir backupFlags)
     };
   }
 
@@ -183,7 +196,7 @@
 
     const rpIdHash = await sha256(strToBytes(p.rpId));
     const signCount = (p.signCount || 0) + 1;
-    const authData = buildAuthData(rpIdHash, ceremonyFlags(p), signCount);
+    const authData = buildAuthData(rpIdHash, ceremonyFlags(p) | backupFlags(p), signCount);
 
     const priv = await subtle.importKey('jwk', p.privateKeyJwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
     const rawSig = new Uint8Array(await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, priv, concat(authData, clientDataHash)));
@@ -201,6 +214,7 @@
 
   return {
     createCredential, getAssertion,
+    AAGUID_HEX: RDVAULT_AAGUID_HEX,
     _internal: { cborEncode, rawSignatureToDer, b64urlEncode, b64urlDecode, toBytes, sha256, coseKeyFromXY, buildAuthData, concat, strToBytes },
   };
 });

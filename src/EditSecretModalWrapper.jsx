@@ -1,7 +1,7 @@
 // src/EditSecretModalWrapper.jsx
 // Wrapper pour EditSecretModal qui gère la vérification TOTP
 // Extrait de App.jsx pour éviter les re-renders causés par les changements d'état parent
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import EditSecretModal from './EditSecretModal.jsx';
 
 export default function EditSecretModalWrapper({
@@ -14,27 +14,42 @@ export default function EditSecretModalWrapper({
   existingTags = [],
   showToast
 }) {
-  const [totpExists, setTotpExistsState] = useState(false);
-  const [loading, setLoading] = useState(true);
+  // Clé TOTP à vérifier : entrée nommée uniquement (le TOTP éventuel verrouille son nom)
+  const totpKeyName = editSecret && editSecret.name ? getTotpKeyName(editSecret.name) : null;
+
+  // PERF : la fiche s'affiche dès le clic, la vérification TOTP (requête au coffre) se fait en
+  // parallèle. Avant : rien n'était rendu avant la réponse (« Modifier » : ≈ 65 ms mesurés avec le
+  // coffre local, un aller-retour réseau de plus avec un Vault distant ; « Nouvelle entrée » : une
+  // image de retard). Pendant la vérification, le nom d'une entrée existante reste en lecture
+  // seule ; l'enregistrement revérifie de toute façon le TOTP avant un renommage (useSecrets).
+  const [totpState, setTotpState] = useState(() => ({ key: totpKeyName, exists: false, pending: totpKeyName !== null }));
+
+  // Fonction de vérification la plus récente, sans relancer la vérification à chaque rendu
+  const checkRef = useRef(checkTotpExists);
+  useEffect(() => { checkRef.current = checkTotpExists; });
 
   useEffect(() => {
-    const checkTotp = async () => {
-      if (editSecret && editSecret.name) {
-        const totpKeyName = getTotpKeyName(editSecret.name);
-        const exists = await checkTotpExists(totpKeyName);
-        setTotpExistsState(exists);
-      }
-      setLoading(false);
-    };
-    checkTotp();
-  }, [editSecret, checkTotpExists, getTotpKeyName]);
-
-  if (loading) return null;
+    if (totpKeyName === null) {
+      setTotpState((prev) => (prev.pending || prev.exists ? { key: null, exists: false, pending: false } : prev));
+      return undefined;
+    }
+    let active = true;
+    // Nouvelle clé (autre entrée ou autre coffre) : nom en lecture seule jusqu'à la réponse
+    setTotpState((prev) => (prev.key === totpKeyName && prev.pending ? prev : { key: totpKeyName, exists: false, pending: true }));
+    (async () => {
+      let exists = false;
+      try { exists = await checkRef.current(totpKeyName); } catch { exists = false; }
+      // Réponse d'une fiche fermée ou d'une clé remplacée entre-temps : ignorée
+      if (active) setTotpState({ key: totpKeyName, exists: !!exists, pending: false });
+    })();
+    return () => { active = false; };
+  }, [totpKeyName]);
 
   return (
     <EditSecretModal
       initial={editSecret}
-      totpExists={totpExists}
+      totpExists={totpState.exists}
+      totpPending={totpState.pending}
       onClose={onClose}
       onSave={onSave}
       existingTags={existingTags}

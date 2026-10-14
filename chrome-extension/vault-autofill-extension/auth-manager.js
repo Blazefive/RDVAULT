@@ -11,14 +11,20 @@
  * - Appairage : à la première demande de token, l'application Desktop demande
  *   une confirmation à l'utilisateur (jusqu'à 60 s). Le fetch attend donc 65 s.
  * - Retry automatique en cas d'échec de requête authentifiée :
- *     401                          → token invalide, nouvelle demande de token
- *     403 {error:'pairing_required'} → appairage perdu (Desktop redémarré), nouvel appairage
+ *     401                          → token invalide (Desktop redémarré : nouveau token de session),
+ *                                    nouvelle demande de token, sans boîte de dialogue si l'extension
+ *                                    est toujours appairée (paired-extensions.json)
+ *     403 {error:'pairing_required'} → extension plus appairée (fichier d'appairage supprimé), nouvel appairage
+ * - Demande d'appairage EXPIRÉE (403 {error:'pairing_timeout'}, boîte restée sans réponse 60 s, EXT-25) :
+ *   distincte d'un refus, sans délai de carence ; aucune nouvelle demande automatique (pas de boîte de
+ *   dialogue relancée à chaque onglet) jusqu'à la réouverture de la popup (port 'rdvault-popup').
  *
  * @author Vault Autofill Team
  * @version 2.1.0
  */
 
-'use strict';
+/* global chrome */ // API d'extension (service worker, chargé par importScripts)
+'use strict'; // eslint-disable-line strict -- script classique chargé par importScripts, pas un module ES
 
 // ============================================================================
 // CONFIGURATION
@@ -58,12 +64,29 @@ const UNAVAILABLE_COOLDOWN_MS = 10000;
 /** Intervalle du keep-alive du service worker pendant l'attente d'appairage (ms) */
 const KEEPALIVE_INTERVAL_MS = 20000;
 
+/**
+ * Délai après lequel une demande de token encore en cours est considérée comme « en attente
+ * de confirmation dans RDVAULT » (ms). Une application fermée refuse la connexion en quelques
+ * millisecondes ; la boîte d'appairage, elle, garde la requête ouverte (jusqu'à 60 s).
+ */
+const PAIRING_PENDING_DELAY_MS = 1000;
+
+/**
+ * Nom du port ouvert par la popup (chrome.runtime.connect) : sa connexion signale une réouverture de la
+ * popup (nouvelle demande d'appairage permise après expiration) et transporte l'état « expiré » (EXT-25).
+ */
+const POPUP_PORT_NAME = 'rdvault-popup';
+
 /** États possibles de l'appairage avec l'application Desktop */
 const PAIRING_STATE = Object.freeze({
   IDLE: 'idle',
+  // Demande de token envoyée, réponse pas encore reçue (moins de PAIRING_PENDING_DELAY_MS)
+  CONNECTING: 'connecting',
   PENDING: 'pending',
   OK: 'ok',
   DENIED: 'denied',
+  // Boîte d'appairage fermée par le délai, sans réponse de l'utilisateur (EXT-25) : pas un refus
+  EXPIRED: 'expired',
   UNAVAILABLE: 'unavailable'
 });
 
@@ -122,6 +145,13 @@ class AuthManager {
      * @private
      */
     this._nextTokenAttemptAt = 0;
+
+    /**
+     * Ports des popups ouvertes (avertis d'une demande d'appairage expirée)
+     * @type {Set<Object>}
+     * @private
+     */
+    this._popupPorts = new Set();
   }
 
   // --------------------------------------------------------------------------
@@ -209,6 +239,16 @@ class AuthManager {
   }
 
   /**
+   * Indique si une demande de token vient d'être envoyée, sans réponse encore
+   * (ni appairage en attente, ni échec connus à ce stade)
+   *
+   * @returns {boolean}
+   */
+  isConnecting() {
+    return this._pairingState === PAIRING_STATE.CONNECTING;
+  }
+
+  /**
    * Indique si l'appairage a été refusé récemment dans l'application Desktop
    *
    * @returns {boolean}
@@ -218,12 +258,57 @@ class AuthManager {
   }
 
   /**
+   * Indique si la dernière demande d'appairage a expiré sans réponse dans RDVAULT (EXT-25)
+   *
+   * @returns {boolean}
+   */
+  isPairingExpired() {
+    return this._pairingState === PAIRING_STATE.EXPIRED;
+  }
+
+  /**
+   * Popup ouverte (port 'rdvault-popup') : une demande d'appairage expirée peut être renouvelée (la
+   * prochaine demande de token rouvre la boîte dans RDVAULT) ; la popup est avertie si une demande expire
+   * pendant qu'elle est ouverte.
+   *
+   * @param {Object} port - chrome.runtime.Port
+   */
+  onPopupConnected(port) {
+    if (!port || port.name !== POPUP_PORT_NAME) return;
+    if (this._pairingState === PAIRING_STATE.EXPIRED) {
+      this._pairingState = PAIRING_STATE.IDLE;
+      this._nextTokenAttemptAt = 0;
+    }
+    this._popupPorts.add(port);
+    try {
+      port.onDisconnect.addListener(() => { this._popupPorts.delete(port); });
+    } catch (err) {
+      // Ignorer : port déjà fermé
+    }
+  }
+
+  /**
+   * Avertit les popups ouvertes de l'état d'appairage courant
+   *
+   * @private
+   */
+  _notifyPopups() {
+    for (const port of this._popupPorts) {
+      try {
+        port.postMessage({ type: 'PAIRING_STATE', state: this._pairingState });
+      } catch (err) {
+        this._popupPorts.delete(port);
+      }
+    }
+  }
+
+  /**
    * Effectue une requête HTTP authentifiée
    *
    * Ajoute automatiquement l'en-tête Authorization avec le Bearer token.
    * - 401 : token expiré/invalide → nouvelle demande de token puis nouvel essai
-   * - 403 {error:'pairing_required'} : l'extension n'est plus appairée (Desktop
-   *   redémarré) → le token est oublié, un nouvel appairage est demandé
+   * - 403 {error:'pairing_required'} : l'extension n'est plus appairée (appairage
+   *   effacé côté Desktop, p. ex. désinstallation) → le token est oublié, un nouvel appairage est demandé
    *   (boîte de dialogue dans RDVAULT) puis la requête est rejouée une fois
    *
    * @param {string} url - URL de la requête
@@ -296,11 +381,33 @@ class AuthManager {
    * @private
    */
   async _isPairingRequired(response) {
+    return (await this._errorCode(response)) === 'pairing_required';
+  }
+
+  /**
+   * Indique si une réponse 403 correspond à {error:'pairing_timeout'} (demande d'appairage expirée, EXT-25)
+   *
+   * @param {Response} response - Réponse HTTP
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _isPairingTimeout(response) {
+    return (await this._errorCode(response)) === 'pairing_timeout';
+  }
+
+  /**
+   * Code d'erreur {error} d'une réponse JSON, lu sur un clone (corps original intact) ; null si illisible
+   *
+   * @param {Response} response - Réponse HTTP
+   * @returns {Promise<string|null>}
+   * @private
+   */
+  async _errorCode(response) {
     try {
       const data = await response.clone().json();
-      return !!data && data.error === 'pairing_required';
+      return data && typeof data.error === 'string' ? data.error : null;
     } catch (err) {
-      return false;
+      return null;
     }
   }
 
@@ -396,12 +503,19 @@ class AuthManager {
    * Réponses du serveur :
    * - 200 {token}                  : token obtenu
    * - 403 {error:'pairing_denied'} : l'utilisateur a refusé l'accès dans RDVAULT
+   * - 403 {error:'pairing_timeout'}: boîte d'appairage expirée sans réponse (EXT-25) → état EXPIRED
    * - 503 {error:'Token not ready'}: serveur pas prêt, nouvelle tentative
    *
    * @returns {Promise<boolean>}
    * @private
    */
   async _doFetchNewToken() {
+    // Demande d'appairage expirée (EXT-25) : aucune nouvelle demande automatique (onglets, alarme) avant la
+    // réouverture de la popup, sinon la boîte de dialogue réapparaîtrait sans action de l'utilisateur
+    if (this._pairingState === PAIRING_STATE.EXPIRED) {
+      return false;
+    }
+
     // Respecter le délai de carence après un refus / délai dépassé / Desktop injoignable
     if (Date.now() < this._nextTokenAttemptAt) {
       return false;
@@ -421,13 +535,35 @@ class AuthManager {
 
       for (let attempt = 1; attempt <= MAX_TOKEN_FETCH_RETRIES; attempt++) {
         try {
-          this._pairingState = PAIRING_STATE.PENDING;
+          // « En attente de confirmation » seulement si la requête est encore ouverte après
+          // PAIRING_PENDING_DELAY_MS (boîte d'appairage affichée) : une application fermée échoue
+          // aussitôt et la popup ne doit pas annoncer une demande d'appairage jamais reçue (EXT-25)
+          this._pairingState = PAIRING_STATE.CONNECTING;
+          const pendingTimer = setTimeout(() => {
+            if (this._pairingState === PAIRING_STATE.CONNECTING) this._pairingState = PAIRING_STATE.PENDING;
+          }, PAIRING_PENDING_DELAY_MS);
 
-          const response = await this._fetchWithTimeout(
-            `${SYNC_API_BASE}/auth/token`,
-            { method: 'GET', headers: { 'X-Vault-Extension': 'rdvault' } },
-            TOKEN_REQUEST_TIMEOUT_MS
-          );
+          let response;
+          try {
+            response = await this._fetchWithTimeout(
+              `${SYNC_API_BASE}/auth/token`,
+              { method: 'GET', headers: { 'X-Vault-Extension': 'rdvault' } },
+              TOKEN_REQUEST_TIMEOUT_MS
+            );
+          } finally {
+            clearTimeout(pendingTimer);
+          }
+
+          if (response.status === 403 && await this._isPairingTimeout(response)) {
+            // Boîte d'appairage fermée par le délai sans réponse (EXT-25) : pas un refus, pas de carence
+            console.warn('[AuthManager] Demande d\'appairage expirée (pairing_timeout)');
+            this._pairingState = PAIRING_STATE.EXPIRED;
+            this._nextTokenAttemptAt = 0;
+            this._authToken = null;
+            await this._clearTokenFromStorage();
+            this._notifyPopups();
+            return false;
+          }
 
           if (response.status === 403) {
             // L'utilisateur a refusé l'appairage dans l'application Desktop
@@ -468,6 +604,8 @@ class AuthManager {
             return false;
           }
           console.warn(`[AuthManager] Tentative ${attempt}: erreur réseau (l'application Desktop est-elle lancée ?)`);
+          // Application injoignable : « indisponible » dès l'attente avant la tentative suivante
+          this._pairingState = PAIRING_STATE.UNAVAILABLE;
         }
 
         if (attempt < MAX_TOKEN_FETCH_RETRIES) {
@@ -567,7 +705,7 @@ class AuthManager {
         return false;
       }
 
-      // 403 pairing_required = appairage perdu (Desktop redémarré) : token à renouveler
+      // 403 pairing_required = extension plus appairée (appairage effacé côté Desktop) : token à renouveler
       if (response.status === 403 && await this._isPairingRequired(response)) {
         return false;
       }
@@ -666,7 +804,14 @@ if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
   });
 }
 
+// Popup ouverte : port 'rdvault-popup' (réouverture après une demande d'appairage expirée, EXT-25)
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onConnect) {
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port && port.name === POPUP_PORT_NAME) authManager.onPopupConnected(port);
+  });
+}
+
 // Export pour utilisation dans background.js
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { authManager, AuthManager, PAIRING_STATE };
+  module.exports = { authManager, AuthManager, PAIRING_STATE, POPUP_PORT_NAME };
 }

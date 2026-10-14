@@ -204,19 +204,24 @@ function savePairedExtensions() {
   }
 }
 
+/** Issues possibles d'une demande d'appairage */
+const PAIRING_RESULT = Object.freeze({ APPROVED: 'approved', DENIED: 'denied', TIMEOUT: 'timeout' });
+
 /**
  * Demande à l'utilisateur d'approuver une extension Chrome (une seule fois par identifiant).
  * Les demandes concurrentes pour le même identifiant partagent la même boîte de dialogue.
+ * EXT-25 : une boîte restée SANS RÉPONSE jusqu'à PAIRING_TIMEOUT_MS (fermée par le délai) n'est pas un refus :
+ * l'issue 'timeout' est distincte de 'denied' (bouton « Refuser », Échap, fenêtre absente, erreur).
  * @param {string} extId - Identifiant d'extension (32 lettres a-p)
- * @returns {Promise<boolean>} true si approuvée
+ * @returns {Promise<string>} une valeur de PAIRING_RESULT
  */
 function requestExtensionPairing(extId) {
-  if (pairedExtensionIds.has(extId)) return Promise.resolve(true);
+  if (pairedExtensionIds.has(extId)) return Promise.resolve(PAIRING_RESULT.APPROVED);
   if (pendingPairings.has(extId)) return pendingPairings.get(extId);
 
   const pairing = (async () => {
     const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
-    if (!win) return false;
+    if (!win) return PAIRING_RESULT.DENIED;
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), PAIRING_TIMEOUT_MS);
     try {
@@ -238,12 +243,17 @@ function requestExtensionPairing(extId) {
         pairedExtensionIds.add(extId);
         savePairedExtensions();
         log.info('[Pairing] Extension approuvée');
-        return true;
+        return PAIRING_RESULT.APPROVED;
       }
-      log.warn('[Pairing] Extension refusée par l\'utilisateur (ou délai dépassé)');
-      return false;
+      // Boîte fermée par le délai (signal déclenché) : aucune réponse de l'utilisateur, pas un refus
+      if (abort.signal.aborted) {
+        log.warn('[Pairing] Demande d\'appairage expirée (aucune réponse en ' + (PAIRING_TIMEOUT_MS / 1000) + ' s)');
+        return PAIRING_RESULT.TIMEOUT;
+      }
+      log.warn('[Pairing] Extension refusée par l\'utilisateur');
+      return PAIRING_RESULT.DENIED;
     } catch {
-      return false;
+      return abort.signal.aborted ? PAIRING_RESULT.TIMEOUT : PAIRING_RESULT.DENIED;
     } finally {
       clearTimeout(timer);
       pendingPairings.delete(extId);
@@ -436,6 +446,88 @@ function vaultCertVerifyDecision(request) {
   return -2;
 }
 
+// ========================================
+// ÉPINGLAGE TLS INUTILISABLE (PINNING_INVALID)
+// ========================================
+// TRUSTED_CERT_FINGERPRINTS renseigné sans aucune empreinte valide : configLoader maintient l'épinglage
+// (fail-closed, CONFIG-3) et TOUTE connexion au serveur Vault est refusée. Ce refus n'apparaissait que dans
+// le journal : l'utilisateur voyait seulement des échecs de connexion. Avertissement au démarrage, traduit
+// dans les 12 langues de l'interface (langue : LANG de config.cfg au démarrage, via mainI18n.getLanguage),
+// dans une boîte INDÉPENDANTE et non attendue : le démarrage (mode local compris) n'est jamais bloqué.
+// Textes gardés ici (mainI18n.js n'appartient pas à ce lot) ; même repli que tm() : anglais.
+const PINNING_INVALID_MESSAGES = {
+  title: {
+    ar: 'تثبيت شهادة TLS غير صالح', de: 'Ungültiges TLS-Pinning', en: 'Invalid TLS pinning',
+    es: 'Anclaje TLS no válido', fr: 'Épinglage TLS invalide', it: 'Pinning TLS non valido',
+    ja: 'TLS ピン留めが無効です', ko: 'TLS 고정 설정이 잘못됨', pt: 'Fixação TLS inválida',
+    ru: 'Недопустимое закрепление TLS', tr: 'Geçersiz TLS sabitleme', zh: 'TLS 证书固定无效',
+  },
+  message: {
+    ar: 'سيتم رفض الاتصالات بخادم Vault',
+    de: 'Verbindungen zum Vault-Server werden abgelehnt',
+    en: 'Connections to the Vault server will be refused',
+    es: 'Se rechazarán las conexiones al servidor Vault',
+    fr: 'Les connexions au serveur Vault seront refusées',
+    it: 'Le connessioni al server Vault verranno rifiutate',
+    ja: 'Vault サーバーへの接続は拒否されます',
+    ko: 'Vault 서버 연결이 거부됩니다',
+    pt: 'As ligações ao servidor Vault serão recusadas',
+    ru: 'Подключения к серверу Vault будут отклонены',
+    tr: 'Vault sunucusuna yapılan bağlantılar reddedilecek',
+    zh: '与 Vault 服务器的连接将被拒绝',
+  },
+  detail: {
+    ar: 'المفتاح TRUSTED_CERT_FINGERPRINTS في ملف الإعداد (config.cfg) مُعبّأ لكنه لا يحتوي على أي بصمة صالحة. حفاظًا على الأمان يبقى التثبيت مفعّلًا: يُرفض كل اتصال بخادم Vault حتى يتم التصحيح.\n\nللتصحيح: أدخل بصمة SHA-256 لشهادة الخادم (64 حرفًا ست عشريًا، أو «sha256/<base64>»، أو مخرجات «openssl x509 -noout -fingerprint -sha256»)، أو احذف المفتاح لتعطيل التثبيت، ثم أعد تشغيل RDVAULT.',
+    de: 'Der Schlüssel TRUSTED_CERT_FINGERPRINTS der Konfigurationsdatei (config.cfg) ist gesetzt, enthält aber keinen gültigen Fingerabdruck. Aus Sicherheitsgründen bleibt das Pinning aktiv: Jede Verbindung zum Vault-Server wird abgelehnt, bis der Fehler behoben ist.\n\nKorrektur: Tragen Sie den SHA-256-Fingerabdruck des Serverzertifikats ein (64 Hexadezimalzeichen, „sha256/<base64>“ oder die Ausgabe von „openssl x509 -noout -fingerprint -sha256“) oder entfernen Sie den Schlüssel, um das Pinning zu deaktivieren, und starten Sie RDVAULT neu.',
+    en: 'The TRUSTED_CERT_FINGERPRINTS key in the configuration file (config.cfg) is set but contains no valid fingerprint. For security, pinning stays enabled: every connection to the Vault server is refused until this is fixed.\n\nTo fix it: enter the SHA-256 fingerprint of the server certificate (64 hexadecimal characters, "sha256/<base64>" or the output of "openssl x509 -noout -fingerprint -sha256"), or remove the key to disable pinning, then restart RDVAULT.',
+    es: 'La clave TRUSTED_CERT_FINGERPRINTS del archivo de configuración (config.cfg) está definida pero no contiene ninguna huella válida. Por seguridad, el anclaje sigue activo: se rechaza toda conexión al servidor Vault hasta que se corrija.\n\nPara corregirlo: indique la huella SHA-256 del certificado del servidor (64 caracteres hexadecimales, «sha256/<base64>» o la salida de «openssl x509 -noout -fingerprint -sha256»), o elimine la clave para desactivar el anclaje, y reinicie RDVAULT.',
+    fr: 'La clé TRUSTED_CERT_FINGERPRINTS du fichier de configuration (config.cfg) est renseignée mais ne contient aucune empreinte valide. Par sécurité, l\'épinglage reste actif : toute connexion au serveur Vault est refusée jusqu\'à correction.\n\nPour corriger : indiquez l\'empreinte SHA-256 du certificat du serveur (64 caractères hexadécimaux, « sha256/<base64> » ou la sortie de « openssl x509 -noout -fingerprint -sha256 »), ou supprimez la clé pour désactiver l\'épinglage, puis redémarrez RDVAULT.',
+    it: 'La chiave TRUSTED_CERT_FINGERPRINTS del file di configurazione (config.cfg) è impostata ma non contiene alcuna impronta valida. Per sicurezza il pinning resta attivo: ogni connessione al server Vault viene rifiutata finché non viene corretta.\n\nPer correggere: indicare l\'impronta SHA-256 del certificato del server (64 caratteri esadecimali, «sha256/<base64>» o l\'output di «openssl x509 -noout -fingerprint -sha256»), oppure rimuovere la chiave per disattivare il pinning, quindi riavviare RDVAULT.',
+    ja: '構成ファイル (config.cfg) の TRUSTED_CERT_FINGERPRINTS キーは設定されていますが、有効なフィンガープリントが含まれていません。安全のためピン留めは有効のままで、修正されるまで Vault サーバーへの接続はすべて拒否されます。\n\n修正方法: サーバー証明書の SHA-256 フィンガープリント (16 進数 64 文字、「sha256/<base64>」、または「openssl x509 -noout -fingerprint -sha256」の出力) を入力するか、ピン留めを無効にするためにキーを削除してから、RDVAULT を再起動してください。',
+    ko: '구성 파일(config.cfg)의 TRUSTED_CERT_FINGERPRINTS 키가 설정되어 있지만 유효한 지문이 없습니다. 보안을 위해 고정 설정은 계속 활성화되며, 수정될 때까지 Vault 서버에 대한 모든 연결이 거부됩니다.\n\n해결 방법: 서버 인증서의 SHA-256 지문(16진수 64자, "sha256/<base64>" 또는 "openssl x509 -noout -fingerprint -sha256"의 출력)을 입력하거나, 고정 설정을 끄려면 키를 삭제한 다음 RDVAULT를 다시 시작하세요.',
+    pt: 'A chave TRUSTED_CERT_FINGERPRINTS do ficheiro de configuração (config.cfg) está definida mas não contém nenhuma impressão digital válida. Por segurança, a fixação permanece ativa: todas as ligações ao servidor Vault são recusadas até à correção.\n\nPara corrigir: indique a impressão digital SHA-256 do certificado do servidor (64 caracteres hexadecimais, «sha256/<base64>» ou a saída de «openssl x509 -noout -fingerprint -sha256»), ou remova a chave para desativar a fixação, e reinicie o RDVAULT.',
+    ru: 'Ключ TRUSTED_CERT_FINGERPRINTS в файле конфигурации (config.cfg) задан, но не содержит ни одного допустимого отпечатка. В целях безопасности закрепление остаётся включённым: любое подключение к серверу Vault отклоняется до исправления.\n\nКак исправить: укажите отпечаток SHA-256 сертификата сервера (64 шестнадцатеричных символа, «sha256/<base64>» или вывод «openssl x509 -noout -fingerprint -sha256») либо удалите ключ, чтобы отключить закрепление, затем перезапустите RDVAULT.',
+    tr: 'Yapılandırma dosyasındaki (config.cfg) TRUSTED_CERT_FINGERPRINTS anahtarı tanımlı ancak geçerli bir parmak izi içermiyor. Güvenlik nedeniyle sabitleme etkin kalır: düzeltilene kadar Vault sunucusuna yapılan her bağlantı reddedilir.\n\nDüzeltmek için: sunucu sertifikasının SHA-256 parmak izini girin (64 onaltılık karakter, "sha256/<base64>" veya "openssl x509 -noout -fingerprint -sha256" çıktısı) ya da sabitlemeyi kapatmak için anahtarı silin, ardından RDVAULT\'u yeniden başlatın.',
+    zh: '配置文件 (config.cfg) 中的 TRUSTED_CERT_FINGERPRINTS 键已设置，但不包含任何有效指纹。出于安全考虑，证书固定仍保持启用：在修正之前，所有到 Vault 服务器的连接都会被拒绝。\n\n修正方法：填写服务器证书的 SHA-256 指纹（64 个十六进制字符、“sha256/<base64>”或“openssl x509 -noout -fingerprint -sha256”的输出），或删除该键以停用证书固定，然后重新启动 RDVAULT。',
+  },
+};
+
+/** Texte de l'avertissement d'épinglage dans la langue courante (repli : anglais) */
+function pinningInvalidText(key) {
+  const entry = PINNING_INVALID_MESSAGES[key];
+  let lang = 'en';
+  try { lang = mainI18n.getLanguage(); } catch { /* anglais */ }
+  return entry[lang] || entry.en;
+}
+
+let pinningInvalidWarningShown = false;
+
+/**
+ * Avertit (une fois) que l'épinglage TLS configuré est inutilisable : connexions Vault refusées.
+ * Boîte de dialogue indépendante, jamais attendue (démarrage non bloqué). Journalisé.
+ * @returns {boolean} true si l'avertissement a été affiché
+ */
+function warnIfPinningInvalid() {
+  let invalid = false;
+  try { invalid = getConfig().PINNING_INVALID === true; } catch { invalid = false; }
+  if (!invalid || pinningInvalidWarningShown) return false;
+  pinningInvalidWarningShown = true;
+  log.error('[SSL] Épinglage TLS inutilisable (TRUSTED_CERT_FINGERPRINTS sans empreinte valide) : connexions au '
+    + 'serveur Vault refusées jusqu\'à correction de config.cfg — avertissement affiché');
+  try {
+    Promise.resolve(dialog.showMessageBox({
+      type: 'warning',
+      title: pinningInvalidText('title'),
+      message: pinningInvalidText('message'),
+      detail: pinningInvalidText('detail'),
+      noLink: true,
+    })).catch(() => {});
+  } catch (err) {
+    log.error('[SSL] Avertissement d\'épinglage non affiché : ' + (err && err.message));
+  }
+  return true;
+}
+
 /**
  * Handler pour la sélection de certificat client (mTLS - mutual TLS)
  *
@@ -617,8 +709,11 @@ function startSyncServer() {
         return sendJson(res, 403, { error: 'Forbidden: Chrome extension origin required' });
       }
       if (!syncAuthToken) return sendJson(res, 503, { error: 'Token not ready' });
-      const approved = await requestExtensionPairing(extId);
-      if (!approved) return sendJson(res, 403, { error: 'pairing_denied' });
+      const outcome = await requestExtensionPairing(extId);
+      // EXT-25 : délai expiré sans réponse → erreur distincte (l'extension propose de réessayer, sans le
+      // délai de carence d'un refus) ; une ancienne extension, qui traite tout 403 comme un refus, est inchangée
+      if (outcome === PAIRING_RESULT.TIMEOUT) return sendJson(res, 403, { error: 'pairing_timeout' });
+      if (outcome !== PAIRING_RESULT.APPROVED) return sendJson(res, 403, { error: 'pairing_denied' });
       return sendJson(res, 200, { token: syncAuthToken });
     }
 
@@ -1787,6 +1882,65 @@ ipcMain.handle('open-url-in-browser', async (event, url, browser) => {
   }
 });
 
+// ========================================
+// EXTENSION NAVIGATEUR LIVRÉE AVEC L'APPLICATION
+// ========================================
+// L'installeur dépose l'extension enrichie dans resources/chrome-extension. Chrome n'autorise pas
+// une application à l'installer elle-même (hors Chrome Web Store) : l'onglet « Extension » des
+// Paramètres guide l'utilisateur (dossier à charger, page des extensions). Chrome ignore aussi une
+// URL chrome:// passée en ligne de commande : on la copie dans le presse-papiers au lieu de l'ouvrir.
+function getBundledExtensionDir() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'chrome-extension')
+    : path.join(__dirname, '..', 'chrome-extension', 'vault-autofill-extension');
+}
+
+// Identifiant Chrome dérivé de la clé publique du manifeste (champ « key ») : SHA-256 de la clé,
+// 32 premiers chiffres hexadécimaux transcrits en lettres a-p. Fixe quel que soit le dossier chargé.
+function extensionIdFromManifestKey(key) {
+  if (typeof key !== 'string' || !key) return null;
+  const der = Buffer.from(key, 'base64');
+  return crypto.createHash('sha256').update(der).digest('hex').slice(0, 32)
+    .split('').map(h => String.fromCharCode(97 + parseInt(h, 16))).join('');
+}
+
+function readBundledExtensionInfo() {
+  const folder = getBundledExtensionDir();
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(folder, 'manifest.json'), 'utf8'));
+    return { available: true, folder, id: extensionIdFromManifestKey(manifest.key), version: String(manifest.version || '') };
+  } catch {
+    return { available: false, folder, id: null, version: '' };
+  }
+}
+
+ipcMain.handle('extension-info', async (event) => {
+  if (!validateIpcSender(event)) return { available: false };
+  return readBundledExtensionInfo();
+});
+
+ipcMain.handle('extension-open-folder', async (event) => {
+  if (!validateIpcSender(event)) return { success: false };
+  const info = readBundledExtensionInfo();
+  if (!info.available) return { success: false };
+  const err = await shell.openPath(info.folder); // chaîne vide = succès
+  return { success: !err };
+});
+
+// Copie une valeur NON secrète choisie dans une liste fermée (jamais un texte fourni par le renderer)
+ipcMain.handle('extension-copy', async (event, what) => {
+  if (!validateIpcSender(event)) return { success: false };
+  const values = {
+    folder: () => readBundledExtensionInfo().folder,
+    chrome: () => 'chrome://extensions',
+    edge: () => 'edge://extensions',
+    brave: () => 'brave://extensions',
+  };
+  if (!Object.prototype.hasOwnProperty.call(values, what)) return { success: false };
+  clipboard.writeText(values[what]());
+  return { success: true };
+});
+
 // Gestionnaire IPC pour lire un fichier de logs d'audit
 ipcMain.handle('audit-read-log-file', async (event, filePath, maxLines = 1000) => {
   try {
@@ -2723,6 +2877,9 @@ app.whenReady().then(async () => {
 
   // Créer la fenêtre
   createWindow();
+
+  // Épinglage TLS configuré mais inutilisable : avertissement visible, non bloquant (non attendu)
+  warnIfPinningInvalid();
 
   // Vérifier s'il y a un deep link dans les arguments de démarrage (Windows)
   const deepLinkArg = process.argv.find(arg => arg.startsWith('rdvault://'));

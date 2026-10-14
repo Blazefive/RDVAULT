@@ -13,6 +13,9 @@
 // authentification contrôlés côté test comme le ferait un serveur (@simplewebauthn, réglage par défaut
 // requireUserVerification) : challenge, origine, rpIdHash, UP + UV, signature, compteur.
 // PURGE-35 : le blob .rdvault-passkeys ne garde qu'une version après créations et signatures.
+// EXT-26 : coffre indisponible → fenêtre explicite, bouton RDVAULT désactivé. EXT-21 : AbortSignal et délai
+// du site (authentificateur virtuel CDP) → fenêtre fermée, aucune passkey orpheline. EXT-24 : fenêtre au clavier
+// (focus, Tab bouclé, Échap, focus rendu) et dans l'arbre d'accessibilité.
 // Lancement : E2E_BROWSER=<chrome> node test/e2e/passkey.js
 'use strict'; // eslint-disable-line strict -- script CommonJS lancé par node, pas un module ES
 /* global rawId, pubKey, bufToB64u, b64uToBuf, derToRaw */ // globales de test/e2e/site/passkey.html, utilisées dans page.evaluate
@@ -80,6 +83,37 @@ async function clickShadow(page, cls, t = 8000, text = null) {
   if (!p) return false;
   await page.mouse.click(p.x, p.y);
   return true;
+}
+// Texte du premier nœud de la classe (contenant `text` si donné), null si absent avant le délai
+async function shadowText(page, cls, t = 8000, text = null) {
+  const s = Date.now();
+  while (Date.now() - s < t) {
+    const cdp = await page.createCDPSession();
+    try {
+      const hits = await shadowHits(cdp, cls);
+      const hit = text ? hits.find(h => h.text.includes(text)) : hits[0];
+      if (hit) return hit.text;
+    } catch {} finally { try { await cdp.detach(); } catch {} }
+    await sleep(300);
+  }
+  return null;
+}
+// Valeur d'un attribut du premier nœud de la classe (null si absent)
+async function shadowAttr(page, cls, attr) {
+  const cdp = await page.createCDPSession();
+  try {
+    const hits = await shadowHits(cdp, cls);
+    if (!hits[0]) return null;
+    const { attributes } = await cdp.send('DOM.getAttributes', { nodeId: hits[0].nodeId });
+    const i = attributes.indexOf(attr);
+    return i >= 0 && i % 2 === 0 ? attributes[i + 1] : null;
+  } catch { return null; } finally { try { await cdp.detach(); } catch {} }
+}
+/** Arbre d'accessibilité de Chrome (shadow roots fermés compris), à plat */
+async function axNodes(page) {
+  const out = [];
+  (function walk(n) { if (!n) return; out.push(n); (n.children || []).forEach(walk); })(await page.accessibility.snapshot({ interestingOnly: false }));
+  return out;
 }
 // Nombre de nœuds de la classe une fois qu'au moins un est affiché (0 si rien avant le délai)
 async function countShadow(page, cls, t = 8000) {
@@ -213,8 +247,9 @@ async function main() {
     const extId = new URL(sw.url()).hostname;
 
     // 0. Coffre INDISPONIBLE (app RDVAULT pas encore lancée) : la clé privée ne peut être stockée
-    //    nulle part → create() doit être rejeté (NotAllowedError), jamais une attestation renvoyée
-    //    au site pour une passkey perdue.
+    //    nulle part → jamais une attestation renvoyée au site pour une passkey perdue. EXT-26 : la
+    //    fenêtre le dit (« RDVAULT est fermé ou verrouillé… ») et n'active pas « Créer dans RDVAULT »
+    //    (le clic aboutissait à un NotAllowedError muet) ; Annuler → NotAllowedError standard.
     const page0 = await browser.newPage();
     await page0.goto('https://localhost:8443/passkey.html', { waitUntil: 'load' });
     await sleep(1000);
@@ -222,8 +257,17 @@ async function main() {
     // sinon la passkey partirait vers l'instance qui vient de l'ouvrir (son coffre, pas celui du test)
     if (!(await portFree(SYNC_PORT))) throw new Error('port ' + SYNC_PORT + ' ouvert par une autre instance RDVAULT pendant la préparation — test interrompu');
     await page0.click('#reg');
-    check(await clickShadow(page0, 'ok'), 'coffre indisponible : pop-up de création cliquée');
-    let res0 = ''; for (let i = 0; i < 60; i++) { res0 = await result(page0); if (/REG_OK|REG_FAIL/.test(res0)) break; await sleep(300); }
+    const closedMsg = await shadowText(page0, 'er', 15000, 'RDVAULT est fermé ou verrouillé');
+    check(!!closedMsg, 'coffre indisponible : la fenêtre explique « RDVAULT est fermé ou verrouillé… » (' + (closedMsg || 'absent').slice(0, 60) + ')');
+    const okDisabled = await shadowAttr(page0, 'ok', 'disabled');
+    check(okDisabled !== null, 'coffre indisponible : « Créer dans RDVAULT » désactivé');
+    const okPos = await findShadow(page0, 'ok', 3000);
+    if (okPos) await page0.mouse.click(okPos.x, okPos.y); // clic réel sur le bouton désactivé : sans effet
+    await sleep(1500);
+    let res0 = await result(page0);
+    check(!/REG_OK|REG_FAIL/.test(res0), 'coffre indisponible : clic sur le bouton désactivé sans effet, fenêtre toujours ouverte (' + res0.slice(0, 40) + ')');
+    check(await clickShadow(page0, 'ca'), 'coffre indisponible : Annuler cliqué');
+    for (let i = 0; i < 30; i++) { res0 = await result(page0); if (/REG_OK|REG_FAIL/.test(res0)) break; await sleep(300); }
     check(/^REG_FAIL/.test(res0) && /not allowed/i.test(res0), 'coffre indisponible : create() rejeté en NotAllowedError, aucune attestation (' + res0.slice(0, 70) + ')');
     const storeFailedAt = Date.now(); // l'extension observe ensuite 10 s de carence avant de redemander un token
     await page0.close();
@@ -311,6 +355,94 @@ async function main() {
     res = await result(page);
     check(/AUTH_FAIL|NotAllowed|not allowed/i.test(res), 'annulation : erreur standard, sans blocage');
 
+    // 3b. EXT-21 : la PAGE annule sa cérémonie (AbortController, comme SimpleWebAuthn avant d'en lancer
+    //     une autre) → AbortError immédiat, fenêtre RDVAULT fermée, et un clic ultérieur n'enregistre rien
+    const countVault = async () => {
+      const rr = await vreq(vaultPort, 'GET', `/v1/${enc(ENGINE)}/data/${encodeURIComponent('.rdvault-passkeys')}`, vtoken);
+      return (rr.json?.data?.data?.items?.localhost || []).length;
+    };
+    const nBeforeAbort = await countVault();
+    await page.evaluate(() => {
+      window.__ab = 'pending'; window.__abAc = new AbortController();
+      navigator.credentials.create({ signal: window.__abAc.signal, publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)), rp: { id: window.location.hostname, name: 'Test RDVAULT' },
+        user: { id: new TextEncoder().encode('user-abort'), name: 'abort@test', displayName: 'Abort' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }], timeout: 60000
+      } }).then(c => { window.__ab = 'resolved ' + c.id; }, e => { window.__ab = 'rejected ' + e.name; });
+    });
+    const abShown = await findShadow(page, 'ok', 8000);
+    await sleep(ARM_WAIT);
+    const abortT0 = Date.now();
+    await page.evaluate(() => window.__abAc.abort());
+    const abSt = await waitState(page, '__ab', 3000);
+    const abortMs = Date.now() - abortT0;
+    const abStill = await countShadow(page, 'ok', 800);
+    check(!!abShown && abSt === 'rejected AbortError' && abortMs < 2000, 'AbortSignal : create() rejeté en AbortError dès l\'annulation (' + abSt + ', ' + abortMs + ' ms)');
+    check(abStill === 0, 'AbortSignal : fenêtre RDVAULT fermée (' + abStill + ' bouton restant)');
+    if (abShown) await page.mouse.click(abShown.x, abShown.y); // là où était « Créer dans RDVAULT »
+    await sleep(1500);
+    check(await countVault() === nBeforeAbort, 'AbortSignal : aucune passkey orpheline dans le coffre (' + nBeforeAbort + ')');
+
+    // 3c. EXT-21 : délai du site écoulé (publicKey.timeout, borné à 10 s) → fenêtre RDVAULT fermée AVANT que
+    //     l'authentificateur du navigateur (virtuel ici, CDP) prenne le relais ; rien dans le coffre
+    const wa = await page.createCDPSession();
+    await wa.send('WebAuthn.enable', { enableUI: false });
+    const { authenticatorId } = await wa.send('WebAuthn.addVirtualAuthenticator', { options: {
+      protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
+    await page.evaluate(() => {
+      window.__to = 'pending';
+      navigator.credentials.create({ publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)), rp: { id: window.location.hostname, name: 'Test RDVAULT' },
+        user: { id: new TextEncoder().encode('user-timeout'), name: 'timeout@test', displayName: 'Timeout' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }], timeout: 1000
+      } }).then(c => { window.__to = 'resolved ' + c.id; }, e => { window.__to = 'rejected ' + e.name; });
+    });
+    // Nœuds lus par la MÊME session CDP : détacher une autre session (findShadow, countShadow)
+    // désactive l'environnement d'authentificateur virtuel de la page
+    const okCount = async () => { try { return (await shadowHits(wa, 'ok')).length; } catch { return 0; } };
+    let toShown = 0;
+    for (let i = 0; i < 25 && !toShown; i++) { toShown = await okCount(); if (!toShown) await sleep(200); }
+    check(toShown === 1, 'délai écoulé : fenêtre RDVAULT affichée');
+    const toSt = await waitState(page, '__to', 20000);
+    const toStill = await okCount();
+    // Diagnostic en cas d'échec : la requête native a-t-elle atteint l'authentificateur virtuel ?
+    const toDiag = /^resolved /.test(toSt) ? '' : ' ; ' + JSON.stringify({
+      vaCreds: await wa.send('WebAuthn.getCredentials', { authenticatorId }).then(r => r.credentials.length, e => 'err ' + e.message),
+      page: await page.evaluate(() => ({ focus: document.hasFocus(), vis: document.visibilityState })),
+    });
+    check(/^resolved /.test(toSt) && toStill === 0, 'délai écoulé (10 s) : authentificateur du navigateur, fenêtre RDVAULT fermée (' + toSt.slice(0, 30) + ', ' + toStill + toDiag + ')');
+    check(await countVault() === nBeforeAbort, 'délai écoulé : aucune seconde passkey envoyée au coffre');
+    try { await wa.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId }); await wa.send('WebAuthn.disable'); } catch {}    try { await wa.detach(); } catch {}
+
+    // 3d. EXT-24 : clavier et lecteurs d'écran. Entrée sur « S'authentifier » : la fenêtre (role dialog,
+    //     nom « RDVAULT ») prend le focus, jamais un bouton qui signe ; Tab reste dans la fenêtre ;
+    //     Échap annule et rend le focus au bouton de la page ; Tab + Entrée confirment (clic clavier armé)
+    await page.evaluate(() => { document.getElementById('result').textContent = 'reset'; });
+    await page.focus('#auth');
+    await page.keyboard.press('Enter');
+    await findShadow(page, 'ok', 8000);
+    await sleep(300);
+    let axn = await axNodes(page);
+    const dlg = axn.find(n => n.role === 'dialog');
+    const focusedAx = axn.find(n => n.focused);
+    check(!!dlg && dlg.name === 'RDVAULT' && /Utiliser votre passkey pour localhost/.test(dlg.description || ''), 'clavier : fenêtre exposée (dialog « RDVAULT », description) (' + JSON.stringify(dlg && { n: dlg.name, d: dlg.description }) + ')');
+    check(!!focusedAx && focusedAx.role === 'dialog', 'clavier : focus déplacé dans la fenêtre, pas sur un bouton qui signe (' + (focusedAx && focusedAx.role + ':' + focusedAx.name) + ')');
+    const tabbed = [];
+    for (let i = 0; i < 4; i++) { await page.keyboard.press('Tab'); axn = await axNodes(page); const fn = axn.find(n => n.focused); tabbed.push(fn ? fn.name : '?'); }
+    check(JSON.stringify(tabbed) === JSON.stringify(['Utiliser ma passkey RDVAULT', 'Utiliser un autre appareil', 'Annuler', 'Utiliser ma passkey RDVAULT']), 'clavier : Tab bouclé dans la fenêtre ' + JSON.stringify(tabbed));
+    await page.keyboard.press('Escape');
+    for (let i = 0; i < 20; i++) { res = await result(page); if (/AUTH_/.test(res)) break; await sleep(200); }
+    const backFocus = await page.evaluate(() => document.activeElement && document.activeElement.id);
+    check(/AUTH_FAIL/.test(res) && backFocus === 'auth' && await countShadow(page, 'ok', 600) === 0, 'clavier : Échap → annulation standard, fenêtre fermée, focus rendu au bouton de la page (' + res.slice(0, 40) + ', ' + backFocus + ')');
+    await page.evaluate(() => { document.getElementById('result').textContent = 'reset'; });
+    await page.keyboard.press('Enter');
+    await findShadow(page, 'ok', 8000);
+    await sleep(ARM_WAIT);
+    await page.keyboard.press('Tab'); // → « Utiliser ma passkey RDVAULT »
+    await page.keyboard.press('Enter');
+    for (let i = 0; i < 25; i++) { res = await result(page); if (/AUTH_/.test(res)) break; await sleep(300); }
+    check(/^AUTH_OK/.test(res), 'clavier : Tab + Entrée sur « Utiliser ma passkey RDVAULT » → signature vérifiée (' + res + ')');
+
     // 4. Plusieurs comptes pour le même rpId (BUG-11). Seconde passkey « bob » créée via
     //    l'API WebAuthn de la page (relayée par l'extension), puis flux « discoverable »
     //    (get SANS allowCredentials) → sélecteur de compte, choix du SECOND compte, assertion
@@ -351,7 +483,7 @@ async function main() {
     const cf = (bob && bob.conform) || {};
     check(cf.authData === true && cf.publicKey === true && cf.transports === 'internal' && cf.json === true,
       'create() conforme : getAuthenticatorData = authData, getPublicKey = SPKI de la clé, transports, toJSON (' + JSON.stringify(cf) + ')');
-    check(cf.flags === 0x45, 'create() : drapeaux UP|UV|AT (coffre déverrouillé = utilisateur vérifié) (0x' + Number(cf.flags).toString(16) + ')');
+    check(cf.flags === 0x5d, 'create() : drapeaux UP|UV|BE|BS|AT (coffre déverrouillé = utilisateur vérifié, passkey sauvegardée avec le coffre) (0x' + Number(cf.flags).toString(16) + ')');
     check(cf.crossOrigin === true, 'create() en page principale : clientData.crossOrigin = false, sans topOrigin');
     let nVault = 0;
     for (let i = 0; i < 20 && nVault < 2; i++) {
@@ -527,7 +659,7 @@ async function main() {
     if (!uvRegClicked) await page.evaluate(() => window.__uvAc.abort()).catch(() => {});
     const uvReg = await regUv;
     const uvRegV = uvReg.json ? rpVerifyRegistration(uvReg.json, { ...RP, challenge: uvChallenge1 }) : { ok: false, errors: [uvReg.error], flags: -1 };
-    check(uvRegV.ok && uvRegV.flags === 0x45, 'serveur exigeant UV : enregistrement accepté par le serveur (UP+UV, challenge, origine, rpIdHash) (0x'
+    check(uvRegV.ok && uvRegV.flags === 0x5d, 'serveur exigeant UV : enregistrement accepté par le serveur (UP+UV+BE+BS, challenge, origine, rpIdHash) (0x'
       + Number(uvRegV.flags).toString(16) + (uvRegV.errors.length ? ' ; ' + uvRegV.errors.join(', ') : '') + ')');
     if (uvRegV.ok) {
       const uvChallenge2 = nodeCrypto.randomBytes(32).toString('base64url');
@@ -548,7 +680,7 @@ async function main() {
       const uvGetV = uvGet.json
         ? rpVerifyAuthentication(uvGet.json, { ...RP, challenge: uvChallenge2, credentialId: uvRegV.credentialId, publicKey: uvRegV.publicKey, prevCounter: uvRegV.counter })
         : { ok: false, errors: [uvGet.error], flags: -1 };
-      check(uvGetV.ok && uvGetV.flags === 0x05, 'serveur exigeant UV : authentification acceptée (UP+UV, signature vérifiée, compteur croissant) (0x'
+      check(uvGetV.ok && uvGetV.flags === 0x1d, 'serveur exigeant UV : authentification acceptée (UP+UV+BE+BS, signature vérifiée, compteur croissant) (0x'
         + Number(uvGetV.flags).toString(16) + (uvGetV.errors.length ? ' ; ' + uvGetV.errors.join(', ') : '') + ')');
     }
 

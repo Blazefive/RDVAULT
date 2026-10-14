@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT"
   },
   "extDescription": {
     "message": "使用 RDVAULT 自动填写表单和通行密钥（需要桌面应用）"
@@ -9,7 +9,7 @@
     "message": "正在检查..."
   },
   "popupInfoRequiresDesktop": {
-    "message": "此扩展需要 Vault 桌面应用正在运行并已连接。"
+    "message": "此扩展需要 RDVAULT 应用正在运行并已解锁。"
   },
   "popupDesktopUnavailable": {
     "message": "桌面应用不可用"
@@ -43,6 +43,12 @@
   },
   "popupPairingDeniedDetail": {
     "message": "此扩展的配对已在应用中被拒绝。一分钟后可以再次发送请求。"
+  },
+  "popupPairingExpiredTitle": {
+    "message": "配对请求已过期：请重新打开扩展程序后重试"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "RDVAULT 中未对该请求作出响应（时限：60 秒）。关闭并重新打开此窗口即可发送新请求。"
   },
   "popupDisconnectedDetail": {
     "message": "请启动桌面应用并登录以使用自动填充。"
@@ -194,5 +200,26 @@
   },
   "bgErrClearCredential": {
     "message": "删除凭据时出错"
+  },
+  "autofillMenuAnnounce": {
+    "message": "RDVAULT 登录凭据：$COUNT$ 个。按向下箭头键选择，按 Esc 键关闭。",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "RDVAULT 已锁定：请解锁应用后重试。"
+  },
+  "bgErrVaultClosed": {
+    "message": "RDVAULT 已关闭或无法连接：请打开应用后重试。"
+  },
+  "bgErrRateLimited": {
+    "message": "发送到 RDVAULT 的请求过多：请稍后重试。"
+  },
+  "pkVaultUnavailable": {
+    "message": "RDVAULT 已关闭或已锁定：请打开并解锁 RDVAULT 以继续，或使用其他设备。"
   }
 }

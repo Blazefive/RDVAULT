@@ -73,7 +73,8 @@
     "dropHere": "Hier ablegen",
     "rightClickToAddTag": "Rechtsklick zum Hinzufügen",
     "dragCountOne": "{{count}} Eintrag",
-    "dragCountMany": "{{count}} Einträge"
+    "dragCountMany": "{{count}} Einträge",
+    "rowSelected": "ausgewählt"
   },
   "contextMenu": {
     "copyUsername": "Benutzername kopieren",
@@ -150,7 +151,8 @@
     "totpDeleteConfirm": "Bestätigung erforderlich: Wählen Sie innerhalb von {{seconds}} s erneut „{{action}}“, um den TOTP-Schlüssel von „{{name}}“ endgültig zu löschen (nicht umkehrbar).",
     "secretDeletedTotpKept": "Eintrag gelöscht. Sein TOTP-Schlüssel wurde beibehalten: „{{action}}“ stellt den Eintrag mit seinem TOTP-Code wieder her.",
     "secretDeletedTotpKeptOrphan": "Eintrag endgültig gelöscht. Sein TOTP-Schlüssel wurde beibehalten: Er wird einem unter demselben Namen neu angelegten Eintrag zugeordnet.",
-    "secretSavedTotpAttached": "Geheimnis gespeichert. Unter diesem Namen existierte bereits ein TOTP-Schlüssel: Er ist jetzt diesem Eintrag zugeordnet."
+    "secretSavedTotpAttached": "Geheimnis gespeichert. Unter diesem Namen existierte bereits ein TOTP-Schlüssel: Er ist jetzt diesem Eintrag zugeordnet.",
+    "secretSavedMerged": "Geheimnis gespeichert. Der Eintrag war inzwischen an anderer Stelle geändert worden: Nur die von Ihnen geänderten Felder wurden ersetzt, die übrigen Änderungen bleiben erhalten."
   },
   "error": {
     "tooManyEntries": "Zu viele Einträge (max. 500)",
@@ -257,7 +259,8 @@
     "listTooDeepPartial": "Ordner sind mehr als {{max}} Ebenen tief verschachtelt: Nur {{count}} Einträge werden angezeigt, die Liste ist unvollständig.",
     "extensionSyncTruncated": "Synchronisierung der Browsererweiterung unvollständig: {{count}} Eintrag/Einträge über der Grenze von {{max}} wurde(n) nicht an die Erweiterung übertragen.",
     "syncServerUnavailable": "Die Verbindung zur Browsererweiterung konnte nicht geöffnet werden ({{code}}): Das automatische Ausfüllen im Browser ist nicht mit Ihrem Tresor verbunden. Wahrscheinlich verwendet eine andere RDVAULT-Sitzung oder ein anderes Programm den Port; schließen Sie diese bzw. dieses und starten Sie RDVAULT neu.",
-    "secretNameReserved": "„{{name}}“ ist für den internen Speicher von RDVAULT reserviert. Wählen Sie einen anderen Namen."
+    "secretNameReserved": "„{{name}}“ ist für den internen Speicher von RDVAULT reserviert. Wählen Sie einen anderen Namen.",
+    "secretChangedElsewhere": "Der Eintrag „{{name}}“ wurde seit seiner Anzeige an anderer Stelle geändert oder gelöscht: Es wurde nichts gespeichert. Er wurde soeben neu gelesen; beginnen Sie erneut mit der aktuellen Version (Formular ggf. schließen und erneut öffnen)."
   },
   "settings": {
     "title": "Einstellungen",
@@ -276,7 +279,17 @@
     "lockedColumn": "Erforderliche Spalte",
     "close": "Schließen",
     "selectLanguage": "Wählen Sie eine Sprache",
-    "languageDesc": "Wählen Sie die Anzeigesprache der Anwendung"
+    "languageDesc": "Wählen Sie die Anzeigesprache der Anwendung",
+    "security": "Sicherheit",
+    "autoLockTitle": "Automatische Sperre",
+    "autoLockDesc": "Nach dieser Zeit ohne Aktivität in RDVAULT wird die Sitzung beendet und Sie müssen sich erneut anmelden.",
+    "autoLockLabel": "Sperren nach",
+    "autoLockMinute": "1 Minute",
+    "autoLockMinutes": "{{count}} Minuten",
+    "autoLockHour": "1 Stunde",
+    "autoLockHours": "{{count}} Stunden",
+    "autoLockDefault": "Standard",
+    "autoLockLockedNote": "Ist die Windows-Sitzung gesperrt, wird die RDVAULT-Sitzung unabhängig von dieser Einstellung nach 3 Stunden beendet."
   },
   "cli": {
     "title": "CLI-Zugriff (mvault)",
@@ -528,7 +541,8 @@
       "noLinkedPolicy": "Keine Richtlinie mit diesem Tresor verknüpft",
       "infoTitle": "Hinweis:",
       "infoText": "Die oben aufgeführten Richtlinien gewähren Zugriff auf {{path}}. Verwalten Sie Richtlinien und ihre AD-Gruppen im Tab „Richtlinien“.",
-      "selectPrompt": "Wählen Sie einen Tresor, um seine Richtlinien zu verwalten"
+      "selectPrompt": "Wählen Sie einen Tresor, um seine Richtlinien zu verwalten",
+      "deleteNamed": "Tresor {{path}} löschen"
     },
     "policy": {
       "available": "Verfügbare Richtlinien",
@@ -601,7 +615,8 @@
       "selectPrompt": "Wählen Sie ein Audit-Device, um seine Protokolle anzuzeigen",
       "selectHint": "Klicken Sie links in der Liste auf ein Device, um seine Audit-Protokolle anzuzeigen.",
       "enablePrompt": "Aktivieren Sie ein Audit-Device, um mit der Protokollierung zu beginnen",
-      "enableHint": "Audit-Protokolle zeichnen jeden Vorgang in Vault auf: wer, wann, welche Aktion, auf welcher Ressource."
+      "enableHint": "Audit-Protokolle zeichnen jeden Vorgang in Vault auf: wer, wann, welche Aktion, auf welcher Ressource.",
+      "disableNamed": "Audit-Gerät {{path}} deaktivieren"
     },
     "tags": {
       "title": "Tag-Verwaltung",
@@ -907,10 +922,12 @@
     "importOverwrite": "Duplikate überschreiben",
     "partialSuccess": "Export abgeschlossen: {{count}} Geheimnis(se) exportiert, {{failed}} konnte(n) nicht gelesen werden",
     "importPartial": "Import abgeschlossen: {{count}} Geheimnis(se) importiert, {{failed}} fehlgeschlagen oder übersprungen",
-    "contentNote": "Die Datei enthält alle Daten der Einträge im Klartext (Passwörter, benutzerdefinierte Felder, Anhänge): Bewahren Sie sie an einem sicheren Ort auf. Passkeys und TOTP-Schlüssel werden nicht exportiert."
+    "contentNote": "Die Datei enthält alle Daten der Einträge im Klartext (Passwörter, benutzerdefinierte Felder, Anhänge): Bewahren Sie sie an einem sicheren Ort auf. Passkeys und TOTP-Schlüssel werden nicht exportiert.",
+    "importLongValues": "{{count}} Eintrag/Einträge enthalten Notizen oder Felder mit mehr als 10000 Zeichen: vollständig importiert; vor dem Speichern im Editor kürzen."
   },
   "clipboard": {
-    "clearNow": "Jetzt löschen"
+    "clearNow": "Jetzt löschen",
+    "autoClear": "Die Zwischenablage wird in {{seconds}} Sekunden geleert."
   },
   "window": {
     "minimize": "Minimieren",
@@ -992,7 +1009,8 @@
     "errMaxUses": "Maximale Anzahl an Verwendungen erreicht",
     "errExpired": "Freigabe abgelaufen",
     "errReceive": "Fehler beim Abrufen der Freigabe",
-    "errUnauthorized": "Freigabe abgelehnt: Ihre Vault-Sitzung ist nicht berechtigt"
+    "errUnauthorized": "Freigabe abgelehnt: Ihre Vault-Sitzung ist nicht berechtigt",
+    "errProxyInvalidShareId": "Der Proxy hat eine Freigabe-ID in ungültigem Format zurückgegeben (nur Buchstaben, Ziffern, - und _, höchstens 128 Zeichen): Es wurde keine Freigabe erstellt. Wenden Sie sich an den Administrator des RBI-Proxys."
   },
   "passwordHealth": {
     "title": "Passwortsicherheit",
@@ -1065,5 +1083,24 @@
     "title": "Ein unerwarteter Fehler ist aufgetreten",
     "message": "Die Anzeige der Oberfläche wurde unterbrochen. Laden Sie sie neu, um fortzufahren; Sie müssen sich erneut anmelden.",
     "reload": "Oberfläche neu laden"
+  },
+  "extensionTab": {
+    "tab": "Erweiterung",
+    "title": "RDVAULT-Browsererweiterung",
+    "intro": "Die Erweiterung füllt Ihre Zugangsdaten aus und verwaltet Ihre Passkeys in Chrome, Edge und Brave. Sie wird mit RDVAULT ausgeliefert, doch Chrome erlaubt keine automatische Installation: Laden Sie sie einmalig mit den folgenden Schritten.",
+    "folderLabel": "Ordner der Erweiterung",
+    "openFolder": "Ordner öffnen",
+    "copyPath": "Pfad kopieren",
+    "copied": "Kopiert",
+    "stepsTitle": "Installation (einmalig)",
+    "step1": "Kopieren Sie die Adresse der Erweiterungsseite Ihres Browsers und fügen Sie sie in die Adressleiste ein:",
+    "step2": "Aktivieren Sie den „Entwicklermodus“.",
+    "step3": "Klicken Sie auf „Entpackte Erweiterung laden“ und wählen Sie den Ordner oben aus.",
+    "step4": "Öffnen Sie die Erweiterung (RDVAULT-Symbol in der Symbolleiste): RDVAULT bittet Sie einmalig, die Kopplung zu bestätigen.",
+    "update": "Klicken Sie nach jeder RDVAULT-Aktualisierung auf der Erweiterungsseite bei der Erweiterung auf „Neu laden“.",
+    "idLabel": "Kennung der Erweiterung",
+    "versionLabel": "Version",
+    "unavailable": "Die Erweiterung wurde in dieser Installation nicht gefunden. Installieren Sie RDVAULT neu oder laden Sie den Ordner chrome-extension/vault-autofill-extension aus dem Quellcode.",
+    "sharedWarning": "Nicht auf einem Server mit gemeinsam genutzten Sitzungen installieren (Remotedesktop, Citrix)."
   }
 }

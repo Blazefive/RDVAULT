@@ -62,6 +62,18 @@ export default function ClipboardTimer({
     };
   }, [startTime, duration]); // Ne dépend que de startTime et duration
 
+  // UI-32 : annonce « copié » aux lecteurs d'écran. La région live est montée VIDE puis le
+  // message y est écrit un instant après : une région insérée déjà remplie n'est pas annoncée
+  // par la plupart des lecteurs d'écran. Le compte à rebours, lui, n'est pas annoncé.
+  const [announce, setAnnounce] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setAnnounce(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
+  const announcement = announce
+    ? `${t('toast.copiedField', { field: fieldName })}. ${t('clipboard.autoClear', { seconds: Math.round(duration / 1000) })}`
+    : '';
+
   const handleClear = useCallback(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
@@ -72,6 +84,7 @@ export default function ClipboardTimer({
 
   return (
     <div className={`clipboard-timer${isEntering ? ' entering' : ''}`}>
+      <div role="status" aria-live="polite" className="sr-only">{announcement}</div>
       <div className="clipboard-timer-header">
         <span>{t('toast.copiedField', { field: fieldName })}</span>
         <span className="clipboard-timer-countdown">

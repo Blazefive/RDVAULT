@@ -57,7 +57,9 @@
   --bg-surface: #ffffff;
   --bg-surface-hover: #f9fafb;
   --bg-surface-active: #f3f4f6;
-  --bg-overlay: rgba(0, 0, 0, 0.6);
+  /* Voile des modales : un peu plus opaque depuis la suppression du flou d'arrière-plan
+     (backdrop-filter, trop coûteux en rendu logiciel) pour garder le panneau bien détaché */
+  --bg-overlay: rgba(0, 0, 0, 0.66);
 
   --text-primary: #1a1a1a;
   --text-secondary: #525252;
@@ -126,6 +128,13 @@
   /* Animation */
   --ease-smooth: cubic-bezier(0.4, 0.0, 0.2, 1);
   --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  /* Entrées des modales, menus et notifications : courbe de décélération SANS dépassement, durée
+     courte. Mesure (rendu logiciel, accélération matérielle désactivée) : l'ancienne entrée
+     « rebondissante » de 400 ms, superposée au flou d'arrière-plan, tombait à 17–30 images/s. */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  /* Les transitions des éléments survolés listent leurs propriétés (jamais « all ») : une
+     transition « all » animait aussi bordures, graisses et dimensions, avec remise en page. */
+  --duration-enter: 150ms;
   --duration-fast: 150ms;
   --duration-base: 250ms;
   --duration-slow: 400ms;
@@ -136,6 +145,9 @@
   --z-overlay: 300;
   --z-modal: 400;
   --z-toast: 500;
+  /* Menus contextuels : au-dessus des notifications (UI-39 : le minuteur du presse-papiers
+     recouvrait le menu et détournait les clics vers « Effacer maintenant ») */
+  --z-popover: 550;
 
   /* Alias de compatibilité : noms utilisés en style inline par des composants (Paramètres, fiche
      d'édition, déplacement, partage RBI, indicateur de chargement…) mais jamais définis. Une
@@ -181,7 +193,8 @@
   --bg-surface: #1c1c21;
   --bg-surface-hover: #26262c;
   --bg-surface-active: #2f2f36;
-  --bg-overlay: rgba(0, 0, 0, 0.8);
+  /* Voile des modales (sans flou d'arrière-plan, voir thème clair) */
+  --bg-overlay: rgba(0, 0, 0, 0.84);
 
   --text-primary: #f5f5f5;
   --text-secondary: #d4d4d4;
@@ -345,7 +358,7 @@ body {
   border: 2px solid transparent;
   border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition: background-color var(--duration-base) var(--ease-smooth), border-color var(--duration-base) var(--ease-smooth), box-shadow var(--duration-base) var(--ease-smooth), transform var(--duration-base) var(--ease-smooth);
   position: relative;
   overflow: hidden;
 }
@@ -594,7 +607,7 @@ body {
   border: 2px solid transparent;
   border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition: background-color var(--duration-base) var(--ease-smooth), border-color var(--duration-base) var(--ease-smooth), color var(--duration-base) var(--ease-smooth), box-shadow var(--duration-base) var(--ease-smooth), transform var(--duration-base) var(--ease-smooth), opacity var(--duration-base) var(--ease-smooth);
   white-space: nowrap;
   user-select: none;
   position: relative;
@@ -707,7 +720,7 @@ body {
   border: 2px solid;
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition: background-color var(--duration-base) var(--ease-smooth), border-color var(--duration-base) var(--ease-smooth), color var(--duration-base) var(--ease-smooth), box-shadow var(--duration-base) var(--ease-smooth), transform var(--duration-base) var(--ease-smooth);
   background: var(--bg-surface);
 }
 
@@ -781,7 +794,7 @@ body {
   /* --border-control n'existe qu'en thème sombre (contour de champ ≥ 3:1) ; repli = rendu clair inchangé */
   border: 2px solid var(--border-control, var(--border));
   border-radius: var(--radius-lg);
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition: background-color var(--duration-base) var(--ease-smooth), border-color var(--duration-base) var(--ease-smooth), box-shadow var(--duration-base) var(--ease-smooth);
 }
 
 .search-input {
@@ -793,7 +806,7 @@ body {
   background: var(--bg-app);
   border: 1px solid var(--border-control, var(--border));
   border-radius: var(--radius-md);
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition: background-color var(--duration-base) var(--ease-smooth), border-color var(--duration-base) var(--ease-smooth), box-shadow var(--duration-base) var(--ease-smooth);
   margin-bottom: 0;
 }
 
@@ -952,16 +965,27 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   transition: background var(--duration-fast);
   /* content-visibility sur <tr> : MESURÉ SANS EFFET (Chromium, tableau de 5 000 lignes : même durée
      de mise en page avec ou sans). Le confinement ne s'applique pas aux boîtes internes d'un tableau
-     (lignes, cellules), les lignes hors écran sont donc mises en page et peintes quand même. Règle
-     conservée car inoffensive ; un vrai gain sur les gros coffres demanderait une liste virtualisée
-     (seules les lignes visibles dans le DOM). La fluidité vient aujourd'hui des lignes mémoïsées
-     (SecretsTable.jsx), pas de cette règle. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 56px;
+     (lignes, cellules), les lignes hors écran étaient donc mises en page et peintes quand même.
+     Règle RETIRÉE : le tableau est désormais virtualisé au-delà de 150 lignes (SecretsTable.jsx,
+     virtualRows.js : seules les lignes visibles + une marge dans le DOM) et les hauteurs de lignes y
+     sont mesurées (une hauteur intrinsèque « contain-intrinsic-size » fausserait la mesure). */
 }
 
 .secrets-table tbody tr:hover {
   background: var(--bg-surface-hover);
+}
+
+/* Tableau virtualisé : lignes « espaceurs » qui tiennent la place des lignes non rendues (hauteur
+   posée en style sur leur cellule). Invisibles : ni marge, ni bordure, ni survol, ni transition. */
+.secrets-table tbody tr.virtual-spacer,
+.secrets-table tbody tr.virtual-spacer:hover {
+  background: transparent;
+  transition: none;
+}
+
+.secrets-table tbody tr.virtual-spacer td {
+  padding: 0;
+  border: 0;
 }
 
 /* Ligne atteinte au clavier : anneau plus épais que le contour de sélection (style inline),
@@ -1234,7 +1258,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   border: 2px solid var(--border);
   border-radius: var(--radius-full);
   cursor: pointer;
-  transition: all var(--duration-base) var(--ease-smooth);
+  transition: background-color var(--duration-base) var(--ease-smooth), border-color var(--duration-base) var(--ease-smooth), box-shadow var(--duration-base) var(--ease-smooth);
 }
 
 .user-menu-trigger:hover {
@@ -1287,7 +1311,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-2xl);
   overflow: hidden;
-  animation: dropdownEnter 0.3s var(--ease-bounce);
+  /* Entrée courte sans rebond (avant : 300 ms, courbe à dépassement) */
+  animation: dropdownEnter 120ms var(--ease-out);
   z-index: 1000;
 }
 
@@ -1318,7 +1343,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 @keyframes dropdownEnter {
   from {
     opacity: 0;
-    transform: translateY(-10px) scale(0.95);
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
@@ -1400,7 +1425,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   display: flex;
   align-items: center;
   gap: var(--sp-4);
-  transition: all var(--duration-fast);
+  transition: background-color var(--duration-fast), color var(--duration-fast);
   text-align: start;
 }
 
@@ -1476,8 +1501,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   box-shadow: var(--shadow-2xl);
   min-width: 240px;
   padding: var(--sp-2);
-  z-index: var(--z-dropdown);
-  animation: contextMenuEnter 0.2s var(--ease-smooth);
+  z-index: var(--z-popover);
+  /* Entrée courte : opacité + léger glissement (avant : 200 ms avec mise à l'échelle 0.9, qui
+     ré-échantillonnait tout le menu et son ombre à chaque image en rendu logiciel) */
+  animation: contextMenuEnter 120ms var(--ease-out);
   /* Menu plus haut que la fenêtre (menu complet d'une entrée) : défilement interne au lieu
      d'éléments hors écran, inatteignables à la souris comme au clavier */
   max-height: calc(100vh - 20px);
@@ -1487,11 +1514,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 @keyframes contextMenuEnter {
   from {
     opacity: 0;
-    transform: scale(0.9);
+    transform: translateY(-2px);
   }
   to {
     opacity: 1;
-    transform: scale(1);
+    transform: translateY(0);
   }
 }
 
@@ -1506,7 +1533,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   font-weight: var(--weight-medium);
   color: var(--text-secondary);
   text-align: start;
-  transition: all var(--duration-fast);
+  transition: background-color var(--duration-fast), color var(--duration-fast);
 }
 
 .context-menu-item:hover {
@@ -1596,18 +1623,19 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   box-shadow: var(--shadow-2xl);
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
-  animation: toastEnter 0.4s var(--ease-bounce);
+  /* Entrée courte sans rebond (avant : 400 ms, courbe à dépassement) */
+  animation: toastEnter 180ms var(--ease-out);
   border: 2px solid rgba(255, 255, 255, 0.2);
 }
 
 @keyframes toastEnter {
   from {
     opacity: 0;
-    transform: translateY(30px) scale(0.9);
+    transform: translateY(12px);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
 }
 
@@ -1637,7 +1665,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 }
 
 .clipboard-timer.entering {
-  animation: toastEnter 0.4s var(--ease-bounce);
+  animation: toastEnter 180ms var(--ease-out);
 }
 
 .clipboard-timer-header {
@@ -1687,8 +1715,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   align-items: center;
   justify-content: center;
   padding: var(--sp-6);
-  backdrop-filter: blur(12px);
-  animation: overlayFadeIn 0.3s ease;
+  /* PERF : plus de backdrop-filter (flou 12 px). L'application tourne en rendu LOGICIEL
+     (main.js : disableHardwareAcceleration) : le compositeur recalculait le flou de toute la
+     fenêtre à chaque image (≈ 40–48 ms par image, ≈ 85 ms avec deux modales empilées), pendant
+     l'animation d'entrée et à chaque changement dans la modale (onglet, survol, saisie). */
+  animation: overlayFadeIn var(--duration-enter) ease-out;
 }
 
 @keyframes overlayFadeIn {
@@ -1708,17 +1739,19 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  animation: modalEnter 0.4s var(--ease-bounce);
+  /* Entrée courte sans rebond : opacité + léger glissement (avant : 400 ms, échelle 0.9 et
+     courbe à dépassement) */
+  animation: modalEnter var(--duration-enter) var(--ease-out);
 }
 
 @keyframes modalEnter {
   from {
     opacity: 0;
-    transform: scale(0.9) translateY(30px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
-    transform: scale(1) translateY(0);
+    transform: translateY(0);
   }
 }
 
@@ -1750,7 +1783,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   border-radius: var(--radius-full);
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: all var(--duration-base);
+  transition: background-color var(--duration-base), border-color var(--duration-base), color var(--duration-base), transform var(--duration-base);
 }
 
 .modal-close:hover {
@@ -1786,7 +1819,17 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   border-radius: var(--radius-full);
 }
 
+/* Formulaire enveloppant corps + pied d'une modale : maillon de la colonne flex du panneau,
+   sinon le corps ne défile plus et le pied sort du panneau (UI-34, « Configurer le TOTP ») */
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .modal-footer {
+  flex-shrink: 0;
   padding: var(--sp-8);
   border-top: 2px solid var(--border);
   display: flex;
@@ -1814,7 +1857,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   background: var(--bg-app);
   border: 2px solid var(--border-control, var(--border));
   border-radius: var(--radius-lg);
-  transition: all var(--duration-base);
+  transition: background-color var(--duration-base), border-color var(--duration-base), box-shadow var(--duration-base);
   margin-bottom: var(--sp-5);
 }
 
@@ -1960,7 +2003,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   color: var(--text-tertiary);
-  transition: all var(--duration-base);
+  transition: background-color var(--duration-base), color var(--duration-base), border-color var(--duration-base);
   white-space: nowrap;
   position: relative;
 }
@@ -1989,6 +2032,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 
 .admin-tab.active::after {
   transform: scaleX(1);
+}
+
+/* Onglet atteint au clavier (flèches dans la barre d'onglets) */
+.admin-tab:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
 }
 
 .admin-content {
@@ -2052,7 +2101,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   margin-bottom: var(--sp-2);
   border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: all var(--duration-base);
+  transition: background-color var(--duration-base), border-color var(--duration-base), color var(--duration-base);
   border: 2px solid transparent;
 }
 
@@ -2066,6 +2115,77 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   border-color: var(--accent);
   color: var(--accent);
   font-weight: var(--weight-bold);
+}
+
+/* UI-31 : libellé d'un élément de liste (coffre, policy, audit device) rendu sous forme de vrai
+   bouton (focalisable, Entrée / Espace) ; aspect inchangé, le clic sur la ligne reste actif */
+.admin-item-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.admin-item-select:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Menu « Modifier / Supprimer » d'une policy (clic droit, touche Menu ou Maj+F10) */
+.admin-policy-menu {
+  position: fixed;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  z-index: 30000;
+  min-width: 160px;
+  overflow: hidden;
+}
+
+.admin-policy-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: start;
+  color: var(--text-primary);
+}
+
+.admin-policy-menu-item:hover,
+.admin-policy-menu-item:focus-visible {
+  background: var(--bg-surface-hover);
+}
+
+.admin-policy-menu-item:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.admin-policy-menu-item.danger {
+  color: var(--error);
+}
+
+.admin-policy-menu-item.danger:hover,
+.admin-policy-menu-item.danger:focus-visible {
+  background: var(--error-bg);
+}
+
+.admin-policy-menu-separator {
+  height: 1px;
+  background: var(--border);
 }
 
 .admin-editor-header {
@@ -2101,7 +2221,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   background: var(--bg-app);
   color: var(--text-primary);
   resize: vertical;
-  transition: all var(--duration-base);
+  transition: background-color var(--duration-base), border-color var(--duration-base), box-shadow var(--duration-base);
   word-wrap: break-word;
   overflow-wrap: break-word;
   white-space: pre-wrap;
@@ -2181,7 +2301,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   align-items: center;
   justify-content: center;
   box-shadow: var(--shadow-lg);
-  transition: all var(--duration-base);
+  transition: border-color var(--duration-base), transform var(--duration-base);
 }
 
 .mobile-menu-toggle:hover {
@@ -2200,8 +2320,8 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
   inset: 0;
   background: var(--bg-overlay);
   z-index: var(--z-overlay);
-  backdrop-filter: blur(8px);
-  animation: overlayFadeIn 0.2s ease;
+  /* PERF : pas de backdrop-filter (voir .modal-overlay) */
+  animation: overlayFadeIn var(--duration-enter) ease-out;
 }
 
 .sidebar-overlay.visible {
@@ -2402,7 +2522,9 @@ button.url-link {
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
   cursor: pointer;
-  transition: all 0.2s ease;
+  /* PERF : propriétés explicites (avant : « all ») ; la graisse de l'onglet actif (500 → 700)
+     était interpolée sur 200 ms, avec une remise en page de la barre d'onglets à chaque image */
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
   position: relative;
   overflow: visible;
 }
@@ -2544,4 +2666,36 @@ button.url-link {
 :root[dir="rtl"] .secrets-table td {
   unicode-bidi: plaintext;
   text-align: right;
+}
+
+/* ═══════════════════════════════════════════════════
+   MOUVEMENT RÉDUIT (prefers-reduced-motion: reduce)
+   ═══════════════════════════════════════════════════
+   Réglage système « Afficher les animations » désactivé : modales, menus et notifications
+   apparaissent sans animation, plus aucune animation décorative ni transition au survol.
+   Les indicateurs de chargement (LoadingSpinner) tournent toujours : ils signalent un état. */
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay,
+  .modal-content,
+  .modal-panel,
+  .sidebar-overlay,
+  .user-menu-dropdown,
+  .context-menu,
+  .toast,
+  .clipboard-timer.entering,
+  .login-card,
+  .login-header::before,
+  .admin-header::before,
+  .admin-header-glow,
+  .user-menu-status::before,
+  .engine-card.drop-target {
+    animation: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }

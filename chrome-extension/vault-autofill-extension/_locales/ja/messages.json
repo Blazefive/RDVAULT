@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT"
   },
   "extDescription": {
     "message": "RDVAULT によるフォームの自動入力とパスキー（デスクトップアプリが必要）"
@@ -9,7 +9,7 @@
     "message": "確認中..."
   },
   "popupInfoRequiresDesktop": {
-    "message": "この拡張機能を使うには、Vault デスクトップアプリが起動し、接続されている必要があります。"
+    "message": "この拡張機能を使うには、RDVAULT アプリが起動し、ロック解除されている必要があります。"
   },
   "popupDesktopUnavailable": {
     "message": "デスクトップアプリを利用できません"
@@ -43,6 +43,12 @@
   },
   "popupPairingDeniedDetail": {
     "message": "この拡張機能のペアリングはアプリで拒否されました。1 分後に再度要求できます。"
+  },
+  "popupPairingExpiredTitle": {
+    "message": "ペアリング要求の期限が切れました: 拡張機能を開き直して再試行してください"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "RDVAULT で要求に応答がありませんでした (制限時間: 60 秒)。このウィンドウを閉じてから開き直すと、新しい要求が送信されます。"
   },
   "popupDisconnectedDetail": {
     "message": "自動入力を使うには、デスクトップアプリを起動してログインしてください。"
@@ -194,5 +200,26 @@
   },
   "bgErrClearCredential": {
     "message": "ログイン情報の削除エラー"
+  },
+  "autofillMenuAnnounce": {
+    "message": "RDVAULT のログイン情報：$COUNT$ 件。下矢印キーで選択、Esc キーで閉じます。",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "RDVAULT はロックされています。アプリのロックを解除してから、もう一度お試しください。"
+  },
+  "bgErrVaultClosed": {
+    "message": "RDVAULT が閉じているか、応答しません。アプリを開いてから、もう一度お試しください。"
+  },
+  "bgErrRateLimited": {
+    "message": "RDVAULT へのリクエストが多すぎます。しばらくしてからもう一度お試しください。"
+  },
+  "pkVaultUnavailable": {
+    "message": "RDVAULT が閉じているか、ロックされています。続行するには RDVAULT を開いてロックを解除するか、別のデバイスを使用してください。"
   }
 }

@@ -51,6 +51,8 @@ function makeVault({ legacyCount = false } = {}) {
   const sw = async (m) => {
     calls.push(m.type);
     await sleep(3);
+    // État de RDVAULT (fenêtre de création) : ouvert et déverrouillé
+    if (m.type === 'PASSKEY_STATUS') return { success: true, ready: true };
     if (m.type === 'PASSKEY_LIST') return { success: true, passkeys: JSON.parse(JSON.stringify(items[m.rpId] || [])) };
     if (m.type === 'PASSKEY_STORE') { (items[m.passkey.rpId] ||= []).push(JSON.parse(JSON.stringify(m.passkey))); return { success: true }; }
     if (m.type === 'PASSKEY_UPDATE_COUNT') {
@@ -81,7 +83,12 @@ function loadFrame({ url, top = true, ancestors, allow = true, vault }) {
   if (ancestors !== undefined) location.ancestorOrigins = ancestors;
   const listeners = [];
   const win = {
-    location, isSecureContext: true, PublicKeyCredential: function () {},
+    location, isSecureContext: true,
+    // PublicKeyCredential natif simulé : sans Windows Hello (authentificateur de plateforme absent)
+    PublicKeyCredential: Object.assign(function () {}, {
+      isUserVerifyingPlatformAuthenticatorAvailable: async () => false,
+      getClientCapabilities: async () => ({ hybridTransport: true, userVerifyingPlatformAuthenticator: false, passkeyPlatformAuthenticator: false }),
+    }),
     postMessage: (m) => { setTimeout(() => listeners.slice().forEach((fn) => fn({ source: win, data: m })), 0); },
     addEventListener: (t, fn) => { if (t === 'message') listeners.push(fn); },
   };
@@ -106,7 +113,23 @@ function loadFrame({ url, top = true, ancestors, allow = true, vault }) {
     idl.implForWrapper(ev).isTrusted = true;
     idl.implForWrapper(btn)._dispatch(idl.implForWrapper(ev));
   };
-  return { navigator, native, roots, click };
+  // Touche réelle (isTrusted) pressée sur l'élément qui a le focus dans la n-ième fenêtre
+  const key = (n, k, opts = {}) => {
+    const { root } = roots[n];
+    const target = root.activeElement || root.querySelector('.bx');
+    const ev = new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, composed: true, ...opts });
+    idl.implForWrapper(ev).isTrusted = true;
+    idl.implForWrapper(target)._dispatch(idl.implForWrapper(ev));
+    return ev;
+  };
+  return { navigator, native, roots, click, key, win, document };
+}
+
+// État d'une promesse sans l'attendre ('pending', 'resolved' ou le nom de l'erreur)
+function track(p) {
+  const t = { state: 'pending', value: null, error: null, at: 0 };
+  t.done = p.then((v) => { t.state = 'resolved'; t.value = v; t.at = Date.now(); }, (e) => { t.state = (e && e.name) || 'rejected'; t.error = e; t.at = Date.now(); });
+  return t;
 }
 
 const enc = (s) => new TextEncoder().encode(s);
@@ -130,17 +153,32 @@ async function register(frame, n, extra) {
 // Décision produit (UV) : le coffre RDVAULT n'est lisible qu'une fois DÉVERROUILLÉ par le mot de passe
 // maître, ce qui vaut vérification de l'utilisateur (comme les gestionnaires de mots de passe du marché).
 // Une passkey servie par RDVAULT porte donc le drapeau UV ; userVerification « required » est servi par RDVAULT.
-test('UV : coffre déverrouillé → drapeau UV posé (UP|UV|AT = 0x45 à la création, UP|UV = 0x05 à l\'authentification)', { timeout: 20000 }, async () => {
+// Passkey du coffre : sauvegardée et synchronisée avec lui → drapeaux BE | BS (0x08 | 0x10), comme les
+// gestionnaires de passkeys du marché ; AAGUID propre à RDVAULT (plus l'AAGUID nul pris pour Apple).
+test('UV + sauvegarde : coffre déverrouillé → UP|UV|BE|BS|AT = 0x5d à la création, UP|UV|BE|BS = 0x1d à l\'authentification', { timeout: 20000 }, async () => {
   const vault = makeVault();
   const f = loadFrame({ url: 'https://site-a.com/login', vault });
   const cred = await register(f, 0);
   const ad = authDataOf(cred.response.attestationObject);
-  assert.equal(ad[32], 0x45, 'création : UP | UV | AT (0x' + ad[32].toString(16) + ')');
+  assert.equal(ad[32], 0x5d, 'création : UP | UV | BE | BS | AT (0x' + ad[32].toString(16) + ')');
+  assert.equal(Buffer.from(ad.slice(37, 53)).toString('hex'), '1c80936c3d174ec8acaf40e1e6a081cd', 'AAGUID RDVAULT');
   assert.deepEqual(new Uint8Array(cred.response.getAuthenticatorData()), ad, 'getAuthenticatorData() porte les mêmes drapeaux');
+  assert.equal(vault.items['site-a.com'][0].backupEligible, true, 'BE mémorisé avec la passkey (figé pour sa durée de vie)');
   const pg = f.navigator.credentials.get(getOpts());
   await sleep(ARM); f.click(1);
   const asrt = await pg;
-  assert.equal(Buffer.from(asrt.response.authenticatorData)[32], 0x05, 'assertion : UP | UV');
+  assert.equal(Buffer.from(asrt.response.authenticatorData)[32], 0x1d, 'assertion : UP | UV | BE | BS');
+});
+
+test('Passkey antérieure (enregistrée sans BE) : l\'assertion reste UP|UV = 0x05 (BE ne doit jamais changer)', { timeout: 20000 }, async () => {
+  const vault = makeVault();
+  const f = loadFrame({ url: 'https://site-a.com/login', vault });
+  await register(f, 0);
+  delete vault.items['site-a.com'][0].backupEligible; // forme stockée par les versions précédentes
+  const pg = f.navigator.credentials.get(getOpts());
+  await sleep(ARM); f.click(1);
+  const asrt = await pg;
+  assert.equal(Buffer.from(asrt.response.authenticatorData)[32], 0x05, 'assertion : UP | UV, sans BE/BS');
 });
 
 test('UV : userVerification « required » (création et authentification) → servi par RDVAULT, fenêtre affichée, UV posé', { timeout: 20000 }, async () => {
@@ -159,10 +197,13 @@ test('UV : userVerification « required » (création et authentification) → s
   assert.equal(asrt.id, cred.id);
   assert.equal(Buffer.from(asrt.response.authenticatorData)[32] & 0x05, 0x05, 'assertion : UP et UV');
   assert.equal(f.native.get.length, 0, 'authentificateur natif non sollicité');
-  assert.deepEqual(vault.calls, ['PASSKEY_STORE', 'PASSKEY_LIST', 'PASSKEY_UPDATE_COUNT']);
+  // PASSKEY_STATUS : état de RDVAULT (GET /sync) vérifié à l'ouverture de la fenêtre de création (EXT-26)
+  assert.deepEqual(vault.calls, ['PASSKEY_STATUS', 'PASSKEY_STORE', 'PASSKEY_LIST', 'PASSKEY_UPDATE_COUNT']);
 });
 
-test('UV : coffre verrouillé ou fermé → aucune passkey RDVAULT (get → navigateur, create → NotAllowedError), jamais d\'UV sans coffre', { timeout: 20000 }, async () => {
+// EXT-26 : RDVAULT fermé ou verrouillé → la fenêtre de création le dit et n'active pas « Créer dans
+// RDVAULT » (le clic aboutissait à un NotAllowedError muet) ; « Utiliser un autre appareil » reste proposé.
+test('UV : coffre verrouillé ou fermé → aucune passkey RDVAULT (get → navigateur ; create : fenêtre « RDVAULT est fermé ou verrouillé », bouton RDVAULT désactivé), jamais d\'UV sans coffre', { timeout: 20000 }, async () => {
   const vault = makeVault();
   const f = loadFrame({ url: 'https://site-a.com/login', vault });
   await register(f, 0);
@@ -172,11 +213,159 @@ test('UV : coffre verrouillé ou fermé → aucune passkey RDVAULT (get → navi
   const rg = await f.navigator.credentials.get(getOpts({ userVerification: 'required' }));
   assert.deepEqual(rg, { native: true }, 'authentification : passkeys illisibles → navigateur, sans fenêtre');
   assert.equal(f.roots.length, 1, 'aucune nouvelle fenêtre RDVAULT');
-  const pc = f.navigator.credentials.create(createOpts({ authenticatorSelection: { userVerification: 'required' } }));
-  await sleep(ARM); f.click(1);
-  await assert.rejects(pc, (e) => e && e.name === 'NotAllowedError', 'création : rejetée, aucune attestation (clé non enregistrable)');
+  const storesBefore = vault.calls.filter((c) => c === 'PASSKEY_STORE').length;
+  const pc = track(f.navigator.credentials.create(createOpts({ authenticatorSelection: { userVerification: 'required' } })));
+  await sleep(ARM);
+  const root = f.roots[1].root;
+  assert.equal(root.querySelector('.ok').disabled, true, '« Créer dans RDVAULT » désactivé');
+  assert.equal(root.querySelector('.er').hidden, false, 'explication affichée');
+  assert.equal(root.querySelector('.er').textContent, 'RDVAULT est fermé ou verrouillé : ouvrez-le et déverrouillez-le pour continuer, ou utilisez un autre appareil.');
+  assert.equal(root.querySelector('.er').getAttribute('role'), 'alert', 'annoncée aux lecteurs d\'écran');
+  f.click(1); // clic réel sur le bouton désactivé : sans effet
+  await sleep(50);
+  assert.equal(pc.state, 'pending', 'aucun échec muet : la fenêtre reste ouverte');
+  assert.equal(vault.calls.filter((c) => c === 'PASSKEY_STORE').length, storesBefore, 'aucune tentative d\'enregistrement');
+  f.click(1, '.ca');
+  await pc.done;
+  assert.equal(pc.state, 'NotAllowedError', 'Annuler → NotAllowedError standard');
+  // « Utiliser un autre appareil » : authentificateur du navigateur
+  const pf = f.navigator.credentials.create(createOpts());
+  await sleep(ARM); f.click(2, '.fb');
+  assert.deepEqual(await pf, { native: true }, 'autre appareil → navigateur');
   assert.equal(vault.items['site-a.com'].length, 1, 'rien ajouté au coffre');
   vault.sw = unlocked;
+});
+
+test('EXT-26 : RDVAULT déverrouillé pendant que la fenêtre est ouverte → bouton réactivé, passkey créée', { timeout: 20000 }, async () => {
+  const vault = makeVault();
+  const unlocked = vault.sw;
+  vault.sw = async (m) => { vault.calls.push(m.type); return { success: false, error: 'Not authenticated' }; };
+  const f = loadFrame({ url: 'https://site-a.com/register', vault });
+  const pc = track(f.navigator.credentials.create(createOpts()));
+  await sleep(ARM);
+  const root = f.roots[0].root;
+  assert.equal(root.querySelector('.ok').disabled, true);
+  vault.sw = unlocked; // l'utilisateur déverrouille RDVAULT
+  await sleep(2800);   // nouvelle vérification (READINESS_POLL_MS = 2,5 s)
+  assert.equal(root.querySelector('.ok').disabled, false, 'bouton réactivé');
+  assert.equal(root.querySelector('.er').hidden, true, 'explication retirée');
+  f.click(0);
+  await pc.done;
+  assert.equal(pc.state, 'resolved');
+  assert.equal(pc.value.type, 'public-key');
+  assert.equal(vault.items['site-a.com'].length, 1);
+});
+
+test('EXT-26 : enregistrement refusé APRÈS le clic (RDVAULT verrouillé entre-temps) → fenêtre ouverte avec l\'explication, aucune attestation, autre appareil possible', { timeout: 20000 }, async () => {
+  const vault = makeVault();
+  const unlocked = vault.sw;
+  vault.sw = async (m) => (m.type === 'PASSKEY_STORE' ? (vault.calls.push(m.type), { success: false }) : unlocked(m));
+  const f = loadFrame({ url: 'https://site-a.com/register', vault });
+  const pc = track(f.navigator.credentials.create(createOpts()));
+  await sleep(ARM); f.click(0);
+  await sleep(100);
+  const root = f.roots[0].root;
+  assert.equal(pc.state, 'pending', 'pas de NotAllowedError muet');
+  assert.ok(f.roots[0].host.isConnected, 'fenêtre toujours affichée');
+  assert.equal(root.querySelector('.er').hidden, false, 'explication affichée');
+  assert.equal(root.querySelector('.ok').disabled, true);
+  assert.equal(root.activeElement, root.querySelector('.fb'), 'focus sur « Utiliser un autre appareil »');
+  f.click(0, '.fb');
+  await pc.done;
+  assert.deepEqual(pc.value, { native: true }, 'autre appareil → navigateur');
+  assert.equal(vault.items['site-a.com'], undefined, 'rien dans le coffre');
+});
+
+// EXT-21 : la page annule sa cérémonie (AbortSignal, comme SimpleWebAuthn avant une nouvelle cérémonie)
+test('EXT-21 : create() annulé par AbortSignal → AbortError immédiat, fenêtre fermée, aucune passkey enregistrée même après un clic', { timeout: 20000 }, async () => {
+  const vault = makeVault();
+  const f = loadFrame({ url: 'https://site-a.com/register', vault });
+  const ac = new AbortController();
+  const pc = track(f.navigator.credentials.create({ ...createOpts(), signal: ac.signal }));
+  await sleep(ARM);
+  const { host } = f.roots[0];
+  assert.ok(host.isConnected, 'fenêtre affichée');
+  const abortedAt = Date.now();
+  ac.abort();
+  await sleep(30);
+  assert.equal(pc.state, 'AbortError', 'promesse rejetée en AbortError');
+  assert.ok(pc.at - abortedAt < 30, 'immédiatement');
+  assert.equal(host.isConnected, false, 'fenêtre RDVAULT fermée');
+  f.click(0); // clic sur la fenêtre retirée : sans effet
+  await sleep(100);
+  assert.ok(!vault.calls.includes('PASSKEY_STORE'), 'aucune passkey envoyée au coffre');
+  assert.equal(f.native.create.length, 0, 'pas de bascule vers le navigateur');
+  // Signal déjà annulé : rejet sans fenêtre, raison du signal conservée
+  const ac2 = new AbortController(); ac2.abort(new Error('motif'));
+  await assert.rejects(f.navigator.credentials.create({ ...createOpts(), signal: ac2.signal }), /motif/);
+  assert.equal(f.roots.length, 1, 'aucune nouvelle fenêtre');
+});
+
+test('EXT-21 : get() annulé par AbortSignal → AbortError, fenêtre fermée, aucun compteur réservé ni signature', { timeout: 20000 }, async () => {
+  const vault = makeVault();
+  const f = loadFrame({ url: 'https://site-a.com/login', vault });
+  await register(f, 0);
+  const ac = new AbortController();
+  const pg = track(f.navigator.credentials.get({ ...getOpts(), signal: ac.signal }));
+  await sleep(ARM);
+  const { host } = f.roots[1];
+  ac.abort();
+  await sleep(30);
+  assert.equal(pg.state, 'AbortError');
+  assert.equal(host.isConnected, false, 'fenêtre fermée');
+  f.click(1);
+  await sleep(100);
+  assert.ok(!vault.calls.includes('PASSKEY_UPDATE_COUNT'), 'aucun compteur réservé');
+  assert.equal(vault.items['site-a.com'][0].signCount, 0);
+});
+
+test('EXT-21 : délai de la cérémonie (publicKey.timeout, borné à 10 s) écoulé → fenêtre fermée AVANT la bascule vers le navigateur, rien enregistré', { timeout: 30000 }, async () => {
+  const vault = makeVault();
+  const f = loadFrame({ url: 'https://site-a.com/register', vault });
+  const start = Date.now();
+  const pc = track(f.navigator.credentials.create(createOpts({ timeout: 1000 })));
+  await sleep(ARM);
+  const { host } = f.roots[0];
+  await pc.done;
+  const elapsed = pc.at - start;
+  assert.deepEqual(pc.value, { native: true }, 'navigateur après le délai');
+  assert.ok(elapsed >= 9900 && elapsed < 12000, 'délai du site borné à 10 s (' + elapsed + ' ms)');
+  await sleep(20); // message « abort » posté au pont avant la bascule, traité à la tâche suivante
+  assert.equal(host.isConnected, false, 'fenêtre RDVAULT fermée');
+  f.click(0);
+  await sleep(100);
+  assert.ok(!vault.calls.includes('PASSKEY_STORE'), 'aucune passkey orpheline');
+});
+
+// EXT-24 : fenêtre utilisable au clavier et par les lecteurs d'écran
+test('EXT-24 : fenêtre nommée, focus déplacé (jamais sur un bouton qui signe), Tab bouclé, Échap annule, focus rendu à la page', { timeout: 20000 }, async () => {
+  const vault = makeVault();
+  const f = loadFrame({ url: 'https://site-a.com/register', vault });
+  const pageBtn = f.document.createElement('button');
+  pageBtn.id = 'create'; f.document.body.appendChild(pageBtn); pageBtn.focus();
+  const pc = track(f.navigator.credentials.create(createOpts()));
+  await sleep(ARM);
+  const { root, host } = f.roots[0];
+  const box = root.querySelector('.bx');
+  assert.equal(box.getAttribute('role'), 'dialog');
+  assert.equal(box.getAttribute('aria-modal'), 'true');
+  assert.equal(root.getElementById(box.getAttribute('aria-labelledby')).textContent, 'RDVAULT', 'nom accessible');
+  assert.equal(root.getElementById(box.getAttribute('aria-describedby')).textContent, 'Créer une passkey pour site-a.com — alice@test', 'description');
+  assert.equal(f.document.activeElement, host, 'focus dans la fenêtre (hôte)');
+  assert.equal(root.activeElement, box, 'focus sur la boîte, pas sur « Créer dans RDVAULT »');
+  // Tab : boucle sur les boutons de la fenêtre uniquement
+  const seen = [];
+  for (let i = 0; i < 4; i++) { const ev = f.key(0, 'Tab'); assert.equal(ev.defaultPrevented, true); seen.push(root.activeElement.className); }
+  assert.deepEqual(seen, ['ok', 'fb', 'ca', 'ok'], 'Tab bouclé dans la fenêtre');
+  f.key(0, 'Tab', { shiftKey: true });
+  assert.equal(root.activeElement.className, 'ca', 'Maj+Tab : bouclage inverse');
+  // Échap : annulation standard, fenêtre fermée, focus rendu au bouton de la page
+  f.key(0, 'Escape');
+  await pc.done;
+  assert.equal(pc.state, 'NotAllowedError');
+  assert.equal(host.isConnected, false);
+  assert.equal(f.document.activeElement, pageBtn, 'focus rendu à l\'élément de la page');
+  assert.ok(!vault.calls.includes('PASSKEY_STORE'));
 });
 
 test('PASSKEYS-21 : pubKeyCredParams sans ES256 (-7) → natif ; ES256 parmi d\'autres ou liste vide → RDVAULT', { timeout: 20000 }, async () => {
@@ -329,4 +518,24 @@ test('PASSKEYS-19 : background.js relaie « reserved » et « signCount » de l\
   assert.deepEqual(JSON.parse(JSON.stringify(await update(req, sender))), { success: true });
   replies.push({ ok: false, json: async () => ({ success: false, error: 'x' }) });
   assert.equal((await update(req, sender)).success, false);
+});
+
+// Sans Windows Hello, Chrome répond « pas d'authentificateur de plateforme » : des sites (Google) refusent
+// alors de créer une passkey sur cet appareil et écartent les passkeys « internal » de RDVAULT.
+test('Authentificateur de plateforme : annoncé disponible quand le coffre RDVAULT est déverrouillé, réponse native sinon', { timeout: 20000 }, async () => {
+  const vault = makeVault();
+  const f = loadFrame({ url: 'https://accounts.example.com/login', vault });
+  const PKC = f.win.PublicKeyCredential;
+  assert.equal(await PKC.isUserVerifyingPlatformAuthenticatorAvailable(), true, 'coffre déverrouillé → true');
+  const caps = await PKC.getClientCapabilities();
+  assert.equal(caps.userVerifyingPlatformAuthenticator, true);
+  assert.equal(caps.passkeyPlatformAuthenticator, true);
+  assert.equal(caps.hybridTransport, true, 'autres capacités natives conservées');
+
+  const locked = makeVault();
+  locked.sw = async (m) => { locked.calls.push(m.type); return { success: false, error: 'Not authenticated' }; };
+  const g = loadFrame({ url: 'https://accounts.example.com/login', vault: locked });
+  assert.equal(await g.win.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(), false, 'coffre verrouillé → réponse native (false)');
+  assert.equal((await g.win.PublicKeyCredential.getClientCapabilities()).userVerifyingPlatformAuthenticator, false);
+  assert.ok(locked.calls.every((c) => c === 'PASSKEY_LIST'), 'seule la liste est interrogée (aucune écriture)');
 });

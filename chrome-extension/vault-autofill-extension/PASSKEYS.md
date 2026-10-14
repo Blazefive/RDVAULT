@@ -109,11 +109,47 @@ sinon UP seul.
 
 ## Coffre indisponible
 
-La clé privée n'existe que dans le coffre. Si l'enregistrement échoue (app fermée,
-verrouillée, non appairée, écriture refusée), `create()` est **rejeté** (`NotAllowedError`
-standard) : le site n'enregistre jamais une clé publique dont la clé privée serait perdue, et
-peut proposer de réessayer une fois RDVAULT déverrouillé. En authentification, un coffre
-indisponible ne fournit aucune passkey : la main est rendue au navigateur, sans fenêtre RDVAULT.
+La clé privée n'existe que dans le coffre : aucune attestation n'est jamais renvoyée au site pour
+une passkey qui n'a pas pu y être enregistrée (le site n'enregistre jamais une clé publique dont la
+clé privée serait perdue).
+
+- **Avant le clic** : la fenêtre de création vérifie que RDVAULT est ouvert ET déverrouillé
+  (`PASSKEY_STATUS`, c'est-à-dire `GET /sync` : aucune passkey ni clé n'est lue). Sinon elle affiche
+  « RDVAULT est fermé ou verrouillé : ouvrez-le et déverrouillez-le pour continuer, ou utilisez un
+  autre appareil. » et **désactive** « Créer dans RDVAULT » ; l'état est revérifié toutes les 2,5 s,
+  si bien que le bouton se réactive dès que RDVAULT est déverrouillé. « Utiliser un autre appareil »
+  (navigateur) et « Annuler » (`NotAllowedError`) restent disponibles.
+- **Après le clic** (RDVAULT verrouillé entre-temps, écriture refusée) : la fenêtre **reste ouverte**
+  avec la même explication et le focus sur « Utiliser un autre appareil », au lieu d'un
+  `NotAllowedError` sans explication ; l'utilisateur peut réessayer une fois RDVAULT déverrouillé.
+- En authentification, un coffre indisponible ne fournit aucune passkey : la main est rendue au
+  navigateur, sans fenêtre RDVAULT. Si le coffre se verrouille pendant que la fenêtre est ouverte,
+  la réservation du compteur échoue : la fenêtre reste ouverte avec l'explication, rien n'est signé.
+
+## Annulation par le site et délai
+
+- **`AbortSignal`** (`options.signal`, utilisé par exemple par SimpleWebAuthn pour annuler une
+  cérémonie avant d'en lancer une autre) : la promesse est rejetée aussitôt avec la raison du signal
+  (`AbortError` par défaut), la fenêtre RDVAULT se ferme, et plus rien n'est créé, stocké ni signé
+  pour cette requête (contrôle avant la génération de la clé, avant `PASSKEY_STORE`, avant la
+  réservation du compteur et avant la signature). Un signal déjà annulé rejette sans fenêtre.
+- **Délai** : celui demandé par le site (`publicKey.timeout`), borné comme le fait Chrome (10 s à
+  10 min), 120 s s'il est absent. À l'expiration, la fenêtre RDVAULT est fermée **avant** que
+  l'authentificateur du navigateur prenne le relais : un clic tardif ne peut plus enregistrer une
+  passkey orpheline (que le site n'aurait jamais reçue).
+- Le message d'annulation (`{ op: 'abort', id }`) passe par le même canal `postMessage` que la
+  requête ; seule la page elle-même peut l'envoyer, et elle n'annule ainsi que ses propres cérémonies.
+
+## Clavier et lecteurs d'écran
+
+La fenêtre est une boîte de dialogue modale (`role="dialog"`, `aria-modal`) nommée « RDVAULT » et
+décrite par sa question (« Créer une passkey pour … »). À l'ouverture, le focus va sur la boîte
+elle-même, **jamais** sur le bouton qui crée ou signe : une touche Entrée destinée à la page ne
+confirme rien. **Tab / Maj+Tab** bouclent sur les boutons de la fenêtre (la page sous le voile n'est
+plus atteignable), **Échap** annule (`NotAllowedError`), et le focus revient à l'élément de la page
+qui l'avait. Les messages (fenêtre masquée, RDVAULT fermé ou verrouillé) sont annoncés
+(`role="alert"`). Un clic au clavier (Entrée / Espace sur un bouton) est un événement réel : il passe
+les mêmes contrôles anti-clickjacking qu'un clic de souris.
 
 **Compteur de signatures réservé avant la signature.** Après le clic, et avant de signer, le pont
 réserve dans le coffre la valeur suivante du compteur (`PASSKEY_UPDATE_COUNT`) : l'application
@@ -131,8 +167,8 @@ telle quelle (comportement d'origine).
 cette liste existe déjà pour le `rpId`, la création est refusée par l'erreur WebAuthn standard
 `InvalidStateError` — après le clic de consentement, pour que le site ne puisse pas sonder sans
 geste de l'utilisateur l'existence d'une passkey — et aucune passkey n'est ajoutée. Si le coffre est
-indisponible à ce moment, l'exclusion est invérifiable : la création est refusée
-(`NotAllowedError`), comme toute création dans un coffre indisponible.
+indisponible à l'ouverture de la fenêtre, l'exclusion est revérifiée au moment du clic ; toujours
+invérifiable, la création n'a pas lieu (fenêtre ouverte avec l'explication, voir « Coffre indisponible »).
 
 ## Sécurité de la fenêtre (anti-clickjacking)
 
@@ -265,8 +301,18 @@ via le serveur sync.
 ## Attestation
 
 - Par défaut : « none ».
+- **AAGUID RDVAULT** `1c80936c-3d17-4ec8-acaf-40e1e6a081cd` pour les passkeys créées à partir de
+  cette version. Les versions précédentes utilisaient un AAGUID nul, que certains sites (Google)
+  attribuent à Apple et affichent « Trousseau iCloud ». Une passkey existante garde son AAGUID :
+  pour changer son nom affiché, la supprimer (site et RDVAULT) puis la recréer. Tant que l'AAGUID
+  n'est pas inscrit dans la liste publique des fournisseurs de passkeys, les sites affichent un
+  nom générique (« Clé d'accès »).
+- **Drapeaux de sauvegarde BE/BS** (« synchronisable », « sauvegardée ») posés sur les nouvelles
+  passkeys : elles vivent dans le coffre, sauvegardé et synchronisé avec lui, comme celles des
+  gestionnaires du marché. BE étant figé pour la vie d'une passkey, il est mémorisé avec elle
+  (`backupEligible`) : les passkeys créées avant cette version restent sans BE/BS à l'assertion.
 - Si le site demande une attestation (`direct`/`enterprise`) : auto-attestation « packed »
-  (format `packed`, signée par la clé de la passkey, sans x5c, AAGUID nul). Prouve la
+  (format `packed`, signée par la clé de la passkey, sans x5c). Prouve la
   possession de la clé mais pas sa provenance. Acceptée par les sites qui demandent une
   attestation mais tolèrent l'auto-attestation (vérifié sur webauthn.io en mode Direct).
 

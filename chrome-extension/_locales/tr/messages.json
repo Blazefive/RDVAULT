@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT (doğrudan Vault)"
   },
   "extDescription": {
     "message": "HashiCorp Vault ile form otomatik doldurma"
@@ -115,5 +115,20 @@
   },
   "bgErrInternal": {
     "message": "Dahili hata"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Vault kimlik bilgileri: $COUNT$. Seçmek için Aşağı ok, kapatmak için Esc.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "Vault'ta oturum açılmadı: oturum açmak için uzantı penceresini açın."
+  },
+  "bgErrVaultUnreachable": {
+    "message": "Vault'a erişilemiyor veya oturumun süresi doldu: uzantı penceresinden yeniden oturum açın."
   }
 }

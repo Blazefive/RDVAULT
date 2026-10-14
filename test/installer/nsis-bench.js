@@ -46,6 +46,47 @@ const CONSTANT_RE = new RegExp(`\\$(${REDIRECTED_CONSTANTS.join('|')})(?![A-Za-z
 // Instructions qui sortiraient du bac à sable (registre, exécution de programmes, appels système)
 const FORBIDDEN_RE = /^\s*(WriteReg\w*|DeleteReg\w*|Exec|ExecWait|ExecShell\w*|ExecDos\w*|nsExec::\w+|System::\w+|UAC::\w+|WinShell::\w+|RegDLL|UnRegDLL)\b/im;
 
+// CONFIG-8 : SEUL appel de programme admis dans le script testé, icacls, isolé entre deux marqueurs.
+// Le banc vérifie que le bloc est EXACTEMENT celui attendu puis le remplace par une simulation qui note
+// la ligne de commande dans trace-icacls.txt : icacls n'est jamais exécuté (aucun droit réel modifié).
+const EXEC_BLOCK_RE = /^; >>> RDV-BENCH-EXEC-BEGIN\r?\n([\s\S]*?)^; <<< RDV-BENCH-EXEC-END[^\S\r\n]*\r?$/gm;
+// Références de symboles NSIS (« $ » suivi d'accolades) construites par concaténation : ce ne sont pas
+// des gabarits JavaScript
+const NSIS_ARGS = ['$', '{ARGS}'].join('');
+const NSIS_SANDBOX = ['$', '{RDV_SANDBOX}'].join('');
+const EXPECTED_EXEC_BLOCK = [
+  '!macro RdvRunIcacls ARGS',
+  `nsExec::ExecToLog '"$SYSDIR\\icacls.exe" ${NSIS_ARGS}'`,
+  'Pop $R9',
+  '!macroend',
+];
+const SIMULATED_EXEC_BLOCK = [
+  '; Simulation du banc : la ligne de commande est notee, icacls n\'est pas lance',
+  '!macro RdvRunIcacls ARGS',
+  `  FileOpen $R9 "${NSIS_SANDBOX}\\trace-icacls.txt" a`,
+  '  FileSeek $R9 0 END',
+  `  FileWrite $R9 \`icacls.exe ${NSIS_ARGS}$\\r$\\n\``,
+  '  FileClose $R9',
+  '  StrCpy $R9 "0"',
+  '!macroend',
+  '',
+].join('\r\n');
+// Dossier de configuration machine (%PROGRAMDATA%\RDVAULT) redirigé vers son propre dossier du bac à sable
+const MACHINE_DIR_DEFINE_RE = /^!define RDV_MACHINE_CONFIG_DIR "\$APPDATA\\RDVAULT"[^\S\r\n]*$/m;
+const MACHINE_DIR_SANDBOX_DEFINE = `!define RDV_MACHINE_CONFIG_DIR "${NSIS_SANDBOX}\\sys\\PROGRAMDATA\\RDVAULT"`;
+
+/** Remplace le bloc icacls (vérifié à l'identique) par sa simulation ; aucun autre appel n'est toléré */
+function simulateExecBlock(text, sourceFile) {
+  const blocks = [...text.matchAll(EXEC_BLOCK_RE)];
+  if (blocks.length > 1) throw new Error(`banc refusé : plusieurs blocs RDV-BENCH-EXEC dans ${sourceFile}`);
+  if (blocks.length === 0) return text;
+  const lines = blocks[0][1].split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith(';'));
+  if (JSON.stringify(lines) !== JSON.stringify(EXPECTED_EXEC_BLOCK)) {
+    throw new Error(`banc refusé : bloc RDV-BENCH-EXEC inattendu dans ${sourceFile} :\n${lines.join('\n')}`);
+  }
+  return text.replace(blocks[0][0], () => SIMULATED_EXEC_BLOCK);
+}
+
 function electronBuilderCacheDir() {
   if (process.env.ELECTRON_BUILDER_CACHE) return process.env.ELECTRON_BUILDER_CACHE;
   const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
@@ -86,7 +127,7 @@ function findToolchain() {
 function createSandbox(baseDir = process.env.RDV_INSTALLER_TEST_TMP || os.tmpdir()) {
   fs.mkdirSync(baseDir, { recursive: true });
   const root = fs.mkdtempSync(path.join(baseDir, 'rdv-nsis-'));
-  for (const name of ['APPDATA', 'DESKTOP', 'SMPROGRAMS', 'TEMP']) {
+  for (const name of ['APPDATA', 'DESKTOP', 'SMPROGRAMS', 'TEMP', 'PROGRAMDATA']) {
     fs.mkdirSync(path.join(root, 'sys', name), { recursive: true });
   }
   fs.mkdirSync(path.join(root, 'envtemp'), { recursive: true });
@@ -94,6 +135,7 @@ function createSandbox(baseDir = process.env.RDV_INSTALLER_TEST_TMP || os.tmpdir
   return {
     root,
     appData: path.join(root, 'sys', 'APPDATA'),
+    programData: path.join(root, 'sys', 'PROGRAMDATA'),
     sysTemp: path.join(root, 'sys', 'TEMP'),
     envTemp: path.join(root, 'envtemp'),
     bin: path.join(root, 'bin'),
@@ -105,7 +147,9 @@ function createSandbox(baseDir = process.env.RDV_INSTALLER_TEST_TMP || os.tmpdir
  * Refuse un script qui sortirait du bac à sable.
  */
 function prepareScriptUnderTest(sourceFile, targetFile) {
-  const original = fs.readFileSync(sourceFile, 'utf8');
+  // Bloc icacls simulé et dossier machine redirigé AVANT le contrôle des instructions interdites
+  const original = simulateExecBlock(fs.readFileSync(sourceFile, 'utf8'), sourceFile)
+    .replace(MACHINE_DIR_DEFINE_RE, () => MACHINE_DIR_SANDBOX_DEFINE);
   const forbidden = original.match(FORBIDDEN_RE);
   if (forbidden) throw new Error(`banc refusé : instruction hors bac à sable dans ${sourceFile} (« ${forbidden[0].trim()} »)`);
   let count = 0;

@@ -10,6 +10,8 @@
 // aria-labelledby (titre), focus initial (champ de la clé), piège de focus, retour du focus,
 // Échap réservé à la modale du dessus. Fermeture sur le fond seulement si mousedown ET mouseup
 // y tombent (une sélection de texte qui déborde du panneau ne ferme plus la modale).
+// Mise en page (UI-34) : le <form> (classe .modal-form) prolonge la colonne flex du panneau :
+// corps défilant, pied « Annuler / Configurer » toujours visible.
 import React, { useState, useEffect, useId, useRef } from 'react';
 import { useTranslation } from './i18n';
 import { useDialogA11y } from './components/common/Modal';
@@ -107,7 +109,9 @@ export default function TotpConfigModal({ secretName, totpKeyName, engineName, o
           <h2 id={titleId}>{t('totp.configure')}</h2>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        {/* UI-34 : .modal-form = maillon de la colonne flex du panneau (corps défilant, pied
+            fixe) ; sans elle, à 1280×800 les boutons sortaient du panneau (overflow hidden) */}
+        <form onSubmit={handleSubmit} className="modal-form">
           <div className="modal-body" style={{ padding: 'var(--sp-6)' }}>
             <div className="form-group-vertical">
               <label className="modal-label" htmlFor={keyFieldId}>

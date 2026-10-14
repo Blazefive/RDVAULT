@@ -86,7 +86,9 @@ describe('SECRETS-11 : marqueur explicite editOf', () => {
     // Copie dont le contenu ne correspond plus à la ligne (tag retiré ailleurs entre-temps)
     act(() => { result.current.setEditSecret({ ...rowOf(result, 'banque'), tags: '', editOf: 'banque' }); });
     await run(() => result.current.handleEditSecretSave(formEntry('banque', 'pass-2')));
-    expect(lastToast(toasts)).toEqual(['success', 'toast.secretSaved']);
+    // Contenu courant différent de celui de la fiche : champs changés appliqués à la version courante
+    // (services/staleWriteGuard.js), l'utilisateur en est informé
+    expect(lastToast(toasts)).toEqual(['success', 'toast.secretSavedMerged']);
     expect(vault.latest('Alpha', 'banque').data.Password).toBe('pass-2');
   });
 
@@ -184,7 +186,9 @@ describe('SECRETS-11 : décision portée par l\'objet d\'édition', () => {
     await run(() => result.current.fetchSecrets(engine));
     act(() => { result.current.setEditSecret(opened); });
     await run(() => result.current.handleEditSecretSave(formEntry('github', 'v3')));
-    expect(lastToast(toasts)).toEqual(['success', 'toast.secretSaved']);
+    // Entrée modifiée ailleurs depuis l'ouverture : le champ changé dans la fiche l'emporte, l'utilisateur
+    // est informé de la fusion (services/staleWriteGuard.js)
+    expect(lastToast(toasts)).toEqual(['success', 'toast.secretSavedMerged']);
     expect(vault.latest('Alpha', 'github').data.Password).toBe('v3');
   });
 });

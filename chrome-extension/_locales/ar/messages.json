@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT (Vault مباشرة)"
   },
   "extDescription": {
     "message": "التعبئة التلقائية للنماذج باستخدام HashiCorp Vault"
@@ -115,5 +115,20 @@
   },
   "bgErrInternal": {
     "message": "خطأ داخلي"
+  },
+  "autofillMenuAnnounce": {
+    "message": "بيانات اعتماد Vault المتاحة: $COUNT$. السهم لأسفل للاختيار، وEsc للإغلاق.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "لم يتم تسجيل الدخول إلى Vault: افتح نافذة الإضافة لتسجيل الدخول."
+  },
+  "bgErrVaultUnreachable": {
+    "message": "يتعذر الوصول إلى Vault أو انتهت الجلسة: سجّل الدخول مجددًا من نافذة الإضافة."
   }
 }

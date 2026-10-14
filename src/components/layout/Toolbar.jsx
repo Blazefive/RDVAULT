@@ -122,7 +122,7 @@ export default function Toolbar({
                 cursor: 'pointer',
                 fontSize: 'var(--text-sm)',
                 fontWeight: 'var(--weight-medium)',
-                transition: 'all 0.2s ease',
+                transition: 'background-color 0.2s ease, color 0.2s ease',
                 flexShrink: 0
               }}
             >

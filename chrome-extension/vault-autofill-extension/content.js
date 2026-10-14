@@ -123,6 +123,9 @@
   /** Vrai si le dernier chargement de la liste a ÉCHOUÉ (≠ liste vide) */
   let credentialsLoadFailed = false;
 
+  /** Message de l'échec du dernier chargement (« RDVAULT est verrouillé… »), vide sinon */
+  let credentialsLoadError = '';
+
   /** Nouvelles tentatives après échec : index du prochain délai et minuterie en cours */
   let credentialsRetryIndex = 0;
   let credentialsRetryTimer = null;
@@ -155,6 +158,9 @@
   /** Conteneur hôte et shadow root fermé de l'UI */
   let uiHost = null;
   let uiRoot = null;
+
+  /** Région role="status" du shadow root : annonces aux lecteurs d'écran (ouverture du menu) */
+  let liveRegion = null;
 
   // ============================================================================
   // PATTERNS DE DÉTECTION
@@ -364,6 +370,25 @@
       text-align: center;
       color: #dc2626;
       font-size: 13px;
+    }
+
+    /* Entrée active au clavier (focus) */
+    .vault-autofill-item:focus,
+    .vault-autofill-item[aria-selected="true"] {
+      background: #eff6ff;
+      outline: 2px solid #3b82f6;
+      outline-offset: -2px;
+    }
+
+    /* Région lue par les lecteurs d'écran, invisible à l'écran */
+    .vault-autofill-live {
+      position: fixed;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
   `;
 
@@ -1194,12 +1219,26 @@
     uiHost.style.cssText = 'all: initial; position: static; display: block; width: 0; height: 0; overflow: visible;';
     uiRoot = uiHost.attachShadow({ mode: 'closed' });
     uiRoot.appendChild(createElement('style', {}, STYLES));
+    // Région présente dès le départ : un lecteur d'écran n'annonce que ses CHANGEMENTS
+    liveRegion = createElement('div', { className: 'vault-autofill-live', role: 'status', 'aria-live': 'polite' });
+    uiRoot.appendChild(liveRegion);
 
     if (mountPoint) {
       mountPoint.appendChild(uiHost);
     }
 
     return uiRoot;
+  }
+
+  /**
+   * Annonce un texte aux lecteurs d'écran (région role="status" du shadow root)
+   * @param {string} text - Texte à annoncer
+   */
+  function announce(text) {
+    if (!liveRegion) return;
+    liveRegion.textContent = '';
+    // Vidée puis remplie : le même texte est annoncé à chaque ouverture du menu
+    setTimeout(() => { if (liveRegion) liveRegion.textContent = text; }, 50);
   }
 
   /**
@@ -1263,9 +1302,14 @@
 
     const root = ensureUiRoot();
 
+    // Bouton nommé pour les lecteurs d'écran (activable depuis leur mode lecture) ; au clavier,
+    // le menu s'ouvre depuis le champ (focus, Alt+Flèche bas)
+    const iconLabel = msg('autofillIconTitle', 'Auto-remplir avec RDVAULT');
     const icon = createElement('div', {
       className: 'vault-autofill-icon',
-      title: msg('autofillIconTitle', 'Auto-remplir avec RDVAULT')
+      title: iconLabel,
+      role: 'button',
+      'aria-label': iconLabel
     }, 'V');
 
     root.appendChild(icon);
@@ -1289,7 +1333,8 @@
 
       // Clic explicite de l'utilisateur : recharger si la liste en cache est vide
       const credentials = await loadCredentials(credentialsList.length === 0);
-      createDropdown(field, credentials);
+      // Échec (RDVAULT verrouillé ou fermé) : le dire, au lieu de « aucun identifiant » (EXT-23)
+      createDropdown(field, credentials, credentialsLoadFailed ? credentialsLoadError : '');
     });
 
     return icon;
@@ -1326,7 +1371,62 @@
     const header = dropdown.firstChild;
     clearChildren(dropdown);
     if (header) dropdown.appendChild(header);
-    dropdown.appendChild(createElement('div', { className }, text));
+    // Erreur annoncée immédiatement (alert), chargement poliment (status)
+    const role = className === 'vault-autofill-error' ? 'alert' : 'status';
+    dropdown.appendChild(createElement('div', { className, role }, text));
+  }
+
+  /**
+   * Entrées du menu (role="option")
+   * @param {HTMLElement} dropdown - Menu
+   * @returns {HTMLElement[]}
+   */
+  function menuItems(dropdown) {
+    return dropdown ? Array.from(dropdown.querySelectorAll('.vault-autofill-item')) : [];
+  }
+
+  /**
+   * Clavier dans le menu (focus sur une entrée) : Flèches / Origine / Fin pour se déplacer,
+   * Entrée ou Espace pour choisir, Échap pour fermer et revenir au champ, Tab pour fermer et
+   * poursuivre la navigation depuis le champ. Seuls les événements réels (isTrusted) comptent.
+   * @param {KeyboardEvent} e - Événement clavier
+   * @param {HTMLElement} dropdown - Menu
+   * @param {HTMLInputElement} field - Champ d'origine
+   * @param {Object[]} credentials - Résumés affichés (même ordre que les entrées)
+   */
+  function onMenuKeydown(e, dropdown, field, credentials) {
+    if (!e.isTrusted) return;
+    const items = menuItems(dropdown);
+    if (!items.length) return;
+    const index = items.indexOf(uiRoot ? uiRoot.activeElement : null);
+    const focusItem = (i) => items[(i + items.length) % items.length].focus();
+    switch (e.key) {
+      case 'ArrowDown': focusItem(index + 1); break;
+      case 'ArrowUp': focusItem(index < 0 ? -1 : index - 1); break;
+      case 'Home': focusItem(0); break;
+      case 'End': focusItem(-1); break;
+      case 'Enter':
+      case ' ':
+        if (index < 0) return;
+        // preventDefault (ci-dessous) : la touche n'atteint pas le champ (pas de soumission du formulaire vide)
+        try { field.focus({ preventScroll: true }); } catch (err) { /* champ retiré */ }
+        selectCredential(credentials[index], dropdown, field);
+        break;
+      case 'Escape':
+        removeDropdown();
+        try { field.focus({ preventScroll: true }); } catch (err) { /* champ retiré */ }
+        break;
+      case 'Tab':
+        // Retour au champ SANS bloquer la touche : le navigateur avance (ou recule) depuis le champ
+        removeDropdown();
+        try { field.focus({ preventScroll: true }); } catch (err) { /* champ retiré */ }
+        e.stopPropagation();
+        return;
+      default:
+        return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
   }
 
   /**
@@ -1335,29 +1435,35 @@
    * @param {Object[]} credentials - Liste des résumés {name, engine, username}
    * @returns {HTMLElement} Le dropdown créé
    */
-  function createDropdown(field, credentials) {
+  function createDropdown(field, credentials, errorMessage = '') {
     removeDropdown();
 
     const root = ensureUiRoot();
     const dropdown = createElement('div', { className: 'vault-autofill-dropdown', ...uiLangAttrs() });
+    const headerText = msg('autofillHeader', 'Identifiants RDVAULT');
 
-    // En-tête
-    dropdown.appendChild(createElement('div', { className: 'vault-autofill-header' }, msg('autofillHeader', 'Identifiants RDVAULT')));
+    // En-tête (repris comme nom de la liste pour les lecteurs d'écran)
+    dropdown.appendChild(createElement('div', { className: 'vault-autofill-header', 'aria-hidden': 'true' }, headerText));
 
-    if (!credentials || credentials.length === 0) {
-      dropdown.appendChild(createElement('div', { className: 'vault-autofill-no-results' },
+    if (errorMessage) {
+      // RDVAULT verrouillé, fermé, limite de débit… : message explicite (EXT-23)
+      dropdown.appendChild(createElement('div', { className: 'vault-autofill-error', role: 'alert' }, errorMessage));
+    } else if (!credentials || credentials.length === 0) {
+      dropdown.appendChild(createElement('div', { className: 'vault-autofill-no-results', role: 'status' },
         msg('autofillNoResults', 'Aucun identifiant trouvé pour ce site')
       ));
     } else {
+      // Liste accessible : listbox / option, focus déplaçable au clavier (tabindex -1)
+      const list = createElement('div', { className: 'vault-autofill-list', role: 'listbox', 'aria-label': headerText });
       credentials.forEach(cred => {
-        const item = createElement('div', { className: 'vault-autofill-item' });
+        const name = cred.name || msg('autofillUnnamed', 'Sans nom');
+        const user = cred.username || msg('autofillNoUsername', '(pas de username)');
+        const item = createElement('div', {
+          className: 'vault-autofill-item', role: 'option', tabindex: '-1', 'aria-selected': 'false', 'aria-label': name + ', ' + user
+        });
 
-        item.appendChild(createElement('div', { className: 'vault-autofill-item-name' },
-          cred.name || msg('autofillUnnamed', 'Sans nom')
-        ));
-        item.appendChild(createElement('div', { className: 'vault-autofill-item-username' },
-          cred.username || msg('autofillNoUsername', '(pas de username)')
-        ));
+        item.appendChild(createElement('div', { className: 'vault-autofill-item-name' }, name));
+        item.appendChild(createElement('div', { className: 'vault-autofill-item-username' }, user));
 
         item.addEventListener('click', (e) => {
           // SÉCURITÉ: Ignorer les événements synthétiques
@@ -1366,9 +1472,14 @@
           e.preventDefault();
           selectCredential(cred, dropdown, field);
         });
+        item.addEventListener('focus', () => item.setAttribute('aria-selected', 'true'));
+        item.addEventListener('blur', () => item.setAttribute('aria-selected', 'false'));
 
-        dropdown.appendChild(item);
+        list.appendChild(item);
       });
+      list.addEventListener('keydown', (e) => onMenuKeydown(e, dropdown, field, credentials));
+      dropdown.appendChild(list);
+      announce(msg('autofillMenuAnnounce', 'Identifiants RDVAULT disponibles : $1. Flèche bas pour choisir, Échap pour fermer.', String(credentials.length)));
     }
 
     root.appendChild(dropdown);
@@ -1725,6 +1836,7 @@
 
     credentialsLoadPromise = (async () => {
       let loaded = false;
+      let loadError = '';
       try {
         const response = await chrome.runtime.sendMessage({ type: 'GET_CREDENTIALS' });
 
@@ -1733,10 +1845,13 @@
           loaded = true;
         } else {
           credentialsList = [];
+          // Raison de l'échec, traduite par le service worker (RDVAULT verrouillé, fermé…)
+          if (response && typeof response.error === 'string') loadError = response.error.slice(0, 300);
         }
       } catch (err) {
         credentialsList = [];
       } finally {
+        credentialsLoadError = loaded ? '' : (loadError || msg('bgErrUnavailableOrLocked', 'RDVAULT indisponible ou verrouillé'));
         // Un échec (app fermée ou verrouillée, service worker pas prêt, limite de débit, erreur
         // réseau) n'est PAS mis en cache pendant 60 s : seul un chargement réussi l'est. Un échec
         // est retenté après un court délai (voir scheduleCredentialsRetry).
@@ -1915,12 +2030,46 @@
       removeDropdown();
     }, true);
 
-    // Fermeture du dropdown avec Escape
+    // Clavier depuis la page (EXT-22). Les touches pressées DANS le menu (shadow root fermé,
+    // cible retargetée sur l'hôte) sont traitées par onMenuKeydown.
+    //  - Échap : ferme le menu ;
+    //  - champ d'origine, menu ouvert : Flèche bas / haut entrent dans la liste, Tab la ferme ;
+    //  - champ détecté, menu fermé : Alt+Flèche bas l'ouvre (liste en cache).
     document.addEventListener('keydown', (e) => {
       if (!e.isTrusted) return;
-      if (e.key === 'Escape' && activeDropdown) {
-        removeDropdown();
+      if (uiHost && e.target === uiHost) return;
+      const target = typeof e.composedPath === 'function' ? e.composedPath()[0] : e.target;
+      if (activeDropdown) {
+        if (e.key === 'Escape') {
+          removeDropdown();
+          return;
+        }
+        if (target !== activeDropdownField) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          const items = menuItems(activeDropdown);
+          if (!items.length) return;
+          e.preventDefault();
+          e.stopPropagation();
+          (e.key === 'ArrowDown' ? items[0] : items[items.length - 1]).focus();
+        } else if (e.key === 'Tab') {
+          removeDropdown();
+        }
+        return;
       }
+      if (e.key === 'ArrowDown' && e.altKey && target && processedFields.has(target) && credentialsList.length > 0) {
+        e.preventDefault();
+        createDropdown(target, credentialsList);
+      }
+    }, true);
+
+    // Focus parti ailleurs dans la page (ni le champ du menu, ni l'UI RDVAULT) : menu fermé,
+    // il ne reste pas affiché par-dessus la page pendant la navigation au clavier
+    document.addEventListener('focusin', (e) => {
+      if (!activeDropdown) return;
+      if (uiHost && e.target === uiHost) return;
+      const target = typeof e.composedPath === 'function' ? e.composedPath()[0] : e.target;
+      if (target === activeDropdownField) return;
+      removeDropdown();
     }, true);
 
     // Repositionnement des icônes + nouvelle analyse (champs entrant dans la fenêtre)

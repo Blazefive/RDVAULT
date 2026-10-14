@@ -30,7 +30,11 @@ import React, { useEffect, useId, useRef } from 'react';
 
 const CLICK_TOLERANCE_PX = 5;
 
-// Éléments atteignables au clavier (hors tabindex="-1")
+// Éléments atteignables au clavier (Tab). tabindex="-1" est exclu de CHAQUE sélecteur : un bouton
+// à tabindex itinérant (onglet inactif, élément de menu) reste focalisable par programme mais n'est
+// pas dans l'ordre de tabulation. Auparavant, seul le sélecteur générique l'excluait : le piège de
+// focus prenait un onglet inactif pour premier / dernier élément et laissait sortir le focus.
+const NOT_REMOVED = ':not([tabindex="-1"])';
 const FOCUSABLE_SELECTOR = [
   'a[href]',
   'area[href]',
@@ -40,8 +44,8 @@ const FOCUSABLE_SELECTOR = [
   'textarea:not([disabled])',
   'iframe',
   '[contenteditable="true"]',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
+  '[tabindex]',
+].map((selector) => selector + NOT_REMOVED).join(',');
 
 // Élément masqué par un style inline / attribut hidden (jsdom n'a pas de mise en page)
 function hiddenByMarkup(el, stop) {

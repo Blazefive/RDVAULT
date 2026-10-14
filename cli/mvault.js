@@ -116,9 +116,33 @@ function readSession() {
 const SENSITIVE_KEYS = new Set(['password', 'pass', 'secret', 'token', 'key', 'private_key']);
 const MASK = '********';
 
+const isSensitiveName = (name) => SENSITIVE_KEYS.has(String(name).toLowerCase());
+const hasValue = (v) => v !== undefined && v !== null && v !== '';
+
+/**
+ * Champ personnalisé { key, value, protected } : `key` est le NOM du champ (affiché, jamais masqué) ;
+ * `value` est masquée s'il est protégé ou si son nom est sensible (ex. « password »).
+ */
+function maskCustomField(field) {
+  if (!field || typeof field !== 'object' || Array.isArray(field)) return maskSensitiveData(field);
+  const masked = {};
+  for (const [k, v] of Object.entries(field)) {
+    if (k === 'key') masked[k] = v;
+    else if (k === 'value') masked[k] = (field.protected === true || isSensitiveName(field.key)) && hasValue(v) ? MASK : maskSensitiveData(v);
+    else masked[k] = isSensitiveName(k) ? MASK : maskSensitiveData(v);
+  }
+  return masked;
+}
+
 /**
  * Retourne une copie des données avec les valeurs sensibles remplacées par ********
- * (comparaison de clé insensible à la casse, appliquée récursivement)
+ * (comparaison de clé insensible à la casse, appliquée récursivement), avec les mêmes règles que
+ * l'interface de RDVAULT pour la forme d'une entrée du coffre (vaultApi.readSecretV2/V1) :
+ *   - champ personnalisé { key, value, protected } : `key` est le NOM du champ, affiché ; `value` est
+ *     masquée si le champ est protégé (comme « •••• » dans le tableau) ou si son nom est sensible ;
+ *   - entrée SSH (entryType 'ssh') : `username` contient la phrase de passe de la clé → masqué ;
+ *   - pièces jointes (attachments[]) : le contenu `data` (base64, ex. fichier de clé) est masqué,
+ *     le nom, le type et la taille restent affichés.
  */
 function maskSensitiveData(data) {
   if (Array.isArray(data)) {
@@ -127,9 +151,22 @@ function maskSensitiveData(data) {
   if (!data || typeof data !== 'object') {
     return data;
   }
+  const isSsh = String(data.entryType || '').toLowerCase() === 'ssh';
   const masked = {};
   for (const [k, v] of Object.entries(data)) {
-    if (SENSITIVE_KEYS.has(String(k).toLowerCase())) {
+    const lower = String(k).toLowerCase();
+    if (lower === 'customfields' && Array.isArray(v)) {
+      masked[k] = v.map(maskCustomField);
+    } else if (isSsh && lower === 'username' && hasValue(v)) {
+      masked[k] = MASK; // phrase de passe de la clé SSH (stockée dans username)
+    } else if (lower === 'attachments' && Array.isArray(v)) {
+      masked[k] = v.map((a) => {
+        if (!a || typeof a !== 'object' || Array.isArray(a)) return maskSensitiveData(a);
+        const copy = maskSensitiveData(a);
+        if (hasValue(a.data)) copy.data = MASK;
+        return copy;
+      });
+    } else if (isSensitiveName(k)) {
       masked[k] = MASK;
     } else {
       masked[k] = maskSensitiveData(v);
@@ -896,7 +933,11 @@ Usage :
                                             modification dans RDVault : Paramètres > CLI)
   mvault help                               Affiche cette aide
 
-Clés masquées sans --reveal : password, pass, secret, token, key, private_key
+Masqué sans --reveal : les clés password, pass, secret, token, key, private_key ; la valeur des
+champs personnalisés protégés ; la phrase de passe d'une clé SSH ; le contenu des pièces jointes.
+
+Code de sortie de « mvault ssh … -- <cmd> » et « mvault winrm » : celui de la commande distante
+($LASTEXITCODE pour winrm ; « exit N » distant → 1 avec winrm) ; détails dans cli/README.md.
 
 Exemples :
   mvault get secret/serveur-prod -k password
@@ -913,9 +954,12 @@ L'application RDVault Desktop doit être lancée et l'utilisateur connecté.`);
 // POINT D'ENTRÉE
 // ========================================
 
-const [,, command, ...args] = process.argv;
+// Exporté pour les tests unitaires (electron/mvault.cli.test.js) ; le point d'entrée ne s'exécute qu'en ligne de commande
+module.exports = { maskSensitiveData, remoteExitCode, MASK };
 
-switch (command) {
+const [,, command, ...args] = require.main === module ? process.argv : [];
+
+if (require.main === module) switch (command) {
   case 'get':
     cmdGet(args);
     break;

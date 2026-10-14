@@ -1,15 +1,15 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT"
   },
   "extDescription": {
-    "message": "Auto-remplissage de formulaires et passkeys avec RDVAULT (nécessite le Desktop app)"
+    "message": "Auto-remplissage de formulaires et passkeys avec RDVAULT (nécessite l'application de bureau RDVAULT)"
   },
   "popupStatusChecking": {
     "message": "Vérification..."
   },
   "popupInfoRequiresDesktop": {
-    "message": "Cette extension nécessite que l'application Desktop Vault soit lancée et connectée."
+    "message": "Cette extension nécessite que l'application RDVAULT soit lancée et déverrouillée."
   },
   "popupDesktopUnavailable": {
     "message": "Desktop non disponible"
@@ -43,6 +43,12 @@
   },
   "popupPairingDeniedDetail": {
     "message": "L'appairage de cette extension a été refusé dans l'application. Une nouvelle demande sera possible dans une minute."
+  },
+  "popupPairingExpiredTitle": {
+    "message": "Demande d'appairage expirée : rouvrez l'extension pour réessayer"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "La demande n'a pas reçu de réponse dans RDVAULT (délai : 60 secondes). Fermez puis rouvrez cette fenêtre pour envoyer une nouvelle demande."
   },
   "popupDisconnectedDetail": {
     "message": "Lancez l'application Desktop et connectez-vous pour utiliser l'auto-remplissage."
@@ -194,5 +200,26 @@
   },
   "bgErrClearCredential": {
     "message": "Erreur suppression credential"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Identifiants RDVAULT disponibles : $COUNT$. Flèche bas pour choisir, Échap pour fermer.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "RDVAULT est verrouillé : déverrouillez l'application, puis réessayez."
+  },
+  "bgErrVaultClosed": {
+    "message": "RDVAULT est fermé ou injoignable : ouvrez l'application, puis réessayez."
+  },
+  "bgErrRateLimited": {
+    "message": "Trop de demandes envoyées à RDVAULT : réessayez dans un instant."
+  },
+  "pkVaultUnavailable": {
+    "message": "RDVAULT est fermé ou verrouillé : ouvrez-le et déverrouillez-le pour continuer, ou utilisez un autre appareil."
   }
 }

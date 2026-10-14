@@ -171,6 +171,29 @@ test('SaaS multi-locataires hors PSL : sens sûr locataire → page de connexion
   assert.equal(secretMatchesHost({ url: 'https://www.site.com' }, 'login.site.com'), true);
 });
 
+// CONFIG-1 : la règle « domaine parent » ne doit pas traverser un suffixe mutualisé situé sous le
+// domaine de l'entrée (azure.com → *.cloudapp.azure.com, ovh.net → *.vps.ovh.net…) : ces hôtes sont
+// des VM / sites de clients dont le contenu est contrôlé par un tiers.
+test('domaine parent : jamais à travers un suffixe mutualisé (locataire tiers)', () => {
+  const leaks = [
+    ['azure.com', 'evil.westeurope.cloudapp.azure.com'],
+    ['azure.com', 'x.westeurope.inference.ml.azure.com'],
+    ['ovh.net', 'vps-0badc0de.vps.ovh.net'],
+    ['site.com', 'evil.my.site.com'],
+    ['salesforce-sites.com', 'evil.my.salesforce-sites.com'],
+  ];
+  for (const [secretHost, requested] of leaks) {
+    assert.equal(hostsMatch(secretHost, requested), false, `${secretHost} ne doit pas couvrir ${requested}`);
+    assert.equal(secretMatchesHost({ url: `https://${secretHost}` }, requested), false, `${secretHost} (url) ne doit pas couvrir ${requested}`);
+  }
+  // Inchangé : domaine parent hors suffixe mutualisé, et à l'intérieur d'un même locataire
+  assert.equal(hostsMatch('ovh.net', 'mail.ovh.net'), true);
+  assert.equal(hostsMatch('azure.com', 'portal.azure.com'), true);
+  assert.equal(hostsMatch('site.com', 'login.site.com'), true);
+  assert.equal(hostsMatch('contoso.sharepoint.com', 'x.contoso.sharepoint.com'), true);
+  assert.equal(hostsMatch('vm1.westeurope.cloudapp.azure.com', 'app.vm1.westeurope.cloudapp.azure.com'), true);
+});
+
 // Groupe impots : l'entrée « dgfip.finances.gouv.fr » n'était pas un domaine de base (celui-ci est
 // finances.gouv.fr) et ne correspondait donc jamais. Toute entrée doit être un domaine de base.
 test('table d\'équivalence : chaque membre est un domaine de base, chaque groupe a au moins 2 membres', () => {

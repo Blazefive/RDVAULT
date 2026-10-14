@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.2.0",
+  "version": "1.7.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmIhNFdnunN170bnecFaGF1pMyudbJidU1DQ1xyA3YKqhuevGvqptUfAuk8Sr+3fIY6QIzGrYy3KlCqp3QALezrbag7yraxJlX29JbOy6ycxeHYpq5mMQxi1MIZ0Ei7MhhTx4S8hQ1+mjWOB5Yi7Lu3zodFwpd0XvkbiEHRwm+4SSCQ8q1l7L4yYm6EIfEpdtkoYGi/F58AzMI/jbv+sOpKi5O0b5q6CO3rGKzoaSscOT9WGT1wbFdwUIN30TapDuG2M9Qolk7cl0lYn/T3FtRvOq9u1OkvNzDdI4w6aqzX5PV2usGUbFWtoRGQXzqWrvsOOpcJi3m689HpA80kuvIwIDAQAB",
   "description": "__MSG_extDescription__",
   "default_locale": "en",
   "permissions": [
@@ -19,20 +20,33 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://*/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     },
     {
-      "matches": ["https://*/*"],
-      "js": ["passkey-core.js", "passkey-bridge.js"],
+      "matches": [
+        "https://*/*"
+      ],
+      "js": [
+        "passkey-core.js",
+        "passkey-bridge.js"
+      ],
       "run_at": "document_start",
       "all_frames": true
     },
     {
-      "matches": ["https://*/*"],
-      "js": ["passkey-inject.js"],
+      "matches": [
+        "https://*/*"
+      ],
+      "js": [
+        "passkey-inject.js"
+      ],
       "run_at": "document_start",
       "all_frames": true,
       "world": "MAIN"

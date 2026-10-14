@@ -73,7 +73,8 @@
     "dropHere": "拖放到此处",
     "rightClickToAddTag": "右键单击以添加",
     "dragCountOne": "{{count}} 个条目",
-    "dragCountMany": "{{count}} 个条目"
+    "dragCountMany": "{{count}} 个条目",
+    "rowSelected": "已选中"
   },
   "contextMenu": {
     "copyUsername": "复制用户名",
@@ -150,7 +151,8 @@
     "totpDeleteConfirm": "需要确认：请在 {{seconds}} 秒内再次选择“{{action}}”，以永久销毁“{{name}}”的 TOTP 密钥（不可撤销）。",
     "secretDeletedTotpKept": "条目已删除。其 TOTP 密钥已保留：“{{action}}”可连同 TOTP 验证码一起恢复该条目。",
     "secretDeletedTotpKeptOrphan": "条目已永久删除。其 TOTP 密钥已保留：将关联到以相同名称重新创建的条目。",
-    "secretSavedTotpAttached": "机密已保存。此名称下已存在 TOTP 密钥：现已关联到此条目。"
+    "secretSavedTotpAttached": "机密已保存。此名称下已存在 TOTP 密钥：现已关联到此条目。",
+    "secretSavedMerged": "机密已保存。该条目在此期间已在其他地方被修改：仅替换了您更改的字段，其他修改均已保留。"
   },
   "error": {
     "tooManyEntries": "条目过多（最多 500 个）",
@@ -257,7 +259,8 @@
     "listTooDeepPartial": "文件夹嵌套超过 {{max}} 层：仅显示 {{count}} 个条目，列表不完整。",
     "extensionSyncTruncated": "浏览器扩展同步不完整：超出 {{max}} 个上限的 {{count}} 个条目未发送到扩展。",
     "syncServerUnavailable": "无法打开与浏览器扩展的连接（{{code}}）：浏览器自动填充未连接到您的保险库。可能有另一个 RDVAULT 会话或其他程序正在使用该端口；请将其关闭，然后重新启动 RDVAULT。",
-    "secretNameReserved": "“{{name}}”是 RDVAULT 内部存储的保留名称。请选择其他名称。"
+    "secretNameReserved": "“{{name}}”是 RDVAULT 内部存储的保留名称。请选择其他名称。",
+    "secretChangedElsewhere": "条目“{{name}}”在显示后已在其他地方被修改或删除：未保存任何内容。它刚刚已重新读取；请从当前版本重新开始（如有需要，请关闭并重新打开表单）。"
   },
   "settings": {
     "title": "设置",
@@ -276,7 +279,17 @@
     "lockedColumn": "必需列",
     "close": "关闭",
     "selectLanguage": "选择语言",
-    "languageDesc": "选择应用程序的显示语言"
+    "languageDesc": "选择应用程序的显示语言",
+    "security": "安全",
+    "autoLockTitle": "自动锁定",
+    "autoLockDesc": "在 RDVAULT 中无任何操作达到此时长后，会话将关闭，需要重新登录。",
+    "autoLockLabel": "锁定前等待",
+    "autoLockMinute": "1 分钟",
+    "autoLockMinutes": "{{count}} 分钟",
+    "autoLockHour": "1 小时",
+    "autoLockHours": "{{count}} 小时",
+    "autoLockDefault": "默认",
+    "autoLockLockedNote": "Windows 会话锁定期间，无论此设置如何，RDVAULT 会话都会在 3 小时后关闭。"
   },
   "cli": {
     "title": "CLI 访问 (mvault)",
@@ -528,7 +541,8 @@
       "noLinkedPolicy": "没有与此保险库关联的策略",
       "infoTitle": "说明：",
       "infoText": "上面列出的策略授予对 {{path}} 的访问权限。请在“策略”选项卡中管理策略及其 AD 组。",
-      "selectPrompt": "选择一个保险库以管理其策略"
+      "selectPrompt": "选择一个保险库以管理其策略",
+      "deleteNamed": "删除保险库 {{path}}"
     },
     "policy": {
       "available": "可用的策略",
@@ -601,7 +615,8 @@
       "selectPrompt": "选择一个审计设备以查看其日志",
       "selectHint": "点击左侧列表中的设备以显示其审计日志。",
       "enablePrompt": "启用审计设备以开始记录日志",
-      "enableHint": "审计日志会记录在 Vault 中执行的所有操作：谁、何时、执行了什么操作、针对哪个资源。"
+      "enableHint": "审计日志会记录在 Vault 中执行的所有操作：谁、何时、执行了什么操作、针对哪个资源。",
+      "disableNamed": "停用审计设备 {{path}}"
     },
     "tags": {
       "title": "标签管理",
@@ -907,10 +922,12 @@
     "importOverwrite": "覆盖重复项",
     "partialSuccess": "导出完成：已导出 {{count}} 个机密，{{failed}} 个无法读取",
     "importPartial": "导入完成：已导入 {{count}} 个机密，{{failed}} 个失败或已跳过",
-    "contentNote": "文件以明文形式包含条目的全部数据（密码、自定义字段、附件）：请妥善保管。通行密钥和 TOTP 密钥不会被导出。"
+    "contentNote": "文件以明文形式包含条目的全部数据（密码、自定义字段、附件）：请妥善保管。通行密钥和 TOTP 密钥不会被导出。",
+    "importLongValues": "{{count}} 个条目的备注或字段超过 10000 个字符：已完整导入；在编辑器中保存前请先缩短。"
   },
   "clipboard": {
-    "clearNow": "立即清除"
+    "clearNow": "立即清除",
+    "autoClear": "剪贴板将在 {{seconds}} 秒后清除。"
   },
   "window": {
     "minimize": "最小化",
@@ -992,7 +1009,8 @@
     "errMaxUses": "已达到最大使用次数",
     "errExpired": "共享已过期",
     "errReceive": "获取共享时出错",
-    "errUnauthorized": "共享被拒绝：您的 Vault 会话未获授权"
+    "errUnauthorized": "共享被拒绝：您的 Vault 会话未获授权",
+    "errProxyInvalidShareId": "代理返回的共享 ID 格式无效（仅限字母、数字、- 和 _，最多 128 个字符）：未创建任何共享。请联系 RBI 代理管理员。"
   },
   "passwordHealth": {
     "title": "密码健康度",
@@ -1065,5 +1083,24 @@
     "title": "发生意外错误",
     "message": "界面显示已中断。请重新加载以继续；系统将要求您重新登录。",
     "reload": "重新加载界面"
+  },
+  "extensionTab": {
+    "tab": "扩展程序",
+    "title": "RDVAULT 浏览器扩展程序",
+    "intro": "该扩展程序可在 Chrome、Edge 和 Brave 中填写您的凭据并管理您的通行密钥。它随 RDVAULT 一起提供，但 Chrome 不允许自动安装：请按以下步骤加载一次。",
+    "folderLabel": "扩展程序文件夹",
+    "openFolder": "打开文件夹",
+    "copyPath": "复制路径",
+    "copied": "已复制",
+    "stepsTitle": "安装（仅需一次）",
+    "step1": "复制浏览器扩展程序页面的地址，并将其粘贴到地址栏中：",
+    "step2": "开启“开发者模式”。",
+    "step3": "点击“加载已解压的扩展程序”，然后选择上面的文件夹。",
+    "step4": "打开扩展程序（工具栏中的 RDVAULT 图标）：RDVAULT 会请您批准配对，仅需一次。",
+    "update": "每次更新 RDVAULT 后，请在扩展程序页面中点击该扩展程序的“重新加载”。",
+    "idLabel": "扩展程序 ID",
+    "versionLabel": "版本",
+    "unavailable": "在此安装中未找到扩展程序。请重新安装 RDVAULT，或从源代码加载 chrome-extension/vault-autofill-extension 文件夹。",
+    "sharedWarning": "请勿安装在共享会话服务器上（远程桌面、Citrix）。"
   }
 }

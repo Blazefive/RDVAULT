@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT (Vault direkt)"
   },
   "extDescription": {
     "message": "Automatisches Ausfüllen von Formularen mit HashiCorp Vault"
@@ -115,5 +115,20 @@
   },
   "bgErrInternal": {
     "message": "Interner Fehler"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Vault-Zugangsdaten verfügbar: $COUNT$. Pfeil nach unten zum Auswählen, Esc zum Schließen.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "Nicht bei Vault angemeldet: Öffnen Sie das Erweiterungsfenster, um sich anzumelden."
+  },
+  "bgErrVaultUnreachable": {
+    "message": "Vault nicht erreichbar oder Sitzung abgelaufen: Melden Sie sich im Erweiterungsfenster erneut an."
   }
 }

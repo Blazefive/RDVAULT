@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT"
   },
   "extDescription": {
     "message": "التعبئة التلقائية للنماذج ومفاتيح المرور مع RDVAULT (يتطلب تطبيق سطح المكتب)"
@@ -9,7 +9,7 @@
     "message": "جارٍ التحقق..."
   },
   "popupInfoRequiresDesktop": {
-    "message": "تتطلب هذه الإضافة أن يكون تطبيق Vault لسطح المكتب قيد التشغيل ومتصلاً."
+    "message": "تتطلب هذه الإضافة أن يكون تطبيق RDVAULT قيد التشغيل وغير مقفل."
   },
   "popupDesktopUnavailable": {
     "message": "تطبيق سطح المكتب غير متاح"
@@ -43,6 +43,12 @@
   },
   "popupPairingDeniedDetail": {
     "message": "تم رفض اقتران هذه الإضافة في التطبيق. يمكنك إرسال طلب جديد بعد دقيقة."
+  },
+  "popupPairingExpiredTitle": {
+    "message": "انتهت مهلة طلب الإقران: أعد فتح الإضافة لإعادة المحاولة"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "لم يتلقَّ الطلب أي رد في RDVAULT (المهلة: 60 ثانية). أغلق هذه النافذة ثم أعد فتحها لإرسال طلب جديد."
   },
   "popupDisconnectedDetail": {
     "message": "شغّل تطبيق سطح المكتب وسجّل الدخول لاستخدام التعبئة التلقائية."
@@ -194,5 +200,26 @@
   },
   "bgErrClearCredential": {
     "message": "خطأ في حذف بيانات الاعتماد"
+  },
+  "autofillMenuAnnounce": {
+    "message": "بيانات اعتماد RDVAULT المتاحة: $COUNT$. السهم لأسفل للاختيار، وEsc للإغلاق.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "RDVAULT مقفل: افتح قفل التطبيق ثم أعد المحاولة."
+  },
+  "bgErrVaultClosed": {
+    "message": "RDVAULT مغلق أو يتعذر الوصول إليه: افتح التطبيق ثم أعد المحاولة."
+  },
+  "bgErrRateLimited": {
+    "message": "تم إرسال طلبات كثيرة جدًا إلى RDVAULT: أعد المحاولة بعد قليل."
+  },
+  "pkVaultUnavailable": {
+    "message": "RDVAULT مغلق أو مقفل: افتحه وافتح قفله للمتابعة، أو استخدم جهازًا آخر."
   }
 }

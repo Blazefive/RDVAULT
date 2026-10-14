@@ -13,10 +13,23 @@
 // ne re-rend donc plus aucune ligne (avant : 5 000 lignes re-rendues à chaque mouvement).
 // (Une variable CSS posée sur le tableau a été écartée : la modifier recalcule le style de
 // toutes les cellules, plus d'une seconde par mouvement de souris à 5 000 lignes.)
-import React, { memo, useMemo, useRef } from 'react';
+// VIRTUALISATION (au-delà de VIRTUALIZE_THRESHOLD lignes, virtualRows.js) : seules les lignes visibles
+// et une marge sont dans le DOM ; deux lignes « espaceurs » conservent la hauteur totale (barre de
+// défilement inchangée). Avant : 1 200 lignes = 5 à 9 ms de fil principal par image d'animation,
+// mise en page d'un tableau de 5 000 lignes ≈ 65 ms (le confinement CSS ne s'applique pas aux lignes
+// d'un <table>). Sous le seuil, rendu complet strictement inchangé. Restent dans le DOM même hors de
+// la zone visible : la ligne qui a (ou a eu en dernier) le focus — le focus clavier et le retour de
+// focus des menus / modales ne sont jamais perdus — et la ligne en cours de glisser (dragend).
+// Sélection (Maj / Ctrl), glisser-déposer et menus travaillent sur la liste complète
+// (displayedSecretsRef), pas sur le DOM : les lignes non rendues sont sélectionnables par plage.
+import React, { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import LoadingSpinner from '../../LoadingSpinner.jsx';
 import { handleUrlAction } from '../../utils/urlHandler';
 import { entryKey } from '../../hooks/useSelection';
+import {
+  VIRTUALIZE_THRESHOLD, INITIAL_ROWS, DEFAULT_ROW_HEIGHT, FALLBACK_VIEWPORT,
+  computeOffsets, computeRange, renderedIndices, averageHeight, findScrollContainer,
+} from './virtualRows';
 
 const COLUMN_KEYS = ['name', 'username', 'password', 'url', 'notes', 'tags', 'customFields'];
 
@@ -44,7 +57,15 @@ function keyboardContextEvent(el) {
   };
 }
 
-// Déplace le focus vers la ligne focalisable voisine (flèches haut/bas, Début/Fin)
+// Nombre de lignes d'une « page » (Page préc. / Page suiv.) : lignes entièrement visibles sous
+// l'en-tête collant, moins une (la ligne de départ reste visible) ; 10 sans géométrie (élément masqué).
+function rowsPerPage(viewHeight, headerHeight, rowHeight) {
+  if (!(viewHeight > 0) || !(rowHeight > 0)) return 10;
+  return Math.max(1, Math.floor((viewHeight - headerHeight) / rowHeight) - 1);
+}
+
+// Déplace le focus vers la ligne focalisable voisine (flèches haut/bas, Début/Fin, Page préc./suiv.)
+// — tableau NON virtualisé : toutes les lignes sont dans le DOM.
 function focusSiblingRow(row, key) {
   const rows = Array.from(row.closest('tbody')?.querySelectorAll('tr[tabindex="0"]') || []);
   const index = rows.indexOf(row);
@@ -53,17 +74,26 @@ function focusSiblingRow(row, key) {
   else if (key === 'ArrowUp') next = rows[index - 1];
   else if (key === 'Home') next = rows[0];
   else if (key === 'End') next = rows[rows.length - 1];
+  else if (key === 'PageDown' || key === 'PageUp') {
+    const sc = findScrollContainer(row);
+    const viewHeight = sc === window ? window.innerHeight : sc.clientHeight;
+    const head = row.closest('table')?.tHead;
+    const page = rowsPerPage(viewHeight, head ? head.getBoundingClientRect().height : 0, row.getBoundingClientRect().height);
+    next = rows[key === 'PageDown' ? Math.min(rows.length - 1, index + page) : Math.max(0, index - page)];
+  }
   if (next) next.focus();
   return !!next;
 }
 
 // Ligne « dossier » (vue arborescence), mémoïsée
-const FolderRow = memo(function FolderRow({ s, colSpan, isDropTarget, actions, t }) {
+// ariaRowIndex : position dans le tableau complet (tableau virtualisé seulement, sinon absent)
+const FolderRow = memo(function FolderRow({ s, colSpan, isDropTarget, ariaRowIndex, actions, t }) {
   // Clavier : la ligne dossier est focalisable ; Entrée / Espace ouvre le dossier,
   // touche Menu / Maj+F10 ouvre son menu contextuel (événement natif contextmenu).
   return (
     <tr
       className="folder-row"
+      aria-rowindex={ariaRowIndex}
       tabIndex={0}
       aria-label={`${t('editSecret.typeFolder')} ${s.displayName}`}
       onClick={() => actions.setCurrentPath(s.name)}
@@ -72,7 +102,7 @@ const FolderRow = memo(function FolderRow({ s, colSpan, isDropTarget, actions, t
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           actions.setCurrentPath(s.name);
-        } else if (focusSiblingRow(e.currentTarget, e.key)) {
+        } else if (actions.navigateRow(e.currentTarget, e.key)) {
           e.preventDefault();
         }
       }}
@@ -98,7 +128,7 @@ const FolderRow = memo(function FolderRow({ s, colSpan, isDropTarget, actions, t
           ? 'var(--bg-selection, rgba(59, 130, 246, 0.25))'
           : 'var(--bg-surface-hover)',
         outline: isDropTarget ? '2px dashed var(--accent, #3b82f6)' : undefined,
-        transition: 'all 0.15s ease'
+        transition: 'background-color 0.15s ease'
       }}
     >
       <td
@@ -124,15 +154,17 @@ const FolderRow = memo(function FolderRow({ s, colSpan, isDropTarget, actions, t
 // rowKey : clé de sélection / de visibilité de la ligne (entryKey : nom, ou coffre + nom pour un
 // résultat d'un autre coffre en recherche multi-coffres — deux homonymes ne s'allument plus ensemble)
 const SecretRow = memo(function SecretRow({
-  s, rowKey, isSelected, showCheck, passwordVisible, rbiOnly, cols, showEngine, engineLabel, actions, t,
+  s, rowKey, isSelected, showCheck, passwordVisible, rbiOnly, cols, showEngine, engineLabel, ariaRowIndex, actions, t,
 }) {
   // Menu contextuel de la ligne (actions : copier, modifier, restaurer, session sécurisée…)
   const openRowMenu = (e) => actions.handleCellRightClick(e, s, 'name', s.name);
   return (
     <tr
+      aria-rowindex={ariaRowIndex}
       draggable={!s.deleted}
       // Clavier : ligne focalisable ; Espace = sélection (Ctrl/Maj comme à la souris),
-      // Entrée / touche Menu / Maj+F10 = menu contextuel de l'entrée, flèches = ligne voisine.
+      // Entrée / touche Menu / Maj+F10 = menu contextuel de l'entrée, flèches / Début / Fin /
+      // Page préc. / Page suiv. = autre ligne (rendue au besoin si le tableau est virtualisé).
       tabIndex={0}
       onClick={(e) => {
         if (!s.deleted) {
@@ -147,7 +179,7 @@ const SecretRow = memo(function SecretRow({
         } else if (e.key === 'Enter') {
           e.preventDefault();
           openRowMenu(keyboardContextEvent(e.currentTarget));
-        } else if (focusSiblingRow(e.currentTarget, e.key)) {
+        } else if (actions.navigateRow(e.currentTarget, e.key)) {
           e.preventDefault();
         }
       }}
@@ -185,6 +217,9 @@ const SecretRow = memo(function SecretRow({
             ? (<><span style={{ color: 'var(--text-secondary)', fontWeight: 400 }}>{s.name.slice(0, s.name.lastIndexOf('/') + 1)}</span>{s.name.split('/').pop()}</>)
             : s.name)}
           {s.deleted && <span className="deleted-badge">({t('versionHistory.deleted')})</span>}
+          {/* UI-38 : sélection (lot des actions « Déplacer / Copier vers / Migrer ») annoncée aux
+              lecteurs d'écran ; aria-selected n'est pas valide sur la ligne d'un <table> statique */}
+          {isSelected && <span className="sr-only">{`, ${t('table.rowSelected')}`}</span>}
         </td>
       )}
       {showEngine && (
@@ -373,7 +408,27 @@ const ACTION_NAMES = [
   'handleCellRightClick', 'handleFolderRightClick', 'handleTagCellRightClick',
   'handleDragStart', 'handleDragEnd', 'handleDragOver', 'handleDragLeave', 'handleDropOnFolder',
   'isSecretRbiOnly', 'startClipboardTimer', 'getTagColor', 'getTotpKeyName', 'getTotpCode', 'showToast',
+  'navigateRow',
 ];
+
+// Clés React stables (coffre + nom) : une ligne garde son élément DOM quand la liste est filtrée ou
+// rafraîchie (avant : index dans la clé → démontage/remontage de toutes les lignes suivantes).
+// Servent aussi de clés au cache des hauteurs mesurées (tableau virtualisé).
+function computeRowKeys(list) {
+  const usedKeys = new Set();
+  return list.map((s, idx) => {
+    let key = s.isFolder ? `folder:${s.name}` : `${s.engineName || ''}␟${s.name}`;
+    if (usedKeys.has(key)) key = `${key}␟${idx}`;
+    usedKeys.add(key);
+    return key;
+  });
+}
+
+// Index de ligne (0 = première ligne de données) porté par aria-rowindex (1 = ligne d'en-tête)
+const rowIndexOf = (tr) => {
+  const v = tr && tr.getAttribute ? tr.getAttribute('aria-rowindex') : null;
+  return v === null ? -1 : Number(v) - 2;
+};
 
 export default function SecretsTable({
   // Data
@@ -418,20 +473,25 @@ export default function SecretsTable({
   showToast,
   t,
 }) {
-  // Derniers callbacks reçus (souvent recréés à chaque rendu d'App) : les lignes mémoïsées
-  // reçoivent des relais STABLES qui appellent toujours la version la plus récente.
-  const latestRef = useRef(null);
-  latestRef.current = {
-    toggleSecretSelection, setVisiblePasswords, setCurrentPath, setNotesPopup,
-    handleCellRightClick, handleFolderRightClick, handleTagCellRightClick,
-    handleDragStart, handleDragEnd, handleDragOver, handleDragLeave, handleDropOnFolder,
-    isSecretRbiOnly, startClipboardTimer, getTagColor, getTotpKeyName, getTotpCode, showToast,
-  };
-  const actions = useMemo(() => {
-    const relays = {};
-    for (const name of ACTION_NAMES) relays[name] = (...args) => latestRef.current[name]?.(...args);
-    return relays;
-  }, []);
+  // ─── Virtualisation : état et références (hooks appelés avant tout retour anticipé) ───
+  const list = useMemo(() => (Array.isArray(filteredSecrets) ? filteredSecrets : []), [filteredSecrets]);
+  const showEngine = !!(multiVaultSearch && typeof search === 'string' && search.trim());
+  const hasSecrets = !loadingSecrets && ((showEngine ? allVaultSecrets : secrets) || []).length > 0;
+  const virtual = hasSecrets && list.length > VIRTUALIZE_THRESHOLD;
+
+  const rowKeys = useMemo(() => computeRowKeys(list), [list]);
+  const keyIndex = useMemo(() => new Map(rowKeys.map((k, i) => [k, i])), [rowKeys]);
+  const tableRef = useRef(null);
+  const tbodyRef = useRef(null);
+  const scrollerRef = useRef(null);
+  const heightsRef = useRef(new Map()); // clé de ligne → hauteur mesurée (px, fractionnaire)
+  const estimateRef = useRef(null); // hauteur retenue pour une ligne jamais rendue
+  const pendingFocusRef = useRef(null); // clé de la ligne à focaliser dès qu'elle est rendue
+  const measureLoopRef = useRef(0);
+  const [measureVersion, setMeasureVersion] = useState(0);
+  const [range, setRange] = useState({ start: 0, end: INITIAL_ROWS });
+  const [focusKey, setFocusKey] = useState(null); // ligne focalisée en dernier (épinglée)
+  const [dragKey, setDragKey] = useState(null); // ligne source d'un glisser en cours (épinglée)
 
   // Colonnes affichées : objet stable tant que les booléens ne changent pas
   const visible = effectiveVisibleColumns || {};
@@ -440,11 +500,232 @@ export default function SecretsTable({
     name: !!cName, username: !!cUser, password: !!cPass, url: !!cUrl, notes: !!cNotes, tags: !!cTags, customFields: !!cFields,
   }), [cName, cUser, cPass, cUrl, cNotes, cTags, cFields]);
 
+  // Colonnes affichées changées : les hauteurs mesurées ne valent plus (une cellule Tags peut
+  // passer sur deux lignes) ; elles seront remesurées au rendu
+  const layoutSig = `${Object.values(cols).join()}|${showEngine}`;
+  const layoutSigRef = useRef(layoutSig);
+  if (layoutSigRef.current !== layoutSig) {
+    layoutSigRef.current = layoutSig;
+    heightsRef.current = new Map();
+    estimateRef.current = null;
+  }
+  // Cache borné (changements de coffre successifs)
+  if (heightsRef.current.size > 4 * list.length + 5000) heightsRef.current = new Map();
+
+  const offsets = useMemo(
+    () => (virtual ? computeOffsets(rowKeys, heightsRef.current, estimateRef.current || DEFAULT_ROW_HEIGHT) : null),
+    // measureVersion / layoutSig : nouvelles mesures (cache muté) → positions recalculées
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [virtual, rowKeys, measureVersion, layoutSig],
+  );
+
+  // Valeurs lues par les fonctions stables ci-dessous (écouteurs de défilement, navigation clavier)
+  const vRef = useRef(null);
+  vRef.current = { virtual, rowKeys, keyIndex, offsets };
+
+  const virt = useMemo(() => {
+    // Zone visible en coordonnées du tbody (0 = haut de la première ligne de données).
+    // visTop : haut de la zone où une ligne est réellement visible, sous l'en-tête s'il recouvre le
+    // haut du conteneur (en-tête collant), sinon le haut du conteneur. Position RÉELLE de l'en-tête :
+    // dans l'application, le tableau (overflow: hidden) empêche l'en-tête de rester collé.
+    const geometry = () => {
+      const tbody = tbodyRef.current;
+      if (!tbody) return null;
+      let sc = scrollerRef.current;
+      if (!sc || (sc !== window && !sc.contains(tbody))) sc = scrollerRef.current = findScrollContainer(tableRef.current);
+      const tRect = tbody.getBoundingClientRect();
+      let top = 0;
+      let height = window.innerHeight;
+      if (sc !== window) {
+        top = sc.getBoundingClientRect().top + (sc.clientTop || 0);
+        height = sc.clientHeight;
+      }
+      if (!(height > 0)) height = FALLBACK_VIEWPORT;
+      const head = tableRef.current ? tableRef.current.tHead : null;
+      const viewTop = top - tRect.top;
+      const visTop = Math.max(viewTop, head ? head.getBoundingClientRect().bottom - tRect.top : 0);
+      return { sc, viewTop, viewHeight: height, visTop };
+    };
+    const updateRange = () => {
+      const { virtual: on, offsets: offs } = vRef.current;
+      if (!on || !offs) return;
+      const g = geometry();
+      if (!g) return;
+      const next = computeRange(offs, g.viewTop, g.viewHeight);
+      setRange(prev => (prev.start === next.start && prev.end === next.end ? prev : next));
+    };
+    const rowElement = (index) => {
+      const tbody = tbodyRef.current;
+      return tbody ? tbody.querySelector(`tr[aria-rowindex="${index + 2}"]`) : null;
+    };
+    // Fait défiler le conteneur au plus juste pour que la ligne soit entièrement visible
+    const scrollRowIntoView = (index) => {
+      const { offsets: offs } = vRef.current;
+      const g = geometry();
+      if (!g || !offs || index < 0 || index >= offs.length - 1) return;
+      const top = offs[index];
+      const bottom = offs[index + 1];
+      const { visTop } = g;
+      const visBottom = g.viewTop + g.viewHeight;
+      let delta = 0;
+      if (top < visTop) delta = top - visTop;
+      else if (bottom > visBottom) delta = Math.min(bottom - visBottom, top - visTop);
+      if (!delta) return;
+      if (g.sc === window) window.scrollBy(0, delta);
+      else g.sc.scrollTop += delta;
+    };
+    const focusElement = (el) => {
+      try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+    };
+    // Focus vers la ligne d'index donné, rendue au besoin (épinglée puis focalisée après le rendu)
+    const focusRowIndex = (index) => {
+      const { rowKeys: keys } = vRef.current;
+      scrollRowIntoView(index);
+      const el = rowElement(index);
+      if (el) {
+        focusElement(el);
+      } else {
+        pendingFocusRef.current = keys[index];
+        setFocusKey(keys[index]);
+      }
+      updateRange();
+    };
+    // Navigation clavier entre lignes (flèches, Début / Fin, Page préc. / suiv.)
+    const navigateRow = (rowEl, key) => {
+      const { virtual: on, rowKeys: keys } = vRef.current;
+      if (!on) return focusSiblingRow(rowEl, key);
+      const index = rowIndexOf(rowEl);
+      const last = keys.length - 1;
+      if (index < 0) return false;
+      let target;
+      if (key === 'ArrowDown') target = index + 1;
+      else if (key === 'ArrowUp') target = index - 1;
+      else if (key === 'Home') target = 0;
+      else if (key === 'End') target = last;
+      else if (key === 'PageDown' || key === 'PageUp') {
+        const g = geometry();
+        const page = rowsPerPage(g ? g.viewHeight : 0, g ? g.visTop - g.viewTop : 0, rowEl.getBoundingClientRect().height || estimateRef.current || DEFAULT_ROW_HEIGHT);
+        target = key === 'PageDown' ? Math.min(last, index + page) : Math.max(0, index - page);
+      } else return false;
+      if (target < 0 || target > last) return false;
+      focusRowIndex(target);
+      return true;
+    };
+    // Tabulation : l'ordre natif saute les lignes non rendues (ligne focalisée isolée loin de la
+    // fenêtre, ou bord de la marge). Quittant le dernier élément focalisable d'une ligne (Tab) ou la
+    // ligne elle-même (Maj+Tab) vers une voisine absente du DOM : la voisine est rendue et focalisée.
+    const handleTab = (e) => {
+      const { virtual: on, rowKeys: keys } = vRef.current;
+      if (!on || e.key !== 'Tab' || e.altKey || e.ctrlKey || e.metaKey) return;
+      const tr = e.target && e.target.closest ? e.target.closest('tr[aria-rowindex]') : null;
+      const index = rowIndexOf(tr);
+      if (index < 0) return;
+      const target = e.shiftKey ? index - 1 : index + 1;
+      if (target < 0 || target >= keys.length || rowElement(target)) return; // ordre natif correct
+      const stops = [tr, ...Array.from(tr.querySelectorAll('button, a[href], input, select, textarea, [tabindex]'))
+        .filter(el => el.tabIndex >= 0 && !el.disabled)];
+      const pos = stops.indexOf(e.target);
+      if (e.shiftKey ? pos !== 0 : pos !== stops.length - 1) return;
+      e.preventDefault();
+      focusRowIndex(target);
+    };
+    return { updateRange, rowElement, scrollRowIntoView, focusElement, navigateRow, handleTab };
+  }, []);
+
+  // Défilement / redimensionnement du conteneur → fenêtre recalculée (une fois par image)
+  useLayoutEffect(() => {
+    if (!virtual || !tableRef.current) return undefined;
+    const sc = findScrollContainer(tableRef.current);
+    scrollerRef.current = sc;
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; virt.updateRange(); });
+    };
+    sc.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    let ro = null;
+    if (sc !== window && typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(schedule);
+      ro.observe(sc);
+    }
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      sc.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+      if (ro) ro.disconnect();
+    };
+  }, [virtual, hasSecrets, virt]);
+
+  // Après chaque rendu utile : mesure des lignes rendues, fenêtre recalculée, focus en attente.
+  // (Pas à chaque rendu d'App : une modale qui s'ouvre ne déclenche aucune mesure.)
+  useLayoutEffect(() => {
+    if (!virtual || !tbodyRef.current) return;
+    const heights = heightsRef.current;
+    const batch = [];
+    const fresh = [];
+    let changed = false;
+    for (const tr of tbodyRef.current.rows) {
+      const index = rowIndexOf(tr);
+      const key = index >= 0 ? rowKeys[index] : undefined;
+      if (key === undefined) continue;
+      const h = tr.getBoundingClientRect().height;
+      if (!(h > 0)) continue; // non mis en page (élément masqué, jsdom) : estimation conservée
+      // Première ligne exclue de l'estimation : sans bordure haute (tr:first-child), 1 px plus basse
+      if (index > 0) batch.push(h);
+      const prev = heights.get(key);
+      if (prev === undefined) fresh.push([key, h]);
+      else if (Math.abs(prev - h) > 0.5) { heights.set(key, h); changed = true; }
+    }
+    if (estimateRef.current === null && batch.length) {
+      estimateRef.current = averageHeight(batch);
+      changed = true;
+    }
+    const estimate = estimateRef.current || DEFAULT_ROW_HEIGHT;
+    for (const [key, h] of fresh) {
+      heights.set(key, h);
+      if (Math.abs(h - estimate) > 0.5) changed = true; // égale à l'estimation : positions inchangées
+    }
+    // Garde-fou : jamais de boucle de rendus si une hauteur oscillait
+    if (changed && measureLoopRef.current < 4) {
+      measureLoopRef.current += 1;
+      setMeasureVersion(v => v + 1);
+      return;
+    }
+    measureLoopRef.current = 0;
+    virt.updateRange();
+    const pending = pendingFocusRef.current;
+    if (pending !== null) {
+      const index = keyIndex.get(pending);
+      const el = index === undefined ? null : virt.rowElement(index);
+      if (index === undefined) pendingFocusRef.current = null;
+      else if (el) {
+        pendingFocusRef.current = null;
+        virt.scrollRowIntoView(index);
+        virt.focusElement(el);
+      }
+    }
+  }, [virtual, hasSecrets, rowKeys, keyIndex, range.start, range.end, measureVersion, focusKey, dragKey, cols, showEngine, columnWidths, virt]);
+
+  // Derniers callbacks reçus (souvent recréés à chaque rendu d'App) : les lignes mémoïsées
+  // reçoivent des relais STABLES qui appellent toujours la version la plus récente.
+  const latestRef = useRef(null);
+  latestRef.current = {
+    toggleSecretSelection, setVisiblePasswords, setCurrentPath, setNotesPopup,
+    handleCellRightClick, handleFolderRightClick, handleTagCellRightClick,
+    handleDragStart, handleDragEnd, handleDragOver, handleDragLeave, handleDropOnFolder,
+    isSecretRbiOnly, startClipboardTimer, getTagColor, getTotpKeyName, getTotpCode, showToast,
+    navigateRow: virt.navigateRow,
+  };
+  const actions = useMemo(() => {
+    const relays = {};
+    for (const name of ACTION_NAMES) relays[name] = (...args) => latestRef.current[name]?.(...args);
+    return relays;
+  }, []);
+
   if (loadingSecrets) {
     return <LoadingSpinner />;
   }
-
-  const hasSecrets = (multiVaultSearch && search.trim() ? allVaultSecrets : secrets).length > 0;
 
   if (!hasSecrets) {
     if (token && (selectedEngine || (multiVaultSearch && search.trim()))) {
@@ -457,18 +738,13 @@ export default function SecretsTable({
     return null;
   }
 
-  const showEngine = !!(multiVaultSearch && search.trim());
   const folderColSpan = COLUMN_KEYS.filter(key => cols[key]).length + (showEngine ? 1 : 0);
   const multiSelection = (selectedSecrets?.size || 0) > 1;
   displayedSecretsRef.current = filteredSecrets;
 
-  // Clés stables (coffre + nom) : une ligne garde son élément DOM quand la liste est filtrée ou
-  // rafraîchie (avant : index dans la clé → démontage/remontage de toutes les lignes suivantes).
-  const usedKeys = new Set();
-  const rows = filteredSecrets.map((s, idx) => {
-    let key = s.isFolder ? `folder:${s.name}` : `${s.engineName || ''}␟${s.name}`;
-    if (usedKeys.has(key)) key = `${key}␟${idx}`;
-    usedKeys.add(key);
+  const renderRow = (s, idx) => {
+    const key = rowKeys[idx];
+    const ariaRowIndex = virtual ? idx + 2 : undefined;
     if (s.isFolder) {
       return (
         <FolderRow
@@ -476,6 +752,7 @@ export default function SecretsTable({
           s={s}
           colSpan={folderColSpan}
           isDropTarget={!!isDragging && dragOverTarget === `folder:${s.name}`}
+          ariaRowIndex={ariaRowIndex}
           actions={actions}
           t={t}
         />
@@ -496,22 +773,58 @@ export default function SecretsTable({
         cols={cols}
         showEngine={showEngine}
         engineLabel={showEngine ? (s.engineName || selectedEngine?.name) : undefined}
+        ariaRowIndex={ariaRowIndex}
         actions={actions}
         t={t}
       />
     );
-  });
+  };
+
+  // Ligne « espaceur » : tient la place des lignes non rendues (hauteur totale et barre de
+  // défilement conservées). Masquée aux technologies d'assistance (aria-rowcount donne le total).
+  const spacer = (key, height) => (
+    <tr key={key} className="virtual-spacer" aria-hidden="true">
+      <td colSpan={folderColSpan} style={{ height: `${height}px` }} />
+    </tr>
+  );
+
+  let rows;
+  if (!virtual) {
+    rows = list.map((s, idx) => renderRow(s, idx));
+  } else {
+    const n = list.length;
+    const pinned = [focusKey, dragKey].map(k => (k === null ? -1 : (keyIndex.get(k) ?? -1)));
+    rows = [];
+    let cursor = 0;
+    for (const idx of renderedIndices(range.start, range.end, pinned, n)) {
+      if (idx > cursor) rows.push(spacer(cursor === 0 ? 'spacer-top' : `spacer-${cursor}`, offsets[idx] - offsets[cursor]));
+      rows.push(renderRow(list[idx], idx));
+      cursor = idx + 1;
+    }
+    if (cursor < n) rows.push(spacer('spacer-bottom', offsets[n] - offsets[cursor]));
+  }
+
+  // Ligne focalisée / glissée épinglée (rendue même hors de la zone visible) : voir en-tête du fichier
+  const pinFromEvent = (setter) => (e) => {
+    const index = rowIndexOf(e.target && e.target.closest ? e.target.closest('tr[aria-rowindex]') : null);
+    if (index >= 0 && rowKeys[index] !== undefined) setter(rowKeys[index]);
+  };
 
   return (
     <table
+      ref={tableRef}
       className="secrets-table"
+      aria-rowcount={virtual ? list.length + 1 : undefined}
       onContextMenu={handleEmptyAreaRightClick}
       onDoubleClick={() => {
         setTimeout(() => window.getSelection().removeAllRanges(), 0);
       }}
     >
       <thead>
-        <tr onContextMenu={isCurrentEngineRbiOnly ? undefined : handleColumnHeaderRightClick}>
+        <tr
+          aria-rowindex={virtual ? 1 : undefined}
+          onContextMenu={isCurrentEngineRbiOnly ? undefined : handleColumnHeaderRightClick}
+        >
           {cols.name && (
             <th className="resizable-header" style={{ width: columnWidths.name || 'auto' }}>
               {t('table.name')}
@@ -593,7 +906,13 @@ export default function SecretsTable({
           )}
         </tr>
       </thead>
-      <tbody>
+      <tbody
+        ref={tbodyRef}
+        onFocus={virtual ? pinFromEvent(setFocusKey) : undefined}
+        onKeyDown={virtual ? virt.handleTab : undefined}
+        onDragStart={virtual ? pinFromEvent(setDragKey) : undefined}
+        onDragEnd={virtual ? () => setDragKey(null) : undefined}
+      >
         {rows}
       </tbody>
     </table>

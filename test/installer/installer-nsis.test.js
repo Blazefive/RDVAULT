@@ -74,6 +74,7 @@ suite('installeur NSIS : macros réelles de assets/installer.nsh', { skip }, () 
   });
 
   const userDir = () => path.join(sb.appData, 'RDVAULT');
+  const machineDir = () => path.join(sb.programData, 'RDVAULT');
   beforeEach(() => {
     // Profil utilisateur simulé : coffre local, appairage, session CLI
     fs.rmSync(userDir(), { recursive: true, force: true });
@@ -81,7 +82,11 @@ suite('installeur NSIS : macros réelles de assets/installer.nsh', { skip }, () 
     fs.writeFileSync(path.join(userDir(), 'local-vault.db'), 'coffre');
     fs.writeFileSync(path.join(userDir(), 'paired-extensions.json'), PAIRED);
     fs.writeFileSync(path.join(userDir(), 'cli', 'session.json'), '{}');
-    for (const trace of ['trace-init.txt', 'trace-uninstall.txt']) fs.rmSync(path.join(sb.root, trace), { force: true });
+    for (const trace of ['trace-init.txt', 'trace-uninstall.txt', 'trace-icacls.txt']) fs.rmSync(path.join(sb.root, trace), { force: true });
+    // %PROGRAMDATA%\RDVAULT simulé (CONFIG-8) : absent au départ (lien éventuel retiré sans suivre sa cible)
+    const machine = machineDir();
+    try { if (fs.lstatSync(machine).isSymbolicLink()) fs.unlinkSync(machine); } catch { /* absent */ }
+    fs.rmSync(machine, { recursive: true, force: true });
   });
 
   // Dossier d'installation propre à chaque cas (avec espace, comme « Program Files »)
@@ -274,6 +279,83 @@ suite('installeur NSIS : macros réelles de assets/installer.nsh', { skip }, () 
     const defaultNow = fresh(current, []);
     assert.equal(defaultNow, fresh(v170, []).replace('APP_MODE=\r\n', 'APP_MODE=enterprise\r\n'), '« /S »');
     assert.equal(parseCfgFile(defaultNow).APP_MODE, 'enterprise');
+  });
+
+  // ── CONFIG-8 : %PROGRAMDATA%\RDVAULT réservé aux administrateurs ──
+  // Avant : jamais créé ni protégé ; tout utilisateur pouvait le créer (ACL de C:\ProgramData) et y imposer
+  // config.cfg, lu en priorité par tous les utilisateurs du poste. icacls est SIMULÉ par le banc : seule la
+  // ligne de commande est vérifiée, aucun droit réel n'est modifié.
+  const icaclsTrace = () => {
+    const file = path.join(sb.root, 'trace-icacls.txt');
+    return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean) : [];
+  };
+  const expectedIcacls = (dir) => [
+    `icacls.exe "${dir}" /setowner *S-1-5-32-544 /C /Q`,
+    `icacls.exe "${dir}" /reset /C /Q`,
+    `icacls.exe "${dir}" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F *S-1-5-32-545:(OI)(CI)RX /C /Q`,
+  ];
+
+  it('C8 installation par machine : %PROGRAMDATA%\\RDVAULT créé, propriétaire Administrateurs, ACL posée par SID', () => {
+    const dir = newInstDir();
+    assert.equal(bench.install(sb, current, dir, ['/MODE=local']), 0);
+    assert.ok(fs.statSync(machineDir()).isDirectory(), 'dossier créé');
+    assert.deepEqual(icaclsTrace(), expectedIcacls(machineDir()), 'propriétaire, ACE explicites retirées, héritage coupé, SID (indépendants de la langue)');
+    // Mise à jour : ACL réappliquée (un dossier altéré entre-temps est corrigé)
+    assert.equal(bench.install(sb, current, dir), 0);
+    assert.deepEqual(icaclsTrace(), [...expectedIcacls(machineDir()), ...expectedIcacls(machineDir())]);
+  });
+
+  it('C8b dossier déjà présent avec la configuration de l\'administrateur : conservée à l\'octet près, même après désinstallation', () => {
+    fs.mkdirSync(machineDir(), { recursive: true });
+    fs.writeFileSync(path.join(machineDir(), 'config.cfg'), DEPLOY_CFG);
+    const dir = newInstDir();
+    assert.equal(bench.install(sb, current, dir), 0);
+    assert.equal(fs.readFileSync(path.join(machineDir(), 'config.cfg'), 'utf8'), DEPLOY_CFG);
+    assert.deepEqual(icaclsTrace(), expectedIcacls(machineDir()));
+    assert.equal(bench.uninstall(sb, dir), 0);
+    assert.equal(fs.readFileSync(path.join(machineDir(), 'config.cfg'), 'utf8'), DEPLOY_CFG, 'configuration de déploiement non supprimée');
+  });
+
+  it('C8c jonction posée par un utilisateur à la place du dossier : supprimée sans toucher à sa cible, vrai dossier créé', () => {
+    const target = path.join(sb.root, 'cas', `jonction-${++caseNo}`);
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'config.cfg'), 'VAULT_URL=https://vault-corp.attaquant.example\n');
+    fs.symlinkSync(target, machineDir(), 'junction');
+    assert.ok(fs.lstatSync(machineDir()).isSymbolicLink());
+    assert.equal(bench.install(sb, current, newInstDir()), 0);
+    assert.equal(fs.lstatSync(machineDir()).isSymbolicLink(), false, 'jonction retirée');
+    assert.ok(fs.statSync(machineDir()).isDirectory());
+    assert.deepEqual(fs.readdirSync(machineDir()), [], 'la configuration de la cible n\'est plus lue');
+    assert.ok(fs.existsSync(path.join(target, 'config.cfg')), 'cible de la jonction intacte');
+    assert.deepEqual(icaclsTrace(), expectedIcacls(machineDir()), 'ACL posée sur le vrai dossier');
+  });
+
+  it('C8d fichier « RDVAULT » à la place du dossier : remplacé par le dossier protégé', () => {
+    fs.writeFileSync(machineDir(), 'bloque le dossier');
+    assert.equal(bench.install(sb, current, newInstDir()), 0);
+    assert.ok(fs.statSync(machineDir()).isDirectory());
+    assert.deepEqual(icaclsTrace(), expectedIcacls(machineDir()));
+  });
+
+  it('C8e banc : seul le bloc icacls attendu est simulé ; tout autre appel de programme est refusé', () => {
+    const text = fs.readFileSync(SCRIPT, 'utf8');
+    const tmp = path.join(sb.root, 'build', 'refus');
+    fs.mkdirSync(tmp, { recursive: true });
+    const tryScript = (name, content) => {
+      const src = path.join(tmp, `${name}.nsh`);
+      fs.writeFileSync(src, content);
+      return () => bench.prepareScriptUnderTest(src, path.join(tmp, `${name}.out.nsh`));
+    };
+    // Script réel : accepté, sans nsExec ni icacls réel dans la copie compilée
+    tryScript('reel', text)();
+    const compiled = fs.readFileSync(path.join(tmp, 'reel.out.nsh'), 'utf8');
+    assert.doesNotMatch(compiled, /nsExec::|\$SYSDIR/);
+    assert.match(compiled, /trace-icacls\.txt/);
+    assert.match(compiled, /sys\\PROGRAMDATA\\RDVAULT/);
+    // Bloc modifié (autre programme) ou appel hors bloc : refus
+    assert.throws(tryScript('autre-prog', text.replace('$SYSDIR\\icacls.exe', '$SYSDIR\\cmd.exe')), /bloc RDV-BENCH-EXEC inattendu/);
+    assert.throws(tryScript('hors-bloc', `${text}\r\nFunction X\r\n  nsExec::Exec 'whoami'\r\nFunctionEnd\r\n`), /hors bac à sable/);
+    assert.throws(tryScript('double', `${text}\r\n${text.match(/; >>> RDV-BENCH-EXEC-BEGIN[\s\S]*?; <<< RDV-BENCH-EXEC-END/)[0]}\r\n`), /plusieurs blocs/);
   });
 
   it('valeurs « par défaut de l\'application » du script = DEFAULT_CONFIG de configLoader', () => {

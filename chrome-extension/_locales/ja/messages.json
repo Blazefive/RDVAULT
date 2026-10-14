@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT（Vault 直接接続）"
   },
   "extDescription": {
     "message": "HashiCorp Vault によるフォームの自動入力"
@@ -115,5 +115,20 @@
   },
   "bgErrInternal": {
     "message": "内部エラー"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Vault のログイン情報：$COUNT$ 件。下矢印キーで選択、Esc キーで閉じます。",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "Vault にログインしていません。拡張機能のウィンドウを開いてログインしてください。"
+  },
+  "bgErrVaultUnreachable": {
+    "message": "Vault に接続できないか、セッションの有効期限が切れています。拡張機能のウィンドウからもう一度ログインしてください。"
   }
 }

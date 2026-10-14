@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill",
+    "message": "RDVAULT",
     "description": "Extension name (brand, not translated)"
   },
   "extDescription": {
@@ -12,7 +12,7 @@
     "description": "Popup: connection status being checked"
   },
   "popupInfoRequiresDesktop": {
-    "message": "This extension requires the Vault desktop app to be running and connected.",
+    "message": "This extension requires the RDVAULT app to be running and unlocked.",
     "description": "Popup: information box"
   },
   "popupDesktopUnavailable": {
@@ -58,6 +58,12 @@
   "popupPairingDeniedDetail": {
     "message": "Pairing for this extension was denied in the app. You can send a new request in one minute.",
     "description": "Popup: explanation after the pairing was denied"
+  },
+  "popupPairingExpiredTitle": {
+    "message": "Pairing request expired: reopen the extension to try again"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "The request received no answer in RDVAULT (time limit: 60 seconds). Close and reopen this window to send a new request."
   },
   "popupDisconnectedDetail": {
     "message": "Start the desktop app and sign in to use autofill.",
@@ -248,5 +254,31 @@
   "bgErrClearCredential": {
     "message": "Error deleting credential",
     "description": "Error: the last used login could not be forgotten (internal)"
+  },
+  "autofillMenuAnnounce": {
+    "message": "RDVAULT logins available: $COUNT$. Down Arrow to choose, Escape to close.",
+    "description": "Autofill menu, read by screen readers when it opens; $COUNT$ is the number of logins listed",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "RDVAULT is locked: unlock the app, then try again.",
+    "description": "Autofill menu error: the RDVAULT desktop app is locked"
+  },
+  "bgErrVaultClosed": {
+    "message": "RDVAULT is closed or unreachable: open the app, then try again.",
+    "description": "Autofill menu error: the RDVAULT desktop app is closed or does not answer"
+  },
+  "bgErrRateLimited": {
+    "message": "Too many requests sent to RDVAULT: try again in a moment.",
+    "description": "Autofill menu error: the desktop app rate limit was reached (HTTP 429)"
+  },
+  "pkVaultUnavailable": {
+    "message": "RDVAULT is closed or locked: open and unlock it to continue, or use another device.",
+    "description": "Passkey window: RDVAULT cannot store or use a passkey because the app is closed or locked"
   }
 }

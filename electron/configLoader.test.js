@@ -10,7 +10,8 @@ const path = require('node:path');
 const log = require('./logger');
 const {
   sanitizeFingerprints, normalizeFingerprint, sanitizeHttpsUrl, sanitizeTrustedDomains, parseCfgFile,
-  decodeConfigBuffer, readConfigFile, loadConfigFromPaths,
+  decodeConfigBuffer, readConfigFile, loadConfigFromPaths, resolvePinnedFingerprints, PIN_FAIL_CLOSED,
+  parseSddl, adminOnlyAclVerdict, checkAdminOnlyConfigFile, readSddlWithPowerShell,
 } = require('./configLoader');
 
 // Capture des avertissements : configLoader appelle log.warn via l'objet module partagé
@@ -282,4 +283,179 @@ test('readConfigFile : .cfg vide ou fait de commentaires → aucun avertissement
   assert.deepEqual(readConfigFile(cfgFile('config.cfg', Buffer.from('')).path, 'cfg'), {});
   assert.deepEqual(readConfigFile(cfgFile('config.cfg', Buffer.from('# rien\r\n\r\n   # toujours rien\n')).path, 'cfg'), {});
   assert.equal(warnings.length, 0, warnings.join(' | '));
+});
+
+// ── CONFIG-3 : empreinte copiée depuis la commande openssl documentée ──
+// `openssl x509 -in vault.crt -noout -fingerprint -sha256` affiche « sha256 Fingerprint=AB:… » (OpenSSL 3)
+// ou « SHA256 Fingerprint=AB:… » (OpenSSL 1.1). Avant : entrée rejetée, TRUSTED_CERT_FINGERPRINTS vide,
+// épinglage DÉSACTIVÉ en silence (boîtier d'inspection TLS / CA d'entreprise acceptés sur VAULT_URL).
+
+const OPENSSL_DIGEST = nodeCrypto.createHash('sha256').update('certificat de test').digest('hex');
+const OPENSSL_COLONS = OPENSSL_DIGEST.toUpperCase().match(/.{2}/g).join(':');
+
+test('normalizeFingerprint : sortie openssl 3 et 1.1 (« sha256 Fingerprint= », « SHA256 Fingerprint= ») acceptée', () => {
+  assert.equal(normalizeFingerprint(`sha256 Fingerprint=${OPENSSL_COLONS}`), OPENSSL_DIGEST);
+  assert.equal(normalizeFingerprint(`SHA256 Fingerprint=${OPENSSL_COLONS}`), OPENSSL_DIGEST);
+  assert.equal(normalizeFingerprint(`  SHA256 Fingerprint = ${OPENSSL_COLONS} `), OPENSSL_DIGEST);
+  assert.equal(normalizeFingerprint(`SHA-256 Fingerprint=${OPENSSL_COLONS}`), OPENSSL_DIGEST);
+  // Une empreinte SHA-1 reste refusée, préfixe ou non
+  assert.equal(normalizeFingerprint(`SHA1 Fingerprint=${'AB:'.repeat(19)}AB`), null);
+});
+
+test('loadConfigFromPaths : TRUSTED_CERT_FINGERPRINTS = ligne openssl → épinglage actif sur cette empreinte', () => {
+  const entry = cfgFile('config.cfg', Buffer.from(`VAULT_URL=https://vault.corp.example:8200\r\nTRUSTED_CERT_FINGERPRINTS=sha256 Fingerprint=${OPENSSL_COLONS}\r\n`));
+  const cfg = loadConfigFromPaths([entry, DEFAULT_JSON]);
+  assert.equal(cfg.TRUSTED_CERT_FINGERPRINTS, OPENSSL_DIGEST);
+  assert.equal(cfg.PINNING_INVALID, undefined);
+  assert.equal(warnings.length, 0, warnings.join(' | '));
+});
+
+test('loadConfigFromPaths : TRUSTED_CERT_FINGERPRINTS renseigné sans aucune entrée valide → refus (sentinelle), jamais désactivé', () => {
+  const errors = [];
+  const originalError = log.error;
+  log.error = (...args) => { errors.push(args.map(String).join(' ')); };
+  try {
+    const entry = cfgFile('config.cfg', Buffer.from('VAULT_URL=https://vault.corp.example:8200\nTRUSTED_CERT_FINGERPRINTS=empreinte-mal-copiee,zz\n'));
+    const cfg = loadConfigFromPaths([entry, DEFAULT_JSON]);
+    assert.equal(cfg.TRUSTED_CERT_FINGERPRINTS, PIN_FAIL_CLOSED, 'épinglage maintenu (avant : chaîne vide = épinglage désactivé)');
+    assert.equal(cfg.PINNING_INVALID, true);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /REFUSÉES/);
+    assert.doesNotMatch(errors.join(' ') + warnings.join(' '), /empreinte-mal-copiee|vault\.corp/, 'aucune valeur journalisée');
+    // La sentinelle ne correspond à aucun certificat réel (main.js refuse alors l'hôte de VAULT_URL)
+    const { fingerprintMatches } = require('./certPinning');
+    assert.equal(fingerprintMatches({ data: nodeCrypto.randomBytes(64).toString('base64') }, cfg.TRUSTED_CERT_FINGERPRINTS.split(',')), false);
+  } finally {
+    log.error = originalError;
+  }
+});
+
+test('resolvePinnedFingerprints : vide → pas d\'épinglage ; une entrée valide parmi d\'autres → épinglage sur la valide', () => {
+  assert.deepEqual(resolvePinnedFingerprints(''), { fingerprints: '', pinningInvalid: false });
+  assert.deepEqual(resolvePinnedFingerprints(' , '), { fingerprints: '', pinningInvalid: false });
+  assert.deepEqual(resolvePinnedFingerprints(`${HEX_A},faute`), { fingerprints: HEX_A, pinningInvalid: false });
+});
+
+// ── CONFIG-8 : %PROGRAMDATA%\RDVAULT modifiable par un utilisateur standard ──
+// Descripteurs SDDL tels que les renvoie (Get-Acl).Sddl : identiques quelle que soit la langue de Windows
+// (icacls afficherait « BUILTIN\Utilisateurs » en français, « BUILTIN\Users » en anglais, « VORDEFINIERT\Benutzer »
+// en allemand… et jamais le propriétaire).
+const USER_SID = 'S-1-5-21-2121457121-1760029516-3411856435-1001';
+const SDDL = {
+  // C:\ProgramData (relevé sur un poste) : Utilisateurs peuvent créer fichiers et dossiers (DC, LC)
+  programData: 'O:SYG:SYD:PAI(A;OICIIO;GA;;;CO)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;CI;DCLCRPCR;;;BU)',
+  // Dossier créé par l'installeur : propriétaire Administrateurs, héritage coupé, Utilisateurs en lecture
+  protectedDir: 'O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)',
+  protectedFile: 'O:BAG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)',
+  fileBySystem: 'O:SYG:SYD:AI(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;BU)',
+  // Dossier créé par « mkdir C:\ProgramData\RDVAULT » d'un utilisateur standard (ACL héritée de ProgramData)
+  userCreatedDir: `O:${USER_SID}G:${USER_SID}D:AI(A;OICIIOID;GA;;;CO)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1200a9;;;BU)(A;CIID;DCLCRPCR;;;BU)`,
+  // Dossier créé par un administrateur SANS l'ACL de l'installeur : hérite « Utilisateurs : ajout de fichier »
+  adminDirInherited: 'O:BAG:SYD:AI(A;OICIIOID;GA;;;CO)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;0x1200a9;;;BU)(A;CIID;DCLCRPCR;;;BU)',
+  // Fichier de l'attaquant : propriétaire utilisateur, ACL « maquillée » en administrateurs seuls
+  attackerOwnedFile: `O:${USER_SID}G:${USER_SID}D:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;BU)`,
+  everyoneModify: 'O:BAG:SYD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1301bf;;;WD)',
+  authUsersWrite: 'O:BAG:SYD:PAI(A;;FA;;;BA)(A;;FRFW;;;AU)',
+  namedUserFull: `O:BAG:SYD:PAI(A;;FA;;;BA)(A;;FA;;;${USER_SID})`,
+  usersGenericWrite: 'O:BAG:SYD:PAI(A;;FA;;;BA)(A;;GW;;;S-1-5-32-545)',
+  usersWriteDac: 'O:BAG:SYD:PAI(A;;FA;;;BA)(A;;RCWD;;;BU)',
+  nullDacl: 'O:BAG:SYD:NO_ACCESS_CONTROL',
+  // ACE d'héritage seul (IO) et ACE de refus : sans effet sur l'objet lui-même
+  inheritOnlyUsersWrite: 'O:BAG:SYD:PAI(A;OICI;FA;;;BA)(A;OICIIO;GW;;;BU)(D;;FA;;;WD)',
+  // Domaine : Admins du domaine et TrustedInstaller sont des administrateurs
+  domainAdmins: 'O:S-1-5-21-1-2-3-512G:SYD:PAI(A;;FA;;;S-1-5-21-1-2-3-512)(A;;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;;FA;;;DA)',
+  // ACE conditionnelle (parenthèses imbriquées) puis SACL
+  conditional: 'O:BAG:SYD:PAI(A;;FA;;;BA)(XA;;FR;;;AU;(@User.dept == "it"))S:AI(AU;SA;FA;;;WD)',
+};
+
+test('adminOnlyAclVerdict : dossier et fichier posés par l\'installeur (ou SYSTEM, ou domaine) acceptés', () => {
+  for (const name of ['protectedDir', 'protectedFile', 'fileBySystem', 'inheritOnlyUsersWrite', 'domainAdmins', 'conditional']) {
+    assert.deepEqual(adminOnlyAclVerdict(SDDL[name]), { ok: true }, name);
+  }
+});
+
+test('adminOnlyAclVerdict : écriture possible par un non-administrateur, ou propriétaire non administrateur → refus', () => {
+  const cases = {
+    programData: /S-1-5-32-545/,
+    userCreatedDir: /propriétaire non administrateur \(S-1-5-21-.*-1001\)/,
+    adminDirInherited: /écriture accordée à un non-administrateur \(S-1-5-32-545\)/,
+    attackerOwnedFile: /propriétaire non administrateur/,
+    everyoneModify: /S-1-1-0/,
+    authUsersWrite: /S-1-5-11/,
+    namedUserFull: /S-1-5-21-.*-1001/,
+    usersGenericWrite: /S-1-5-32-545/,
+    usersWriteDac: /S-1-5-32-545/,
+    nullDacl: /DACL nulle/,
+  };
+  for (const [name, reason] of Object.entries(cases)) {
+    const verdict = adminOnlyAclVerdict(SDDL[name]);
+    assert.equal(verdict.ok, false, name);
+    assert.match(verdict.reason, reason, name);
+  }
+  for (const junk of ['', 'pas un sddl', 'O:BAD:(A;;FA;;;BA', 'O:BAD:(A;;ZZ;;;BA)']) {
+    assert.equal(adminOnlyAclVerdict(junk).ok, false, `SDDL illisible ou droits inconnus refusés : ${junk}`);
+  }
+});
+
+test('parseSddl : propriétaire, drapeaux d\'héritage, masques hex et alias traduits', () => {
+  const parsed = parseSddl(SDDL.programData);
+  assert.equal(parsed.owner, 'S-1-5-18');
+  assert.equal(parsed.aces.length, 5);
+  assert.deepEqual(parsed.aces[0], { type: 'A', flags: ['OI', 'CI', 'IO'], mask: 0x10000000, sid: 'S-1-3-0' });
+  assert.deepEqual(parsed.aces[3], { type: 'A', flags: ['OI', 'CI'], mask: 0x1200a9, sid: 'S-1-5-32-545' });
+  assert.equal(parsed.aces[4].mask, 0x2 | 0x4 | 0x10 | 0x100, 'DCLCRPCR = WD,AD,WEA,WA d\'icacls');
+});
+
+test('checkAdminOnlyConfigFile : lit le dossier PUIS le fichier, refuse lien/jonction et ACL illisible', () => {
+  const file = path.join('C:\\ProgramData', 'RDVAULT', 'config.cfg');
+  const notLink = { isSymbolicLink: () => false };
+  let asked = null;
+  const ok = checkAdminOnlyConfigFile(file, { lstat: () => notLink, readSddl: (paths) => { asked = paths; return [SDDL.protectedDir, SDDL.protectedFile]; } });
+  assert.deepEqual(ok, { ok: true });
+  assert.deepEqual(asked, [path.dirname(file), file]);
+  const badDir = checkAdminOnlyConfigFile(file, { lstat: () => notLink, readSddl: () => [SDDL.adminDirInherited, SDDL.protectedFile] });
+  assert.equal(badDir.ok, false);
+  assert.match(badDir.reason, /^dossier : /);
+  const badFile = checkAdminOnlyConfigFile(file, { lstat: () => notLink, readSddl: () => [SDDL.protectedDir, SDDL.attackerOwnedFile] });
+  assert.match(badFile.reason, /^fichier : propriétaire/);
+  const link = checkAdminOnlyConfigFile(file, { lstat: (p) => ({ isSymbolicLink: () => p === path.dirname(file) }), readSddl: () => { throw new Error('ne doit pas être lu'); } });
+  assert.match(link.reason, /jonction/);
+  const unreadable = checkAdminOnlyConfigFile(file, { lstat: () => notLink, readSddl: () => { throw new Error('powershell.exe bloqué\nligne 2'); } });
+  assert.deepEqual(unreadable, { ok: false, reason: 'ACL illisibles (powershell.exe bloqué)' });
+});
+
+test('loadConfigFromPaths : config %PROGRAMDATA% modifiable par un utilisateur → IGNORÉE, fichier suivant (admin) utilisé', () => {
+  const attacker = { ...cfgFile('config.cfg', Buffer.from('VAULT_URL=https://vault-corp.attaquant.example\nTRUSTED_CERT_FINGERPRINTS=\nTRUSTED_DOMAINS=vault-corp.attaquant.example\n')), adminOnly: true };
+  const admin = cfgFile('config.cfg', Buffer.from(`VAULT_URL=https://vault.corp.example:8200\nTRUSTED_CERT_FINGERPRINTS=${HEX_A}\n`));
+  const checked = [];
+  const cfg = loadConfigFromPaths([attacker, admin, DEFAULT_JSON], {
+    checkAdminOnly: (p) => { checked.push(p); return { ok: false, reason: `dossier : propriétaire non administrateur (${USER_SID})` }; },
+  });
+  assert.deepEqual(checked, [attacker.path]);
+  assert.equal(cfg.VAULT_URL, 'https://vault.corp.example:8200', 'avant : VAULT_URL de l\'attaquant');
+  assert.equal(cfg.TRUSTED_CERT_FINGERPRINTS, HEX_A);
+  assert.ok(warnings.some(w => w.includes(attacker.path) && /IGNORÉ/.test(w) && /S-1-5-32-544/.test(w)), warnings.join(' | '));
+  assert.doesNotMatch(warnings.join(' '), /attaquant\.example/, 'aucune valeur de configuration journalisée');
+});
+
+test('loadConfigFromPaths : config %PROGRAMDATA% réservée aux administrateurs → lue en priorité', () => {
+  const machine = { ...cfgFile('config.cfg', Buffer.from('APP_MODE=local\nLANG=ja\n')), adminOnly: true };
+  const installed = cfgFile('config.cfg', Buffer.from('APP_MODE=enterprise\nLANG=en\n'));
+  const cfg = loadConfigFromPaths([machine, installed], { checkAdminOnly: () => ({ ok: true }) });
+  assert.deepEqual([cfg.APP_MODE, cfg.LANG], ['local', 'ja']);
+  // Les autres emplacements (dossier d'installation, userData) ne sont jamais soumis au contrôle
+  let calls = 0;
+  loadConfigFromPaths([installed], { checkAdminOnly: () => { calls++; return { ok: false }; } });
+  assert.equal(calls, 0);
+});
+
+test('checkAdminOnlyConfigFile (Windows, lecture réelle via Get-Acl) : fichier temporaire de l\'utilisateur refusé', { skip: process.platform !== 'win32' }, () => {
+  // Dossier temporaire de l'utilisateur courant : propriétaire = l'utilisateur, jamais un administrateur
+  const entry = cfgFile('config.cfg', Buffer.from('LANG=fr\n'));
+  const sddls = readSddlWithPowerShell([path.dirname(entry.path), entry.path]);
+  assert.equal(sddls.length, 2);
+  for (const s of sddls) assert.ok(parseSddl(s), `SDDL exploitable : ${s}`);
+  const verdict = checkAdminOnlyConfigFile(entry.path);
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /non administrateur|non-administrateur/);
 });

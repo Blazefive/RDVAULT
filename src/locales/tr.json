@@ -73,7 +73,8 @@
     "dropHere": "Buraya bırakın",
     "rightClickToAddTag": "Eklemek için sağ tıklayın",
     "dragCountOne": "{{count}} kayıt",
-    "dragCountMany": "{{count}} kayıt"
+    "dragCountMany": "{{count}} kayıt",
+    "rowSelected": "seçili"
   },
   "contextMenu": {
     "copyUsername": "Kullanıcı adını kopyala",
@@ -150,7 +151,8 @@
     "totpDeleteConfirm": "Onay gerekli: \"{{name}}\" kaydının TOTP anahtarını kalıcı olarak yok etmek için {{seconds}} sn içinde \"{{action}}\" seçeneğini yeniden seçin (geri alınamaz).",
     "secretDeletedTotpKept": "Kayıt silindi. TOTP anahtarı korundu: \"{{action}}\" kaydı TOTP koduyla birlikte geri getirir.",
     "secretDeletedTotpKeptOrphan": "Kayıt kalıcı olarak silindi. TOTP anahtarı korundu: aynı adla yeniden oluşturulan bir kayda bağlanacak.",
-    "secretSavedTotpAttached": "Sır kaydedildi. Bu adla zaten bir TOTP anahtarı vardı: artık bu kayda bağlı."
+    "secretSavedTotpAttached": "Sır kaydedildi. Bu adla zaten bir TOTP anahtarı vardı: artık bu kayda bağlı.",
+    "secretSavedMerged": "Gizli bilgi kaydedildi. Girdi bu arada başka bir yerde değiştirilmişti: yalnızca sizin değiştirdiğiniz alanlar değiştirildi, diğer değişiklikler korundu."
   },
   "error": {
     "tooManyEntries": "Çok fazla giriş (maks. 500)",
@@ -257,7 +259,8 @@
     "listTooDeepPartial": "Klasörler {{max}} düzeyden daha derin iç içe: yalnızca {{count}} kayıt gösteriliyor, liste eksik.",
     "extensionSyncTruncated": "Tarayıcı uzantısı eşitlemesi eksik: {{max}} sınırını aşan {{count}} kayıt uzantıya gönderilmedi.",
     "syncServerUnavailable": "Tarayıcı uzantısıyla bağlantı açılamadı ({{code}}): tarayıcıdaki otomatik doldurma kasanıza bağlı değil. Bağlantı noktasını büyük olasılıkla başka bir RDVAULT oturumu veya başka bir program kullanıyor; onu kapatın, ardından RDVAULT'u yeniden başlatın.",
-    "secretNameReserved": "\"{{name}}\" RDVAULT'un dahili depolaması için ayrılmıştır. Başka bir ad seçin."
+    "secretNameReserved": "\"{{name}}\" RDVAULT'un dahili depolaması için ayrılmıştır. Başka bir ad seçin.",
+    "secretChangedElsewhere": "\"{{name}}\" girdisi görüntülendiğinden beri başka bir yerde değiştirildi veya silindi: hiçbir şey kaydedilmedi. Az önce yeniden okundu; güncel sürümden yeniden başlayın (gerekirse formu kapatıp yeniden açın)."
   },
   "settings": {
     "title": "Ayarlar",
@@ -276,7 +279,17 @@
     "lockedColumn": "Zorunlu sütun",
     "close": "Kapat",
     "selectLanguage": "Bir dil seçin",
-    "languageDesc": "Uygulama görüntüleme dilini seçin"
+    "languageDesc": "Uygulama görüntüleme dilini seçin",
+    "security": "Güvenlik",
+    "autoLockTitle": "Otomatik kilit",
+    "autoLockDesc": "RDVAULT'ta bu süre boyunca hiçbir etkinlik olmazsa oturum kapatılır ve yeniden oturum açmanız gerekir.",
+    "autoLockLabel": "Şu süreden sonra kilitle",
+    "autoLockMinute": "1 dakika",
+    "autoLockMinutes": "{{count}} dakika",
+    "autoLockHour": "1 saat",
+    "autoLockHours": "{{count}} saat",
+    "autoLockDefault": "varsayılan",
+    "autoLockLockedNote": "Windows oturumu kilitliyken, bu ayardan bağımsız olarak RDVAULT oturumu 3 saat sonra kapatılır."
   },
   "cli": {
     "title": "CLI Erişimi (mvault)",
@@ -528,7 +541,8 @@
       "noLinkedPolicy": "Bu kasaya bağlı politika yok",
       "infoTitle": "Bilgi:",
       "infoText": "Yukarıda listelenen politikalar {{path}} erişimi verir. Politikaları ve AD gruplarını \"Politikalar\" sekmesinden yönetin.",
-      "selectPrompt": "Politikalarını yönetmek için bir kasa seçin"
+      "selectPrompt": "Politikalarını yönetmek için bir kasa seçin",
+      "deleteNamed": "{{path}} kasasını sil"
     },
     "policy": {
       "available": "Kullanılabilir politikalar",
@@ -601,7 +615,8 @@
       "selectPrompt": "Günlüklerini görmek için bir denetim cihazı seçin",
       "selectHint": "Denetim günlüklerini görüntülemek için soldaki listeden bir cihaza tıklayın.",
       "enablePrompt": "Günlük kaydetmeye başlamak için bir denetim cihazı etkinleştirin",
-      "enableHint": "Denetim günlükleri Vault'ta yapılan tüm işlemleri kaydeder: kim, ne zaman, hangi eylem, hangi kaynakta."
+      "enableHint": "Denetim günlükleri Vault'ta yapılan tüm işlemleri kaydeder: kim, ne zaman, hangi eylem, hangi kaynakta.",
+      "disableNamed": "{{path}} denetim cihazını devre dışı bırak"
     },
     "tags": {
       "title": "Etiket yönetimi",
@@ -907,10 +922,12 @@
     "importOverwrite": "yinelenenlerin üzerine yaz",
     "partialSuccess": "Dışa aktarma tamamlandı: {{count}} sır dışa aktarıldı, {{failed}} okunamadı",
     "importPartial": "İçe aktarma tamamlandı: {{count}} sır içe aktarıldı, {{failed}} başarısız veya atlandı",
-    "contentNote": "Dosya, kayıtların tüm verilerini düz metin olarak içerir (şifreler, özel alanlar, ekler): güvenli bir yerde saklayın. Passkey'ler ve TOTP anahtarları dışa aktarılmaz."
+    "contentNote": "Dosya, kayıtların tüm verilerini düz metin olarak içerir (şifreler, özel alanlar, ekler): güvenli bir yerde saklayın. Passkey'ler ve TOTP anahtarları dışa aktarılmaz.",
+    "importLongValues": "{{count}} kayıt 10000 karakterden uzun not veya alan içeriyor: tamamı içe aktarıldı; düzenleyiciden kaydetmeden önce kısaltın."
   },
   "clipboard": {
-    "clearNow": "Şimdi temizle"
+    "clearNow": "Şimdi temizle",
+    "autoClear": "Pano {{seconds}} saniye içinde temizlenecek."
   },
   "window": {
     "minimize": "Küçült",
@@ -992,7 +1009,8 @@
     "errMaxUses": "En fazla kullanım sayısına ulaşıldı",
     "errExpired": "Paylaşımın süresi dolmuş",
     "errReceive": "Paylaşım alma hatası",
-    "errUnauthorized": "Paylaşım reddedildi: Vault oturumunuz yetkili değil"
+    "errUnauthorized": "Paylaşım reddedildi: Vault oturumunuz yetkili değil",
+    "errProxyInvalidShareId": "Proxy geçersiz biçimde bir paylaşım kimliği döndürdü (yalnızca harf, rakam, - ve _, en fazla 128 karakter): paylaşım oluşturulmadı. RBI proxy yöneticisine başvurun."
   },
   "passwordHealth": {
     "title": "Şifre sağlığı",
@@ -1065,5 +1083,24 @@
     "title": "Beklenmeyen bir hata oluştu",
     "message": "Arayüzün görüntülenmesi kesildi. Devam etmek için yeniden yükleyin; tekrar oturum açmanız istenecek.",
     "reload": "Arayüzü yeniden yükle"
+  },
+  "extensionTab": {
+    "tab": "Uzantı",
+    "title": "RDVAULT tarayıcı uzantısı",
+    "intro": "Uzantı, Chrome, Edge ve Brave'de kimlik bilgilerinizi doldurur ve geçiş anahtarlarınızı yönetir. RDVAULT ile birlikte gelir, ancak Chrome otomatik kuruluma izin vermez: aşağıdaki adımları izleyerek bir kez yükleyin.",
+    "folderLabel": "Uzantı klasörü",
+    "openFolder": "Klasörü aç",
+    "copyPath": "Yolu kopyala",
+    "copied": "Kopyalandı",
+    "stepsTitle": "Kurulum (bir kez)",
+    "step1": "Tarayıcınızın uzantılar sayfasının adresini kopyalayıp adres çubuğuna yapıştırın:",
+    "step2": "\"Geliştirici modu\"nu açın.",
+    "step3": "\"Paketlenmemiş öğe yükle\"ye tıklayın ve yukarıdaki klasörü seçin.",
+    "step4": "Uzantıyı açın (araç çubuğundaki RDVAULT simgesi): RDVAULT eşleştirmeyi onaylamanızı bir kez isteyecektir.",
+    "update": "Her RDVAULT güncellemesinden sonra, uzantılar sayfasında uzantının \"Yeniden yükle\" düğmesine tıklayın.",
+    "idLabel": "Uzantı kimliği",
+    "versionLabel": "Sürüm",
+    "unavailable": "Uzantı bu kurulumda bulunamadı. RDVAULT'u yeniden kurun veya kaynak koddaki chrome-extension/vault-autofill-extension klasörünü yükleyin.",
+    "sharedWarning": "Paylaşılan oturum sunucusuna kurmayın (Uzak Masaüstü, Citrix)."
   }
 }

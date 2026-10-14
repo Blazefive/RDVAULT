@@ -231,7 +231,9 @@ describe('SECRETS-11 : « Nouvelle entrée » et « Dupliquer » n\'écrasent pa
     vault.writeRaw('Alpha', 'github', { Username: 'u', Password: 'v2-extension', EntryType: 'secret' });
     await run(() => result.current.fetchSecrets(engine));
     await run(() => result.current.handleEditSecretSave(formEntry('github', 'v3')));
-    expect(lastToast(toasts)).toEqual(['success', 'toast.secretSaved']);
+    // Modification (et non « existe déjà ») ; entrée changée ailleurs depuis l'ouverture : le champ changé
+    // dans la fiche est appliqué à la version courante, fusion signalée (services/staleWriteGuard.js)
+    expect(lastToast(toasts)).toEqual(['success', 'toast.secretSavedMerged']);
     expect(vault.latest('Alpha', 'github').data.Password).toBe('v3');
   });
 

@@ -585,3 +585,107 @@ describe('import : entrée existante illisible', () => {
     expect(current('kv', 'jete').Password).toBe('nouveau');
   });
 });
+
+// ========================================
+// IMPORT-2 / IMPORT-4 / IMPORT-5 : fidélité de l'import (sauvegarde restaurée à l'identique)
+// ========================================
+const longToast = (count) => fmt(fr.export.importLongValues, { count });
+
+describe('IMPORT-2 : les noms ne sont plus rognés', () => {
+  // Avant : « Banque » et « Banque␠ » (permis par l'éditeur et le coffre) fusionnaient en « Banque » :
+  // une entrée disparaissait (mode « ignorer ») ou écrasait l'autre (mode « écraser »), toast « succès ».
+  test.each([
+    ['csv', 'skip'], ['csv', 'overwrite'], ['xml', 'skip'], ['xml', 'overwrite']
+  ])('%s, mode %s : « Banque » et « Banque␠ » restent deux entrées distinctes', async (format, mode) => {
+    const S = addEngine('source');
+    const T = addEngine('cible');
+    seed('source', 'Banque', { Username: 'jean', Password: 'pw-principal' });
+    seed('source', 'Banque ', { Username: 'jean.pro', Password: 'pw-pro' });
+    seed('source', ' Club', { Username: 'c', Password: 'pw-club' });
+    const exp = await exportVia(S, [S, T], format);
+    const toasts = await importVia(T, [S, T], 'export.' + format, exp.content, mode);
+    expect(toasts[0]).toEqual(['success', fmt(fr.export.importSuccess, { count: 3 })]);
+    expect(Array.from(mockKv.engines.get('cible').keys.keys()).sort()).toEqual([' Club', 'Banque', 'Banque ']);
+    expect(current('cible', 'Banque')).toMatchObject({ Username: 'jean', Password: 'pw-principal' });
+    expect(current('cible', 'Banque ')).toMatchObject({ Username: 'jean.pro', Password: 'pw-pro' });
+    expect(current('cible', ' Club')).toMatchObject({ Password: 'pw-club' });
+  });
+
+  test('XML indenté par un outil tiers : les retours à la ligne autour du nom restent ignorés', async () => {
+    const T = addEngine('cible');
+    const xml = '<?xml version="1.0"?>\n<vault>\n  <secret>\n    <name>\n      Banque\n    </name>\n    <password>p</password>\n  </secret>\n</vault>';
+    const toasts = await importVia(T, [T], 'tiers.xml', xml);
+    expect(toasts[0]).toEqual(['success', fmt(fr.export.importSuccess, { count: 1 })]);
+    expect(Array.from(mockKv.engines.get('cible').keys.keys())).toEqual(['Banque']);
+  });
+
+  test('un nom fait uniquement d\'espaces est refusé et compté (CSV : ligne vide ignorée comme avant)', async () => {
+    const T = addEngine('cible');
+    const xml = '<vault><secret><name>   </name><password>p</password></secret><secret><name>ok</name><password>p</password></secret></vault>';
+    const toasts = await importVia(T, [T], 'f.xml', xml);
+    expect(toasts[0]).toEqual(['warning', fmt(fr.export.importPartial, { count: 1, failed: 1 })]);
+    expect(Array.from(mockKv.engines.get('cible').keys.keys())).toEqual(['ok']);
+  });
+});
+
+describe('IMPORT-4 : identifiant (phrase de passe SSH) conservé à l\'octet près', () => {
+  const SSH_SPACES = { ...SSH, Username: '  ma phrase secrète ', URL: 'ssh-ed25519 AAAAC3Nza user@pc ' };
+
+  test.each(['csv', 'xml'])('aller-retour %s : phrase de passe et clé publique non rognées', async (format) => {
+    const S = addEngine('source');
+    const T = addEngine('cible');
+    seed('source', 'srv', SSH_SPACES);
+    const exp = await exportVia(S, [S, T], format);
+    const toasts = await importVia(T, [S, T], 'export.' + format, exp.content);
+    expect(toasts[0]).toEqual(['success', fmt(fr.export.importSuccess, { count: 1 })]);
+    expect(current('cible', 'srv').Username).toBe('  ma phrase secrète ');
+    expect(current('cible', 'srv').URL).toBe('ssh-ed25519 AAAAC3Nza user@pc ');
+  });
+
+  test('ancien export RDVAULT (7 colonnes) : identifiant non rogné non plus', async () => {
+    const T = addEngine('cible');
+    const csv = 'Name,Username,Password,URL,Notes,Tags,Port\n"srv","  phrase ","p","","","",""';
+    await importVia(T, [T], 'ancien.csv', csv);
+    expect(current('cible', 'srv').Username).toBe('  phrase ');
+  });
+
+  test('fichier tiers (autre en-tête) : identifiant, URL et tags toujours nettoyés de leurs espaces', async () => {
+    const T = addEngine('cible');
+    await importVia(T, [T], 'chrome.csv', 'name,url,username,password\nsite, https://a.example , moi@a.example ,p\n');
+    expect(current('cible', 'site')).toMatchObject({ URL: 'https://a.example', Username: 'moi@a.example', Password: 'p' });
+  });
+});
+
+describe('IMPORT-5 : notes et champs longs importés en entier et signalés', () => {
+  // Avant : notes et valeurs de champs personnalisés coupées à 10 000 caractères, caractères de contrôle
+  // des notes retirés, toast « Import réussi ».
+  const LONG_NOTES = 'début\n' + 'x'.repeat(15000) + '\nsortie \u001b[31mrouge\u001b[0m\fpage';
+  const LONG_CF = 'y'.repeat(12000);
+
+  test.each(['csv', 'xml'])('aller-retour %s : aucune troncature, contrôles des notes conservés, avertissement', async (format) => {
+    const S = addEngine('source');
+    const T = addEngine('cible');
+    seed('source', 'gros', { Username: 'u', Password: 'p', Notes: LONG_NOTES, CustomFields: [{ key: 'Blob', value: LONG_CF, protected: true }] });
+    seed('source', 'petit', { Username: 'u', Password: 'p', Notes: 'court' });
+    const exp = await exportVia(S, [S, T], format);
+    const toasts = await importVia(T, [S, T], 'export.' + format, exp.content);
+    expect(toasts[0]).toEqual(['warning', fmt(fr.export.importSuccess, { count: 2 }) + ' ' + longToast(1)]);
+    expect(current('cible', 'gros').Notes).toBe(LONG_NOTES);
+    expect(current('cible', 'gros').CustomFields).toEqual([{ key: 'Blob', value: LONG_CF, protected: true }]);
+    expect(current('cible', 'petit').Notes).toBe('court');
+  });
+
+  test('import partiel avec valeurs longues : les deux informations sont données', async () => {
+    const T = addEngine('cible');
+    const csv = 'Name,Password,Notes\n"a//b",p,n\nlong,p,"' + 'z'.repeat(10001) + '"\n';
+    const toasts = await importVia(T, [T], 'f.csv', csv);
+    expect(toasts[0]).toEqual(['warning', fmt(fr.export.importPartial, { count: 1, failed: 1 }) + ' ' + longToast(1)]);
+    expect(current('cible', 'long').Notes).toHaveLength(10001);
+  });
+
+  test('exactement 10 000 caractères : pas d\'avertissement', async () => {
+    const T = addEngine('cible');
+    const toasts = await importVia(T, [T], 'f.csv', 'Name,Password,Notes\nlim,p,"' + 'z'.repeat(10000) + '"\n');
+    expect(toasts[0]).toEqual(['success', fmt(fr.export.importSuccess, { count: 1 })]);
+  });
+});

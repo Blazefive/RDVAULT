@@ -1,5 +1,5 @@
 // src/AdminPanel.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import ConfirmModal from './ConfirmModal';
 import EditEngineModal from './EditEngineModal';
@@ -17,6 +17,7 @@ import SshPasswordModal from './components/admin/SshPasswordModal';
 import { policyGrantsMount } from './components/admin/policyHcl';
 import { useTranslation } from './i18n';
 import { richText, tPlural, formatDateTime, Ltr, richLtr } from './components/admin/i18nHelpers';
+import useTabs from './components/admin/useTabs';
 
 // Coffres système exclus des listings admin
 const SYSTEM_MOUNTS = ['cubbyhole', 'identity', 'sys', 'tags-shared', 'totp', 'pki'];
@@ -75,6 +76,9 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
 
   // Menu contextuel pour les policies
   const [policyContextMenu, setPolicyContextMenu] = useState(null);
+  const policyMenuRef = useRef(null);
+  // Élément focalisé à l'ouverture du menu (focus rendu à la fermeture par Échap / Tab)
+  const policyMenuOpenerRef = useRef(null);
 
   // Charger les policies
   const loadPolicies = async () => {
@@ -1032,6 +1036,65 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
     return () => document.removeEventListener('click', closeMenu);
   }, []);
 
+  // UI-31 : menu des policies utilisable au clavier (motif APG « Menu », comme les menus de la
+  // vue principale) : focus sur le premier élément à l'ouverture, flèches haut/bas, Début/Fin,
+  // Échap ou Tab ferme le menu et rend le focus à la policy d'origine.
+  useEffect(() => {
+    if (!policyContextMenu) return undefined;
+    const items = () => Array.from(policyMenuRef.current?.querySelectorAll('[role="menuitem"]') || []);
+    items()[0]?.focus();
+    const close = () => {
+      setPolicyContextMenu(null);
+      const opener = policyMenuOpenerRef.current;
+      if (opener && opener.isConnected) opener.focus();
+    };
+    const onKeyDown = (e) => {
+      const menu = policyMenuRef.current;
+      if (e.key === 'Escape' || e.key === 'Tab') {
+        e.preventDefault();
+        close();
+        return;
+      }
+      if (!menu || !menu.contains(document.activeElement)) return;
+      const list = items();
+      if (!list.length || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+      e.preventDefault();
+      const index = list.indexOf(document.activeElement);
+      let next;
+      if (e.key === 'Home') next = list[0];
+      else if (e.key === 'End') next = list[list.length - 1];
+      else next = list[(index + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length];
+      next.focus();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [policyContextMenu]);
+
+  // Ouverture du menu d'une policy : clic droit (coordonnées du pointeur) ou touche Menu /
+  // Maj+F10 sur la policy focalisée (événement sans coordonnées : menu ancré sous l'élément)
+  const openPolicyMenu = (e, policy) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Menu « Modifier / Supprimer » : actions d'écriture, absentes en consultation seule
+    if (moderatorReadOnly) return;
+    policyMenuOpenerRef.current = document.activeElement;
+    let x = e.clientX;
+    let y = e.clientY;
+    if (!x && !y) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      x = Math.round(rect.left + Math.min(24, rect.width / 2));
+      y = Math.round(rect.bottom);
+    }
+    setPolicyContextMenu({ x, y, policy });
+  };
+
+  // Onglets (motif APG « Tabs ») : uniquement ceux autorisés pour le rôle
+  const tabKeys = ['mounts', 'policies'];
+  if (isAdmin) tabKeys.push('auth', 'audit');
+  if (isAdmin || isModerator) tabKeys.push('tags');
+  if (isAdmin) tabKeys.push('export');
+  const { tabProps, panelProps } = useTabs(tabKeys, activeTab, setActiveTab);
+
   return (
     <div className="admin-panel">
       <div className="admin-header" style={{ WebkitAppRegion: 'drag' }}>
@@ -1042,7 +1105,8 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
           pointerEvents: 'none',
           zIndex: 0
         }}>
-          <div style={{
+          {/* Reflet décoratif en rotation (arrêté en mouvement réduit : .admin-header-glow) */}
+          <div className="admin-header-glow" style={{
             position: 'absolute',
             top: '-50%',
             right: '-50%',
@@ -1075,55 +1139,56 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
       </div>
 
       {/* Onglets */}
-      <div className="admin-tabs">
+      {/* Onglets : sémantique d'onglets (tablist / tab / aria-selected), flèches, Début / Fin */}
+      <div className="admin-tabs" role="tablist" aria-label={t('admin.header.title')}>
         <button
+          {...tabProps('mounts')}
           className={`admin-tab ${activeTab === 'mounts' ? 'active' : ''}`}
-          onClick={() => setActiveTab('mounts')}
         >
-          📦 {t('admin.tab.mounts')}
+          <span aria-hidden="true">📦</span> {t('admin.tab.mounts')}
         </button>
         <button
+          {...tabProps('policies')}
           className={`admin-tab ${activeTab === 'policies' ? 'active' : ''}`}
-          onClick={() => setActiveTab('policies')}
         >
-          📜 {t('admin.tab.policies')}
+          <span aria-hidden="true">📜</span> {t('admin.tab.policies')}
         </button>
         {isAdmin && (
           <button
+            {...tabProps('auth')}
             className={`admin-tab ${activeTab === 'auth' ? 'active' : ''}`}
-            onClick={() => setActiveTab('auth')}
           >
-            👥 {t('admin.tab.auth')}
+            <span aria-hidden="true">👥</span> {t('admin.tab.auth')}
           </button>
         )}
         {isAdmin && (
           <button
+            {...tabProps('audit')}
             className={`admin-tab ${activeTab === 'audit' ? 'active' : ''}`}
-            onClick={() => setActiveTab('audit')}
           >
-            📊 {t('admin.tab.audit')}
+            <span aria-hidden="true">📊</span> {t('admin.tab.audit')}
           </button>
         )}
         {(isAdmin || isModerator) && (
           <button
+            {...tabProps('tags')}
             className={`admin-tab ${activeTab === 'tags' ? 'active' : ''}`}
-            onClick={() => setActiveTab('tags')}
           >
-            🏷️ {t('admin.tab.tags')}
+            <span aria-hidden="true">🏷️</span> {t('admin.tab.tags')}
           </button>
         )}
         {isAdmin && (
           <button
+            {...tabProps('export')}
             className={`admin-tab ${activeTab === 'export' ? 'active' : ''}`}
-            onClick={() => setActiveTab('export')}
           >
-            📥 {t('admin.tab.export')}
+            <span aria-hidden="true">📥</span> {t('admin.tab.export')}
           </button>
         )}
       </div>
 
-      {/* Contenu selon l'onglet */}
-      <div className="admin-content">
+      {/* Contenu selon l'onglet (panneau relié à l'onglet actif) */}
+      <div className="admin-content" {...panelProps(activeTab)}>
         {moderatorReadOnly && (
           <div className="admin-help" role="note" style={{ marginBottom: '16px' }}>
             <p style={{ margin: 0 }}>👮 {t('admin.header.moderatorReadOnly')}</p>
@@ -1167,17 +1232,27 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
                         }}
                       >
                         {/* ADMIN-11 : chemin isolé en ltr avec sa barre oblique (en arabe, « Comptabilite/ »
-                            s'affichait « /Comptabilite ») ; ADMIN-16 : marge logique du badge */}
-                        <span>
-                          📦 <Ltr>{mount.path}/</Ltr>
+                            s'affichait « /Comptabilite ») ; ADMIN-16 : marge logique du badge.
+                            UI-31 : vrai bouton (focalisable, Entrée / Espace) ; son « click » remonte
+                            au <li>, qui porte la sélection (clic n'importe où sur la ligne conservé).
+                            UI-38 : coffre sélectionné exposé par aria-current. */}
+                        <button
+                          type="button"
+                          className="admin-item-select"
+                          aria-current={selectedMount?.path === mount.path ? 'true' : undefined}
+                        >
+                          <span aria-hidden="true">📦</span> <Ltr>{mount.path}/</Ltr>
                           {isHidden && <span style={{ marginInlineStart: '8px', fontSize: '11px', color: 'var(--warning)', fontWeight: '600' }}>{t('admin.mount.hidden')}</span>}
-                        </span>
+                        </button>
                         {(isAdmin || isModerator) && !moderatorReadOnly && (
                           <button
+                            type="button"
                             className="btn-mini btn-danger"
+                            aria-label={t('admin.mount.deleteNamed', { path: mount.path })}
+                            title={t('admin.mount.deleteNamed', { path: mount.path })}
                             onClick={(e) => { e.stopPropagation(); deleteMount(mount.path); }}
                           >
-                            ✕
+                            <span aria-hidden="true">✕</span>
                           </button>
                         )}
                       </li>
@@ -1294,19 +1369,17 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
                         key={policy}
                         className={`admin-item ${selectedPolicy === policy ? 'active' : ''}`}
                         onClick={() => loadPolicyContent(policy)}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          // Menu « Modifier / Supprimer » : actions d'écriture, absentes en consultation seule
-                          if (moderatorReadOnly) return;
-                          setPolicyContextMenu({
-                            x: e.clientX,
-                            y: e.clientY,
-                            policy
-                          });
-                        }}
+                        onContextMenu={(e) => openPolicyMenu(e, policy)}
                       >
-                        <span>📜 <Ltr>{policy}</Ltr></span>
+                        {/* UI-31 : bouton focalisable (Entrée / Espace = ouverture de l'éditeur, touche
+                            Menu / Maj+F10 = menu « Modifier / Supprimer ») ; UI-38 : aria-current */}
+                        <button
+                          type="button"
+                          className="admin-item-select"
+                          aria-current={selectedPolicy === policy ? 'true' : undefined}
+                        >
+                          <span aria-hidden="true">📜</span> <Ltr>{policy}</Ltr>
+                        </button>
                       </li>
                     ))}
                   </ul>
@@ -1334,6 +1407,17 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
                           >
                             💾 {t('admin.common.save')}
                           </button>
+                          {/* UI-31 : « Supprimer » proposé aussi hors du menu contextuel (même
+                              confirmation ; policies système default / root exclues comme au menu) */}
+                          {(isAdmin || isModerator) && selectedPolicy !== 'default' && selectedPolicy !== 'root' && (
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-sm"
+                              onClick={() => deletePolicy(selectedPolicy)}
+                            >
+                              🗑️ {t('common.delete')}
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1645,19 +1729,27 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
                         }}
                         style={{ cursor: 'pointer' }}
                       >
-                        <div>
-                          {/* ADMIN-11 : chemin du device et du journal isolés en ltr */}
-                          <span>📊 <Ltr>{device.path}/</Ltr></span>
-                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
+                        {/* ADMIN-11 : chemin du device et du journal isolés en ltr.
+                            UI-31 : bouton focalisable (Entrée / Espace = lecture du journal) ; UI-38 : aria-current */}
+                        <button
+                          type="button"
+                          className="admin-item-select"
+                          aria-current={selectedAuditDevice?.path === device.path ? 'true' : undefined}
+                        >
+                          <span style={{ display: 'block' }}><span aria-hidden="true">📊</span> <Ltr>{device.path}/</Ltr></span>
+                          <span style={{ display: 'block', fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 }}>
                             {t('admin.common.typeLabel')} {device.type}
                             {device.options?.file_path && <>{` | ${t('admin.common.fileLabel')} `}<Ltr>{device.options.file_path}</Ltr></>}
-                          </div>
-                        </div>
+                          </span>
+                        </button>
                         <button
+                          type="button"
                           className="btn-mini btn-danger"
+                          aria-label={t('admin.audit.disableNamed', { path: device.path })}
+                          title={t('admin.audit.disableNamed', { path: device.path })}
                           onClick={(e) => { e.stopPropagation(); disableAuditDevice(device.path); }}
                         >
-                          ✕
+                          <span aria-hidden="true">✕</span>
                         </button>
                       </li>
                     ))}
@@ -2219,37 +2311,20 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
 
       {/* Menu contextuel pour les policies */}
       {policyContextMenu && (
+        // UI-31 : role="menu" / menuitem, focus et flèches gérés par l'effet du menu (plus haut)
         <div
-          style={{
-            position: 'fixed',
-            left: policyContextMenu.x,
-            top: policyContextMenu.y,
-            background: 'var(--bg-surface)',
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            boxShadow: 'var(--shadow-lg)',
-            zIndex: 30000,
-            minWidth: 160,
-            overflow: 'hidden'
-          }}
+          ref={policyMenuRef}
+          className="admin-policy-menu"
+          role="menu"
+          aria-label={policyContextMenu.policy}
+          style={{ left: policyContextMenu.x, top: policyContextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
           <button
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              width: '100%',
-              padding: '10px 14px',
-              border: 'none',
-              background: 'transparent',
-              cursor: 'pointer',
-              fontSize: 13,
-              textAlign: 'start',
-              color: 'var(--text-primary)'
-            }}
-            onMouseEnter={(e) => e.target.style.background = 'var(--bg-surface-hover)'}
-            onMouseLeave={(e) => e.target.style.background = 'transparent'}
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            className="admin-policy-menu-item"
             onClick={() => {
               openBuilderForEdit(policyContextMenu.policy);
               setPolicyContextMenu(null);
@@ -2259,24 +2334,13 @@ export default function AdminPanel({ vaultUrl, vaultNs, ldapAuthPath = 'auth/lda
           </button>
           {(isAdmin || isModerator) && (
             <>
-              <div style={{ height: 1, background: 'var(--border)' }} />
+              <div role="separator" className="admin-policy-menu-separator" />
               {policyContextMenu.policy !== 'default' && policyContextMenu.policy !== 'root' && (
                 <button
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    width: '100%',
-                    padding: '10px 14px',
-                    border: 'none',
-                    background: 'transparent',
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    textAlign: 'start',
-                    color: 'var(--error)'
-                  }}
-                  onMouseEnter={(e) => e.target.style.background = 'var(--error-bg)'}
-                  onMouseLeave={(e) => e.target.style.background = 'transparent'}
+                  type="button"
+                  role="menuitem"
+                  tabIndex={-1}
+                  className="admin-policy-menu-item danger"
                   onClick={() => {
                     deletePolicy(policyContextMenu.policy);
                     setPolicyContextMenu(null);

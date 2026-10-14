@@ -11,6 +11,7 @@ import { useTranslation } from './i18n';
 import { copySecureWithAutoClear } from './utils/clipboard';
 import { useDialogA11y } from './components/common/Modal';
 import { getPasswordStrength, STRENGTH_LABEL_KEYS } from './utils/passwordStrength';
+import useTabs from './components/admin/useTabs';
 
 // Tolérance de déplacement (px) d'un clic sur le fond (même valeur que components/common/Modal)
 const CLICK_TOLERANCE_PX = 5;
@@ -182,11 +183,19 @@ export function generatePasswordFromPlan(plan) {
 
 export default function PasswordGeneratorModal({ onClose, onAccept }) {
   const { t } = useTranslation();
+  // Sans onAccept (ouverture depuis le menu utilisateur) : générateur autonome, le mot de passe se copie
+  const standalone = typeof onAccept !== 'function';
   const panelRef = useRef(null);
   const overlayDownRef = useRef(null);
   const titleId = useId();
-  // Onglets
+  // Onglets (motif APG « Tabs » : tablist / tab / aria-selected, flèches, Début / Fin)
   const [activeTab, setActiveTab] = useState('settings');
+  const { tabProps, panelProps } = useTabs(['settings', 'advanced'], activeTab, setActiveTab);
+  // UI-35 / UI-36 : libellés reliés aux champs (nom accessible = libellé visible)
+  const fieldIdBase = useId();
+  const fieldId = (name) => `${fieldIdBase}-${name}`;
+  // J1-e : texte du mot de passe généré, décrivant le bouton de copie
+  const passwordTextId = fieldId('generated');
 
   // Options Character Set
   const [length, setLength] = useState(DEFAULT_GENERATOR_OPTIONS.length);
@@ -244,6 +253,13 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
   // Minimum réellement appliqué : 0 pour une classe non cochée (champ désactivé), borné par la longueur
   const effectiveMin = (enabled, min) => (enabled ? Math.min(min, length) : 0);
 
+  // Focus initial sur l'onglet actif, comme avant que le mot de passe généré (placé avant les
+  // onglets) ne devienne focalisable : déclaré AVANT useDialogA11y, cet effet s'exécute en premier
+  // et le hook, voyant le focus déjà dans le panneau, ne le déplace pas.
+  useEffect(() => {
+    panelRef.current?.querySelector('[role="tab"][aria-selected="true"]')?.focus();
+  }, []);
+
   // Focus initial, piège de focus, Échap (modale du dessus uniquement), retour du focus
   useDialogA11y(panelRef, { onEscape: onClose });
 
@@ -274,6 +290,14 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
     copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
   }, []);
 
+  // J1-e : le mot de passe généré se copie aussi au clavier (Entrée / Espace), plus seulement au clic
+  const copyGenerated = () => { if (generatedPassword) copyToClipboard(generatedPassword); };
+  const handleGeneratedKeyDown = (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault(); // Espace : pas de défilement du corps de la modale
+    if (!e.repeat) copyGenerated();
+  };
+
   // Force : entropie du tirage, calculée sur le même jeu de caractères que la génération ;
   // paliers, couleurs et libellés communs avec la fiche et l'audit (getPasswordStrength)
   const entropy = generatedPassword ? plan.entropy : 0;
@@ -299,9 +323,19 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
         </div>
 
         <div style={{ padding: 'var(--sp-6)', borderBottom: '2px solid var(--border)' }}>
-          {/* Mot de passe généré */}
+          {/* Mot de passe généré : cliquer (ou Entrée / Espace) le copie. J1-e : avant, simple <div>
+              sans focus, la copie n'était possible qu'à la souris. role="button" (apparence
+              inchangée), nommé « Copier le mot de passe » et décrit par le mot de passe lui-même
+              (le contenu d'un bouton n'est pas lu séparément par les lecteurs d'écran). */}
           <div
-            onClick={() => { if (generatedPassword) copyToClipboard(generatedPassword); }}
+            className="generator-password"
+            role="button"
+            tabIndex={generatedPassword ? 0 : -1}
+            aria-disabled={generatedPassword ? undefined : 'true'}
+            aria-label={t('contextMenu.copyPassword')}
+            aria-describedby={passwordTextId}
+            onClick={copyGenerated}
+            onKeyDown={handleGeneratedKeyDown}
             style={{
               background: 'var(--bg-app)',
               border: '2px solid var(--accent)',
@@ -317,7 +351,7 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
               cursor: 'pointer'
             }}
           >
-            {generatedPassword || t('passwordGenerator.none')}
+            <span id={passwordTextId}>{generatedPassword || t('passwordGenerator.none')}</span>
           </div>
           {/* GENERATOR-25 : contraintes impossibles ou jeu de caractères vide signalés
               (visible quel que soit l'onglet) */}
@@ -336,18 +370,22 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
                 : t('passwordGenerator.constraintsImpossible', { required: plan.required, length: plan.length })}
             </div>
           )}
-          {copied && (
-            <div style={{
+          {/* UI-32 : région role="status" toujours présente (vide hors copie) : « Copié » est
+              annoncé par les lecteurs d'écran (une région insérée déjà remplie ne l'est pas) */}
+          <div
+            role="status"
+            aria-live="polite"
+            style={copied ? {
               textAlign: 'center',
               color: 'var(--success)',
               fontSize: 'var(--text-sm)',
               fontWeight: 'var(--weight-medium)',
               marginBottom: 'var(--sp-2)',
               transition: 'opacity 0.3s ease'
-            }}>
-              {t('passwordGenerator.copied')}
-            </div>
-          )}
+            } : undefined}
+          >
+            {copied ? t('passwordGenerator.copied') : ''}
+          </div>
 
           {/* Indicateur de force */}
           <div>
@@ -371,15 +409,15 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
         {/* Body scrollable */}
         <div className="modal-body">
           {/* Onglets */}
-          <div style={{ display: 'flex', gap: 'var(--sp-2)', borderBottom: '2px solid var(--border)', marginBottom: 'var(--sp-6)' }}>
+          <div role="tablist" aria-label={t('passwordGenerator.title')} style={{ display: 'flex', gap: 'var(--sp-2)', borderBottom: '2px solid var(--border)', marginBottom: 'var(--sp-6)' }}>
             <button
-              onClick={() => setActiveTab('settings')}
+              {...tabProps('settings')}
               className={activeTab === 'settings' ? 'admin-tab active' : 'admin-tab'}
             >
               {t('passwordGenerator.tabSettings')}
             </button>
             <button
-              onClick={() => setActiveTab('advanced')}
+              {...tabProps('advanced')}
               className={activeTab === 'advanced' ? 'admin-tab active' : 'admin-tab'}
             >
               {t('passwordGenerator.tabAdvanced')}
@@ -388,12 +426,13 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
 
         {/* Contenu Settings */}
         {activeTab === 'settings' && (
-          <div style={{ padding: 'var(--sp-4)', background: 'var(--bg-app)', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--sp-6)' }}>
+          <div {...panelProps('settings')} style={{ padding: 'var(--sp-4)', background: 'var(--bg-app)', borderRadius: 'var(--radius-lg)', marginBottom: 'var(--sp-6)' }}>
             <div style={{ fontWeight: 'var(--weight-bold)', marginBottom: 'var(--sp-4)', fontSize: 'var(--text-sm)' }}>{t('passwordGenerator.options')}</div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)', marginBottom: 'var(--sp-4)' }}>
-              <label style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-bold)' }}>{t('passwordGenerator.lengthLabel')}</label>
+              <label htmlFor={fieldId('length')} style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-bold)' }}>{t('passwordGenerator.lengthLabel')}</label>
               <input
+                id={fieldId('length')}
                 type="number"
                 min="1"
                 max={MAX_PASSWORD_LENGTH}
@@ -479,10 +518,11 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
             </div>
 
             <div style={{ marginTop: 'var(--sp-4)' }}>
-              <label className="modal-label">
+              <label className="modal-label" htmlFor={fieldId('customChars')}>
                 {t('passwordGenerator.customChars')}
               </label>
               <input
+                id={fieldId('customChars')}
                 type="text"
                 value={customChars}
                 onChange={(e) => setCustomChars(e.target.value)}
@@ -495,7 +535,7 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
 
         {/* Contenu Advanced */}
         {activeTab === 'advanced' && (
-          <div style={{ padding: 'var(--sp-4)', background: 'var(--bg-app)', borderRadius: 'var(--radius-lg)' }}>
+          <div {...panelProps('advanced')} style={{ padding: 'var(--sp-4)', background: 'var(--bg-app)', borderRadius: 'var(--radius-lg)' }}>
             <div style={{ fontWeight: 'var(--weight-bold)', marginBottom: 'var(--sp-4)', fontSize: 'var(--text-sm)' }}>{t('passwordGenerator.advancedOptions')}</div>
 
             <label className="checkbox-label" style={{ marginBottom: 'var(--sp-3)' }}>
@@ -521,8 +561,9 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-3)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-                  <label style={{ fontSize: 'var(--text-sm)', minWidth: '140px' }}>{t('passwordGenerator.minUppercase')}</label>
+                  <label htmlFor={fieldId('minUpper')} style={{ fontSize: 'var(--text-sm)', minWidth: '140px' }}>{t('passwordGenerator.minUppercase')}</label>
                   <input
+                    id={fieldId('minUpper')}
                     type="number"
                     min="0"
                     max={length}
@@ -535,8 +576,9 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-                  <label style={{ fontSize: 'var(--text-sm)', minWidth: '140px' }}>{t('passwordGenerator.minLowercase')}</label>
+                  <label htmlFor={fieldId('minLower')} style={{ fontSize: 'var(--text-sm)', minWidth: '140px' }}>{t('passwordGenerator.minLowercase')}</label>
                   <input
+                    id={fieldId('minLower')}
                     type="number"
                     min="0"
                     max={length}
@@ -549,8 +591,9 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-                  <label style={{ fontSize: 'var(--text-sm)', minWidth: '140px' }}>{t('passwordGenerator.minDigits')}</label>
+                  <label htmlFor={fieldId('minDigits')} style={{ fontSize: 'var(--text-sm)', minWidth: '140px' }}>{t('passwordGenerator.minDigits')}</label>
                   <input
+                    id={fieldId('minDigits')}
                     type="number"
                     min="0"
                     max={length}
@@ -563,8 +606,9 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
-                  <label style={{ fontSize: 'var(--text-sm)', minWidth: '140px' }}>{t('passwordGenerator.minSpecial')}</label>
+                  <label htmlFor={fieldId('minSpecial')} style={{ fontSize: 'var(--text-sm)', minWidth: '140px' }}>{t('passwordGenerator.minSpecial')}</label>
                   <input
+                    id={fieldId('minSpecial')}
                     type="number"
                     min="0"
                     max={length}
@@ -596,15 +640,20 @@ export default function PasswordGeneratorModal({ onClose, onAccept }) {
               className="btn btn-secondary"
               type="button"
             >
-              {t('common.cancel')}
+              {standalone ? t('common.close') : t('common.cancel')}
             </button>
+            {/* Ouvert depuis le menu utilisateur (sans fiche à remplir) : « Copier » au lieu de « Utiliser » */}
             <button
-              onClick={() => { if (generatedPassword) onAccept(generatedPassword); }}
+              onClick={() => {
+                if (!generatedPassword) return;
+                if (standalone) copyGenerated();
+                else onAccept(generatedPassword);
+              }}
               className="btn btn-primary"
               type="button"
               disabled={!generatedPassword}
             >
-              {t('passwordGenerator.accept')}
+              {standalone ? t('passwordGenerator.copy') : t('passwordGenerator.accept')}
             </button>
           </div>
         </div>

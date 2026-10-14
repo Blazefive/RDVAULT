@@ -1,7 +1,7 @@
 {
   "extName": {
-    "message": "Vault Autofill",
-    "description": "Extension name (brand, not translated)"
+    "message": "RDVAULT (direct Vault)",
+    "description": "Extension name: RDVAULT brand, simple edition that talks directly to a HashiCorp Vault server"
   },
   "extDescription": {
     "message": "Form autofill with HashiCorp Vault",
@@ -150,5 +150,23 @@
   "bgErrInternal": {
     "message": "Internal error",
     "description": "Error: unexpected internal error"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Vault logins available: $COUNT$. Down Arrow to choose, Escape to close.",
+    "description": "Autofill menu, read by screen readers when it opens; $COUNT$ is the number of logins listed",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrNotLoggedIn": {
+    "message": "Not signed in to Vault: open the extension window to sign in.",
+    "description": "Autofill menu error: the extension is not signed in to Vault"
+  },
+  "bgErrVaultUnreachable": {
+    "message": "Vault is unreachable or the session has expired: sign in again from the extension window.",
+    "description": "Autofill menu error: the Vault server does not answer or the session token has expired"
   }
 }

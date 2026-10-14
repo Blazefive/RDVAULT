@@ -30,16 +30,46 @@
     m.ok ? p.resolve(m.result) : p.reject(new Error(m.error || 'erreur'));
   }, false);
 
-  function ask(op, data, timeoutMs) {
+  const postToBridge = (m) => window.postMessage(m, window.location.origin === 'null' ? '*' : window.location.origin);
+
+  // Requête au pont. Délai expiré OU cérémonie annulée par la page (AbortSignal) : le pont est
+  // prévenu ({ op: 'abort' }) AVANT tout repli, pour fermer sa fenêtre et ne plus rien créer ni
+  // signer pour cette requête (sinon : fenêtre orpheline, passkey enregistrée que le site n'a
+  // jamais reçue). Rejet avec Error('timeout') ou Error('aborted').
+  function ask(op, data, timeoutMs, signal) {
     return new Promise((resolve, reject) => {
       const id = 'pk' + (++seq);
-      pending.set(id, { resolve, reject });
-      const to = setTimeout(() => { if (pending.delete(id)) reject(new Error('timeout')); }, timeoutMs);
-      const wrap = (fn) => (v) => { clearTimeout(to); fn(v); };
-      pending.set(id, { resolve: wrap(resolve), reject: wrap(reject) });
-      window.postMessage({ source: CHANNEL, dir: 'req', id, op, data }, window.location.origin === 'null' ? '*' : window.location.origin);
+      let to = null;
+      const cleanup = () => { clearTimeout(to); if (signal) signal.removeEventListener('abort', onAbort); };
+      const stop = (reason) => {
+        if (!pending.delete(id)) return;
+        cleanup();
+        postToBridge({ source: CHANNEL, dir: 'req', id, op: 'abort' });
+        reject(new Error(reason));
+      };
+      const onAbort = () => stop('aborted');
+      pending.set(id, { resolve: (v) => { cleanup(); resolve(v); }, reject: (e) => { cleanup(); reject(e); } });
+      to = setTimeout(() => stop('timeout'), timeoutMs);
+      if (signal) signal.addEventListener('abort', onAbort);
+      postToBridge({ source: CHANNEL, dir: 'req', id, op, data });
     });
   }
+
+  // ---------- Annulation et délai de la cérémonie (options.signal, publicKey.timeout) ----------
+  // Annulation : rejet avec la raison du signal (DOMException « AbortError » par défaut), comme le
+  // navigateur. Délai : celui demandé par le site, borné comme le fait Chrome (10 s à 10 min) ;
+  // 120 s sans indication. À l'expiration, l'authentificateur du navigateur prend le relais.
+  const DEFAULT_TIMEOUT_MS = 120000, MIN_TIMEOUT_MS = 10000, MAX_TIMEOUT_MS = 600000;
+  function ceremonyTimeout(t) {
+    const n = Number(t);
+    if (!Number.isFinite(n) || n <= 0) return DEFAULT_TIMEOUT_MS;
+    return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, n));
+  }
+  function abortReason(signal) {
+    if (signal && signal.reason !== undefined) return signal.reason;
+    return new DOMException('The operation was aborted.', 'AbortError');
+  }
+  const signalOf = (options) => (options && options.signal && typeof options.signal.addEventListener === 'function' ? options.signal : null);
 
   // ---------- base64url → ArrayBuffer ----------
   function b64uToBuf(s) {
@@ -71,12 +101,43 @@
   // Transports d'une passkey RDVAULT : authentificateur logiciel de ce poste (pas de « hybrid »)
   const TRANSPORTS = ['internal'];
 
+  // ---------- RDVAULT annoncé comme authentificateur de plateforme ----------
+  // Sans Windows Hello, isUserVerifyingPlatformAuthenticatorAvailable() vaut false : certains sites
+  // (Google) refusent alors de créer une passkey « sur cet appareil » et écartent de leurs demandes
+  // les passkeys de transport « internal » (celles de RDVAULT). Quand le coffre RDVAULT est
+  // déverrouillé, il EST un authentificateur de plateforme vérifiant l'utilisateur (déverrouillage par
+  // mot de passe maître) : on le signale. Sinon, réponse native inchangée. Résultat mis en cache 10 s.
+  const PKC = window.PublicKeyCredential;
+  let availability = null;
+  function rdvaultAvailable() {
+    if (availability && Date.now() - availability.at < 10000) return availability.promise;
+    const promise = ask('available', {}, 3000).then((r) => !!(r && r.available)).catch(() => false);
+    availability = { promise, at: Date.now() };
+    return promise;
+  }
+  const origUvpaa = typeof PKC.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
+    ? PKC.isUserVerifyingPlatformAuthenticatorAvailable.bind(PKC) : null;
+  PKC.isUserVerifyingPlatformAuthenticatorAvailable = async function () {
+    if (await rdvaultAvailable()) return true;
+    return origUvpaa ? origUvpaa() : false;
+  };
+  if (typeof PKC.getClientCapabilities === 'function') {
+    const origCaps = PKC.getClientCapabilities.bind(PKC);
+    PKC.getClientCapabilities = async function () {
+      const caps = await origCaps();
+      if (!(await rdvaultAvailable())) return caps;
+      return Object.assign({}, caps, { userVerifyingPlatformAuthenticator: true, passkeyPlatformAuthenticator: true });
+    };
+  }
+
   // Médiation « conditional » (autofill / mise à niveau automatique) : WebAuthn interdit toute
   // UI modale ; RDVAULT ne s'intègre pas à l'autofill natif → le navigateur gère seul.
   const isConditional = (options) => !!options && options.mediation === 'conditional';
 
   navigator.credentials.create = async function (options) {
     if (!options || !options.publicKey || isConditional(options)) return origCreate(options);
+    const signal = signalOf(options);
+    if (signal && signal.aborted) throw abortReason(signal);
     let res;
     try {
       const pk = options.publicKey;
@@ -96,12 +157,14 @@
         // Préférence du site, relayée pour information : « required » compris, la cérémonie est servie
         // par RDVAULT avec le drapeau UV (coffre déverrouillé = utilisateur vérifié, voir passkey-bridge.js)
         userVerification: (pk.authenticatorSelection && pk.authenticatorSelection.userVerification) || 'preferred'
-      }, 120000);
+      }, ceremonyTimeout(pk.timeout), signal);
     } catch (err) {
+      if (signal && signal.aborted) throw abortReason(signal); // annulée par la page
       if (err && /timeout/.test(err.message)) return origCreate(options);
       if (err && err.message === 'RDVAULT_EXCLUDED') throw invalidState();
       throw notAllowed(); // annulation utilisateur : erreur standard, PAS de bascule native
     }
+    if (signal && signal.aborted) throw abortReason(signal);
     if (res && res.fallback) return origCreate(options); // « autre appareil » : authentificateur natif
     try {
       const rawId = b64uToBuf(res.credentialId);
@@ -137,6 +200,8 @@
 
   navigator.credentials.get = async function (options) {
     if (!options || !options.publicKey || isConditional(options)) return origGet(options);
+    const signal = signalOf(options);
+    if (signal && signal.aborted) throw abortReason(signal);
     let res;
     try {
       const pk = options.publicKey;
@@ -146,11 +211,13 @@
         challenge: toB64u(pk.challenge),
         allowCredentials: Array.isArray(pk.allowCredentials) ? pk.allowCredentials.map(c => toB64u(c.id)) : [],
         userVerification: pk.userVerification || 'preferred'
-      }, 120000);
+      }, ceremonyTimeout(pk.timeout), signal);
     } catch (err) {
+      if (signal && signal.aborted) throw abortReason(signal); // annulée par la page
       if (err && /timeout/.test(err.message)) return origGet(options);
       throw notAllowed();
     }
+    if (signal && signal.aborted) throw abortReason(signal);
     if (res && res.fallback) return origGet(options);
     try {
       const rawId = b64uToBuf(res.credentialId);

@@ -37,6 +37,19 @@ describe('escapeXml / unescapeXml', () => {
   it('décode les entités numériques', () => {
     expect(unescapeXml('&#233;t&#xE9;')).toBe('été');
   });
+
+  // IMPORT-7 : les références numériques étaient décodées AVANT les entités nommées ; le « & » produit
+  // était donc redécodé (« &#38;lt; » donnait « < » au lieu de « &lt; »). Un seul passage désormais.
+  it('décode une seule fois : une référence numérique donnant « & » n\'est pas redécodée (IMPORT-7)', () => {
+    expect(unescapeXml('a&#38;lt;b')).toBe('a&lt;b');
+    expect(unescapeXml('&#x26;amp;')).toBe('&amp;');
+    expect(unescapeXml('p&#38;quot;')).toBe('p&quot;');
+    expect(unescapeXml('&#38;#60;')).toBe('&#60;');
+    expect(unescapeXml('&amp;#60;')).toBe('&#60;');
+    expect(readXmlTag('<password>S3cr&#38;lt;t</password>', 'password')).toBe('S3cr&lt;t');
+    // Entité inconnue ou mal formée : laissée telle quelle ; point de code invalide : supprimé (comme avant)
+    expect(unescapeXml('&nbsp; &lt &#xZZ; &#1114112;')).toBe('&nbsp; &lt &#xZZ; ');
+  });
 });
 
 describe('readXmlTag', () => {

@@ -59,3 +59,7 @@ favicon*.png
 
 # Chromium embarqué (trop gros pour GitHub, distribué via l'installeur)
 chrome-rbi/
+
+# Clé privée de l'extension (identifiant fixe) : jamais dans le dépôt
+chrome-extension/**/key.pem
+chrome-extension/**/*.crx

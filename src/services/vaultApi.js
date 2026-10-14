@@ -12,6 +12,7 @@ import axios from 'axios';
 import { encodeEnginePath } from '../utils/security';
 import * as validation from '../validation';
 import secureLogger from '../secureLogger';
+import { trackVaultWrite, READ_ONLY_REQUEST_FLAG } from './vaultWriteLog';
 
 // Bornes du listage récursif d'un coffre KV v2 (protection contre un serveur ou une arborescence
 // démesurés). Elles ne tronquent plus en silence : au-delà, une erreur traduite est levée (code
@@ -100,7 +101,52 @@ function listLimitError(code, i18nKey, max, partialKeys) {
   return err;
 }
 
-export function createVaultApi(vaultUrl, token, vaultNs) {
+// Lecture groupée du coffre LOCAL (route propre au serveur local d'electron/localVault, absente de
+// HashiCorp Vault) : clés par requête et nom de l'opération. Réponse bornée en taille par le serveur :
+// les clés non traitées sont renvoyées dans `remaining` et redemandées.
+export const BATCH_READ_OP = 'rdvault-batch-read';
+export const BATCH_READ_MAX_KEYS = 250;
+
+/**
+ * Entrée telle que l'interface la manipule, à partir des données KV stockées (schéma RDVAULT).
+ * Même conversion pour la lecture unitaire (KV v1 / v2) et la lecture groupée.
+ * @param {string} key
+ * @param {Object} data
+ */
+export function entryFromKvData(key, data) {
+  const d = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+  const customFields = d.CustomFields || [];
+  const portField = Array.isArray(customFields) ? customFields.find(f => f && (f.key === 'Port' || f.key === 'port')) : null;
+  return {
+    name: key,
+    username: d.Username || '',
+    password: d.Password || '',
+    url: d.URL || '',
+    website: d.Website || '',
+    notes: d.Notes || '',
+    tags: d.Tags || '',
+    Port: portField ? portField.value : '',
+    customFields: customFields,
+    attachments: d.Attachments || [],
+    entryType: d.EntryType || 'secret'
+  };
+}
+
+/** Erreur au format axios (statut HTTP) pour une entrée de la lecture groupée */
+function entryHttpError(status) {
+  const err = new Error(`HTTP ${status}`);
+  err.response = { status, data: {} };
+  return err;
+}
+
+/**
+ * @param {string} vaultUrl
+ * @param {string} token
+ * @param {string} [vaultNs]
+ * @param {{ batchRead?: boolean }} [options] - batchRead : lecture groupée du coffre LOCAL (mode local
+ *   uniquement ; jamais contre un Vault distant, où la route n'existe pas)
+ */
+export function createVaultApi(vaultUrl, token, vaultNs, options = {}) {
   const baseHeaders = (overrideToken) => {
     const h = { 'X-Vault-Request': 'true' };
     const t = overrideToken || token;
@@ -340,29 +386,29 @@ export function createVaultApi(vaultUrl, token, vaultNs) {
 
   const readSecretV2 = async (engine, key) => {
     const res = await axios.get(`${vaultUrl}/v1/${encodeEnginePath(engine.name)}/data/${encodeURIComponent(key)}`, axiosConfig({ headers: baseHeaders() }));
-    const data = res.data?.data?.data || {};
-
-    const customFields = data.CustomFields || [];
-    const portField = customFields.find(f => f.key === 'Port' || f.key === 'port');
-
-    return {
-      name: key,
-      username: data.Username || '',
-      password: data.Password || '',
-      url: data.URL || '',
-      website: data.Website || '',
-      notes: data.Notes || '',
-      tags: data.Tags || '',
-      Port: portField ? portField.value : '',
-      customFields: customFields,
-      attachments: data.Attachments || [],
-      entryType: data.EntryType || 'secret'
-    };
+    return entryFromKvData(key, res.data?.data?.data || {});
   };
 
-  const writeSecretV2 = async (engine, entry) => {
+  /**
+   * Lecture d'une entrée KV v2 AVEC le numéro de sa version courante (metadata.version de la réponse) :
+   * contrôle de fraîcheur avant une écriture fondée sur une ligne affichée (services/staleWriteGuard.js).
+   * @returns {Promise<{ item: Object, version: number|null }>}
+   */
+  const readSecretV2Versioned = async (engine, key) => {
+    const res = await axios.get(`${vaultUrl}/v1/${encodeEnginePath(engine.name)}/data/${encodeURIComponent(key)}`, axiosConfig({ headers: baseHeaders() }));
+    const version = Number(res.data?.data?.metadata?.version);
+    return { item: entryFromKvData(key, res.data?.data?.data || {}), version: Number.isSafeInteger(version) && version > 0 ? version : null };
+  };
+
+  /**
+   * options.cas (entier ≥ 0, facultatif) : check-and-set de KV v2 — l'écriture n'a lieu que si la version
+   * courante de l'entrée vaut cas (Vault répond 400 « check-and-set parameter did not match » sinon, rien
+   * n'est écrit). Sans option : écriture inconditionnelle, comme avant.
+   */
+  const writeSecretV2 = async (engine, entry, options = {}) => {
     const secretValidation = validateEntry(entry);
     if (!secretValidation.valid) throw validationError(secretValidation);
+    const cas = options && Number.isSafeInteger(options.cas) && options.cas >= 0 ? options.cas : undefined;
 
     const data = {
       Username: entry.username,
@@ -389,7 +435,9 @@ export function createVaultApi(vaultUrl, token, vaultNs) {
       data.Attachments = entry.attachments;
     }
 
-    await axios.post(`${vaultUrl}/v1/${encodeEnginePath(engine.name)}/data/${encodeURIComponent(entry.name)}`, { data }, axiosConfig({ headers: baseHeaders() }));
+    const url = `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/data/${encodeURIComponent(entry.name)}`;
+    const body = cas !== undefined ? { options: { cas }, data } : { data };
+    await trackVaultWrite('post', url, () => axios.post(url, body, axiosConfig({ headers: baseHeaders() })));
   };
 
   const deleteSecretV2 = async (engine, key) => {
@@ -397,8 +445,67 @@ export function createVaultApi(vaultUrl, token, vaultNs) {
     const versions = Object.keys(metaRes.data?.data?.versions || {}).map(Number);
 
     if (versions.length > 0) {
-      await axios.post(`${vaultUrl}/v1/${encodeEnginePath(engine.name)}/delete/${encodeURIComponent(key)}`, { versions }, axiosConfig({ headers: baseHeaders() }));
+      const url = `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/delete/${encodeURIComponent(key)}`;
+      await trackVaultWrite('post', url, () => axios.post(url, { versions }, axiosConfig({ headers: baseHeaders() })));
     }
+  };
+
+  /**
+   * Lecture GROUPÉE de la dernière version de plusieurs entrées d'un coffre KV v2 du coffre LOCAL
+   * (route BATCH_READ_OP du serveur local : mêmes contrôles d'accès, de session et d'intégrité que
+   * GET …/data/<clé>). Absente (option batchRead fausse) : undefined dans le service.
+   * Résultat par clé, dans l'ordre demandé :
+   * - { key, item } : entrée lue (même objet que readSecretV2) ;
+   * - { key, deleted: true } : version courante supprimée en douceur (GET …/data répondrait 404) ;
+   * - { key, error } : erreur au format axios (error.response.status : 404 absente, 403 refusée,
+   *   500 illisible — intégrité GCM —), traitée comme celle d'une lecture unitaire.
+   * La requête elle-même en échec (route inconnue, réseau…) : rejet ; l'appelant lit alors entrée par entrée.
+   * @param {{ name: string, version: number }} engine
+   * @param {string[]} keys - au plus BATCH_READ_MAX_KEYS
+   * @returns {Promise<Array<{ key: string, item?: Object, deleted?: boolean, error?: Error }>>}
+   */
+  let batchUnsupported = false;
+  const readSecretsBatchV2 = async (engine, keys) => {
+    if (batchUnsupported) throw entryHttpError(405);
+    const wanted = Array.from(keys || []);
+    if (wanted.length > BATCH_READ_MAX_KEYS) throw new Error('Trop de clés pour une lecture groupée');
+    const url = `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/${BATCH_READ_OP}`;
+    const byKey = new Map();
+    let pending = wanted;
+    // Réponse bornée en taille : les clés restantes sont redemandées (au moins une traitée par réponse)
+    while (pending.length > 0) {
+      let res;
+      try {
+        // eslint-disable-next-line no-await-in-loop -- suite de la même lecture (clés restantes)
+        res = await axios.post(url, { keys: pending }, axiosConfig({ headers: baseHeaders(), [READ_ONLY_REQUEST_FLAG]: true }));
+      } catch (err) {
+        const status = err?.response?.status;
+        // Méthode ou route refusée par ce serveur : plus tentée pour cette session (lecture unitaire). Un 404
+        // (coffre supprimé entre-temps) ne la désactive pas : seul ce lot est relu entrée par entrée.
+        if (status === 405 || status === 501) batchUnsupported = true;
+        throw err;
+      }
+      const results = res?.data?.data?.results;
+      const remaining = res?.data?.data?.remaining;
+      if (!Array.isArray(results) || (remaining !== undefined && !Array.isArray(remaining))) {
+        throw new Error('Réponse de lecture groupée invalide');
+      }
+      const asked = new Set(pending);
+      for (const r of results) {
+        // Seules les clés demandées sont retenues (jamais une entrée non demandée)
+        if (!r || typeof r.key !== 'string' || !asked.has(r.key)) continue;
+        const status = Number(r.status);
+        if (status === 200) byKey.set(r.key, { key: r.key, item: entryFromKvData(r.key, r.data) });
+        else if (status === 404 && r.deleted === true) byKey.set(r.key, { key: r.key, deleted: true });
+        else byKey.set(r.key, { key: r.key, error: entryHttpError(Number.isInteger(status) && status > 0 ? status : 500) });
+      }
+      const rest = Array.isArray(remaining) ? remaining.filter(k => typeof k === 'string' && asked.has(k) && !byKey.has(k)) : [];
+      // Aucun progrès (réponse incohérente) : abandon, l'appelant lit entrée par entrée
+      if (rest.length >= pending.length) throw new Error('Lecture groupée sans progrès');
+      pending = rest;
+    }
+    // Clé demandée absente de la réponse : comptée illisible (jamais confondue avec une entrée absente)
+    return wanted.map(k => byKey.get(k) || { key: k, error: entryHttpError(500) });
   };
 
   // ========================================
@@ -411,24 +518,7 @@ export function createVaultApi(vaultUrl, token, vaultNs) {
 
   const readSecretV1 = async (engine, key) => {
     const res = await axios.get(`${vaultUrl}/v1/${encodeEnginePath(engine.name)}/${encodeURIComponent(key)}`, axiosConfig({ headers: baseHeaders() }));
-    const data = res.data?.data || {};
-
-    const customFields = data.CustomFields || [];
-    const portField = customFields.find(f => f.key === 'Port' || f.key === 'port');
-
-    return {
-      name: key,
-      username: data.Username || '',
-      password: data.Password || '',
-      url: data.URL || '',
-      website: data.Website || '',
-      notes: data.Notes || '',
-      tags: data.Tags || '',
-      Port: portField ? portField.value : '',
-      customFields: customFields,
-      attachments: data.Attachments || [],
-      entryType: data.EntryType || 'secret'
-    };
+    return entryFromKvData(key, res.data?.data || {});
   };
 
   const writeSecretV1 = async (engine, entry) => {
@@ -460,11 +550,13 @@ export function createVaultApi(vaultUrl, token, vaultNs) {
       data.Attachments = entry.attachments;
     }
 
-    await axios.post(`${vaultUrl}/v1/${encodeEnginePath(engine.name)}/${encodeURIComponent(entry.name)}`, data, axiosConfig({ headers: baseHeaders() }));
+    const url = `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/${encodeURIComponent(entry.name)}`;
+    await trackVaultWrite('post', url, () => axios.post(url, data, axiosConfig({ headers: baseHeaders() })));
   };
 
   const deleteSecretV1 = async (engine, key) => {
-    await axios.delete(`${vaultUrl}/v1/${encodeEnginePath(engine.name)}/${encodeURIComponent(key)}`, axiosConfig({ headers: baseHeaders() }));
+    const url = `${vaultUrl}/v1/${encodeEnginePath(engine.name)}/${encodeURIComponent(key)}`;
+    await trackVaultWrite('delete', url, () => axios.delete(url, axiosConfig({ headers: baseHeaders() })));
   };
 
   // ========================================
@@ -573,17 +665,19 @@ export function createVaultApi(vaultUrl, token, vaultNs) {
       }
 
       if (engine.version === 2) {
-        await axios.post(
-          `${vaultUrl}/v1/${encodeEnginePath(cleanName)}/data/${encodeURIComponent(cleanKey)}`,
+        const url = `${vaultUrl}/v1/${encodeEnginePath(cleanName)}/data/${encodeURIComponent(cleanKey)}`;
+        await trackVaultWrite('post', url, () => axios.post(
+          url,
           cas !== undefined ? { options: { cas }, data } : { data },
           axiosConfig({ headers: baseHeaders() })
-        );
+        ));
       } else {
-        await axios.post(
-          `${vaultUrl}/v1/${encodeEnginePath(cleanName)}/${encodeURIComponent(cleanKey)}`,
+        const url = `${vaultUrl}/v1/${encodeEnginePath(cleanName)}/${encodeURIComponent(cleanKey)}`;
+        await trackVaultWrite('post', url, () => axios.post(
+          url,
           data,
           axiosConfig({ headers: baseHeaders() })
-        );
+        ));
       }
       return true;
     } catch (err) {
@@ -601,15 +695,17 @@ export function createVaultApi(vaultUrl, token, vaultNs) {
       const cleanKey = secretName.replace(/^\/+|\/+$/g, '');
 
       if (engine.version === 2) {
-        await axios.delete(
-          `${vaultUrl}/v1/${encodeEnginePath(cleanName)}/metadata/${encodeURIComponent(cleanKey)}`,
+        const url = `${vaultUrl}/v1/${encodeEnginePath(cleanName)}/metadata/${encodeURIComponent(cleanKey)}`;
+        await trackVaultWrite('delete', url, () => axios.delete(
+          url,
           axiosConfig({ headers: baseHeaders() })
-        );
+        ));
       } else {
-        await axios.delete(
-          `${vaultUrl}/v1/${encodeEnginePath(cleanName)}/${encodeURIComponent(cleanKey)}`,
+        const url = `${vaultUrl}/v1/${encodeEnginePath(cleanName)}/${encodeURIComponent(cleanKey)}`;
+        await trackVaultWrite('delete', url, () => axios.delete(
+          url,
           axiosConfig({ headers: baseHeaders() })
-        );
+        ));
       }
       return true;
     } catch (err) {
@@ -631,8 +727,11 @@ export function createVaultApi(vaultUrl, token, vaultNs) {
     totpKeyExists,
     listKeysV2,
     readSecretV2,
+    readSecretV2Versioned,
     writeSecretV2,
     deleteSecretV2,
+    // Lecture groupée : coffre LOCAL seulement (option batchRead), sinon absente
+    readSecretsBatchV2: options && options.batchRead ? readSecretsBatchV2 : undefined,
     listKeysV1,
     readSecretV1,
     writeSecretV1,

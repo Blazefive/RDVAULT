@@ -73,7 +73,8 @@
     "dropHere": "Rilascia qui",
     "rightClickToAddTag": "Clic destro per aggiungere",
     "dragCountOne": "{{count}} voce",
-    "dragCountMany": "{{count}} voci"
+    "dragCountMany": "{{count}} voci",
+    "rowSelected": "selezionata"
   },
   "contextMenu": {
     "copyUsername": "Copia nome utente",
@@ -150,7 +151,8 @@
     "totpDeleteConfirm": "Conferma necessaria: scegli di nuovo «{{action}}» entro {{seconds}} s per distruggere definitivamente la chiave TOTP di «{{name}}» (irreversibile).",
     "secretDeletedTotpKept": "Voce eliminata. La sua chiave TOTP è stata mantenuta: «{{action}}» ripristina la voce con il suo codice TOTP.",
     "secretDeletedTotpKeptOrphan": "Voce eliminata definitivamente. La sua chiave TOTP è stata mantenuta: sarà associata a una voce ricreata con lo stesso nome.",
-    "secretSavedTotpAttached": "Segreto salvato. Esisteva già una chiave TOTP con questo nome: ora è associata a questa voce."
+    "secretSavedTotpAttached": "Segreto salvato. Esisteva già una chiave TOTP con questo nome: ora è associata a questa voce.",
+    "secretSavedMerged": "Segreto salvato. La voce era stata modificata altrove nel frattempo: sono stati sostituiti solo i campi che hai cambiato, le altre modifiche sono conservate."
   },
   "error": {
     "tooManyEntries": "Troppe voci (max 500)",
@@ -257,7 +259,8 @@
     "listTooDeepPartial": "Cartelle annidate per più di {{max}} livelli: vengono mostrate solo {{count}} voci, l'elenco è incompleto.",
     "extensionSyncTruncated": "Sincronizzazione dell'estensione del browser incompleta: {{count}} voce/i oltre il limite di {{max}} non è/sono stata/e inviata/e all'estensione.",
     "syncServerUnavailable": "Impossibile aprire il collegamento con l'estensione del browser ({{code}}): la compilazione automatica del browser non è collegata al tuo vault. Probabilmente un'altra sessione di RDVAULT o un altro programma sta usando la sua porta; chiudilo, quindi riavvia RDVAULT.",
-    "secretNameReserved": "«{{name}}» è riservato all'archiviazione interna di RDVAULT. Scegli un altro nome."
+    "secretNameReserved": "«{{name}}» è riservato all'archiviazione interna di RDVAULT. Scegli un altro nome.",
+    "secretChangedElsewhere": "La voce «{{name}}» è stata modificata o eliminata altrove da quando è stata visualizzata: non è stato salvato nulla. È stata appena riletta; ricominciare dalla versione attuale (chiudere e riaprire la scheda se necessario)."
   },
   "settings": {
     "title": "Impostazioni",
@@ -276,7 +279,17 @@
     "lockedColumn": "Colonna obbligatoria",
     "close": "Chiudi",
     "selectLanguage": "Seleziona una lingua",
-    "languageDesc": "Scegli la lingua di visualizzazione dell'applicazione"
+    "languageDesc": "Scegli la lingua di visualizzazione dell'applicazione",
+    "security": "Sicurezza",
+    "autoLockTitle": "Blocco automatico",
+    "autoLockDesc": "Dopo questo periodo senza attività in RDVAULT, la sessione viene chiusa ed è necessario accedere di nuovo.",
+    "autoLockLabel": "Blocca dopo",
+    "autoLockMinute": "1 minuto",
+    "autoLockMinutes": "{{count}} minuti",
+    "autoLockHour": "1 ora",
+    "autoLockHours": "{{count}} ore",
+    "autoLockDefault": "predefinito",
+    "autoLockLockedNote": "Con la sessione di Windows bloccata, la sessione RDVAULT viene chiusa dopo 3 ore, indipendentemente da questa impostazione."
   },
   "cli": {
     "title": "Accesso CLI (mvault)",
@@ -528,7 +541,8 @@
       "noLinkedPolicy": "Nessuna policy collegata a questo vault",
       "infoTitle": "Informazioni:",
       "infoText": "Le policy elencate sopra concedono l'accesso a {{path}}. Gestisci le policy e i relativi gruppi AD nella scheda \"Policy\".",
-      "selectPrompt": "Seleziona un vault per gestirne le policy"
+      "selectPrompt": "Seleziona un vault per gestirne le policy",
+      "deleteNamed": "Elimina la cassaforte {{path}}"
     },
     "policy": {
       "available": "Policy disponibili",
@@ -601,7 +615,8 @@
       "selectPrompt": "Seleziona un audit device per visualizzarne i log",
       "selectHint": "Fai clic su un device nell'elenco a sinistra per visualizzarne i log di audit.",
       "enablePrompt": "Attiva un audit device per iniziare a registrare i log",
-      "enableHint": "I log di audit registrano tutte le operazioni eseguite in Vault: chi, quando, quale azione, su quale risorsa."
+      "enableHint": "I log di audit registrano tutte le operazioni eseguite in Vault: chi, quando, quale azione, su quale risorsa.",
+      "disableNamed": "Disattiva il dispositivo di audit {{path}}"
     },
     "tags": {
       "title": "Gestione dei tag",
@@ -907,10 +922,12 @@
     "importOverwrite": "sovrascrivi i duplicati",
     "partialSuccess": "Esportazione completata: {{count}} segreto/i esportato/i, {{failed}} non leggibile/i",
     "importPartial": "Importazione completata: {{count}} segreto/i importato/i, {{failed}} non riuscito/i o ignorato/i",
-    "contentNote": "Il file contiene tutti i dati delle voci in chiaro (password, campi personalizzati, allegati): conservalo in un luogo sicuro. Le passkey e le chiavi TOTP non vengono esportate."
+    "contentNote": "Il file contiene tutti i dati delle voci in chiaro (password, campi personalizzati, allegati): conservalo in un luogo sicuro. Le passkey e le chiavi TOTP non vengono esportate.",
+    "importLongValues": "{{count}} voce/i contengono note o campi più lunghi di 10000 caratteri: importati per intero; accorciarli prima di salvarli dall'editor."
   },
   "clipboard": {
-    "clearNow": "Svuota ora"
+    "clearNow": "Svuota ora",
+    "autoClear": "Gli appunti verranno cancellati tra {{seconds}} secondi."
   },
   "window": {
     "minimize": "Riduci a icona",
@@ -992,7 +1009,8 @@
     "errMaxUses": "Numero massimo di utilizzi raggiunto",
     "errExpired": "Condivisione scaduta",
     "errReceive": "Errore durante il recupero della condivisione",
-    "errUnauthorized": "Condivisione rifiutata: la tua sessione Vault non è autorizzata"
+    "errUnauthorized": "Condivisione rifiutata: la tua sessione Vault non è autorizzata",
+    "errProxyInvalidShareId": "Il proxy ha restituito un ID di condivisione in un formato non valido (solo lettere, cifre, - e _, al massimo 128 caratteri): nessuna condivisione è stata creata. Contatta l'amministratore del proxy RBI."
   },
   "passwordHealth": {
     "title": "Salute delle password",
@@ -1065,5 +1083,24 @@
     "title": "Si è verificato un errore imprevisto",
     "message": "La visualizzazione dell'interfaccia è stata interrotta. Ricaricala per continuare; ti verrà chiesto di accedere di nuovo.",
     "reload": "Ricarica l'interfaccia"
+  },
+  "extensionTab": {
+    "tab": "Estensione",
+    "title": "Estensione del browser RDVAULT",
+    "intro": "L'estensione compila le tue credenziali e gestisce le tue passkey in Chrome, Edge e Brave. È inclusa in RDVAULT, ma Chrome non consente di installarla automaticamente: caricala una volta seguendo questi passaggi.",
+    "folderLabel": "Cartella dell'estensione",
+    "openFolder": "Apri la cartella",
+    "copyPath": "Copia il percorso",
+    "copied": "Copiato",
+    "stepsTitle": "Installazione (una sola volta)",
+    "step1": "Copia l'indirizzo della pagina delle estensioni del tuo browser e incollalo nella barra degli indirizzi:",
+    "step2": "Attiva la «Modalità sviluppatore».",
+    "step3": "Fai clic su «Carica estensione non pacchettizzata» e seleziona la cartella indicata sopra.",
+    "step4": "Apri l'estensione (icona RDVAULT nella barra degli strumenti): RDVAULT ti chiederà di approvare l'associazione una sola volta.",
+    "update": "Dopo ogni aggiornamento di RDVAULT, fai clic su «Ricarica» sull'estensione nella pagina delle estensioni.",
+    "idLabel": "ID dell'estensione",
+    "versionLabel": "Versione",
+    "unavailable": "L'estensione non è stata trovata in questa installazione. Reinstalla RDVAULT o carica la cartella chrome-extension/vault-autofill-extension dal codice sorgente.",
+    "sharedWarning": "Non installarla su un server di sessioni condivise (Desktop remoto, Citrix)."
   }
 }

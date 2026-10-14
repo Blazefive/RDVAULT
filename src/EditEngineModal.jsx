@@ -20,7 +20,7 @@
 // - Clic hors modal pour fermer (sauf pendant le chargement)
 // - Focus automatique sur le champ "Chemin" à l'ouverture
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from './i18n';
 import Modal from './components/common/Modal';
 
@@ -33,6 +33,10 @@ export default function EditEngineModal({ onClose, onCreate, isAdmin }) {
   const version = 2; // KV v2 uniquement
   const descRef = useRef(null);
   const [loading, setLoading] = useState(false);
+  // UI-36 : libellés « Chemin* » et « Description » reliés à leur champ (htmlFor / id)
+  const idBase = useId();
+  const pathId = `${idBase}-path`;
+  const descId = `${idBase}-desc`;
 
   // Détecte le username pour suggérer le préfixe self-service (sauf pour les admins)
   const username = localStorage.getItem('vault-client.username') || '';
@@ -90,10 +94,12 @@ export default function EditEngineModal({ onClose, onCreate, isAdmin }) {
       )}
     >
       <div className="form-group-vertical">
-        <label className="modal-label">{t('engine.path')}</label>
+        <label className="modal-label" htmlFor={pathId}>{t('engine.path')}</label>
         <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
           <input
             ref={pathRef}
+            id={pathId}
+            aria-required="true"
             className="modal-input"
             style={{
               marginBottom: 0
@@ -115,9 +121,10 @@ export default function EditEngineModal({ onClose, onCreate, isAdmin }) {
       </div>
 
       <div className="form-group-vertical">
-        <label className="modal-label">{t('engine.description')}</label>
+        <label className="modal-label" htmlFor={descId}>{t('engine.description')}</label>
         <textarea
           ref={descRef}
+          id={descId}
           className="modal-textarea"
           placeholder={t('engine.placeholderDesc')}
           disabled={loading}

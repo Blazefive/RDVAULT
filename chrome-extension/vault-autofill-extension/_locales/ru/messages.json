@@ -1,6 +1,6 @@
 {
   "extName": {
-    "message": "Vault Autofill"
+    "message": "RDVAULT"
   },
   "extDescription": {
     "message": "Автозаполнение форм и passkeys с RDVAULT (требуется настольное приложение)"
@@ -9,7 +9,7 @@
     "message": "Проверка..."
   },
   "popupInfoRequiresDesktop": {
-    "message": "Для работы расширения настольное приложение Vault должно быть запущено и подключено."
+    "message": "Для работы расширения приложение RDVAULT должно быть запущено и разблокировано."
   },
   "popupDesktopUnavailable": {
     "message": "Настольное приложение недоступно"
@@ -43,6 +43,12 @@
   },
   "popupPairingDeniedDetail": {
     "message": "Сопряжение этого расширения отклонено в приложении. Новый запрос можно будет отправить через минуту."
+  },
+  "popupPairingExpiredTitle": {
+    "message": "Срок запроса на сопряжение истёк: откройте расширение снова, чтобы повторить попытку"
+  },
+  "popupPairingExpiredDetail": {
+    "message": "Запрос остался без ответа в RDVAULT (время ожидания: 60 секунд). Закройте и снова откройте это окно, чтобы отправить новый запрос."
   },
   "popupDisconnectedDetail": {
     "message": "Запустите настольное приложение и войдите в систему, чтобы использовать автозаполнение."
@@ -194,5 +200,26 @@
   },
   "bgErrClearCredential": {
     "message": "Ошибка удаления учётных данных"
+  },
+  "autofillMenuAnnounce": {
+    "message": "Учётные данные RDVAULT: $COUNT$. Стрелка вниз — выбрать, Esc — закрыть.",
+    "placeholders": {
+      "count": {
+        "content": "$1",
+        "example": "2"
+      }
+    }
+  },
+  "bgErrVaultLocked": {
+    "message": "RDVAULT заблокирован: разблокируйте приложение и повторите попытку."
+  },
+  "bgErrVaultClosed": {
+    "message": "RDVAULT закрыт или недоступен: откройте приложение и повторите попытку."
+  },
+  "bgErrRateLimited": {
+    "message": "Слишком много запросов к RDVAULT: повторите попытку чуть позже."
+  },
+  "pkVaultUnavailable": {
+    "message": "RDVAULT закрыт или заблокирован: откройте и разблокируйте его, чтобы продолжить, или используйте другое устройство."
   }
 }

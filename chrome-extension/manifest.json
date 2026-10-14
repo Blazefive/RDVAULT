@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "1.1.0",
+  "version": "1.7.0",
   "description": "__MSG_extDescription__",
   "default_locale": "en",
   "permissions": [
@@ -17,12 +17,18 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'"
   },
-  "content_scripts": [{
-    "matches": ["https://*/*"],
-    "js": ["content.js"],
-    "run_at": "document_idle",
-    "all_frames": false
-  }],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
